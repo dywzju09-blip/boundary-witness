@@ -61,6 +61,23 @@ artifact catalog 可以在 Git 外把这些 ID 映射到实际存储位置。迁
 - 只知道同步位置，不知道 runner 实际读取的 artifact；
 - reveal 前 freeze 未绑定 ranked output hash。
 
+## 正式运行输入锁
+
+大规模 public regression、pilot、D0/D1/D2 formal 和 sealed holdout 前必须先生成运行输入锁。入口为：
+
+```bash
+python3 tools/experiment/verify_run_inputs.py \
+  --repository . \
+  --dataset-manifest "$DATASET_MANIFEST" \
+  --run-config "$RUN_CONFIG" \
+  --expected-commit "$EXPECTED_COMMIT" \
+  --output-lock "$OUTPUT_LOCK"
+```
+
+`run-config` 使用 `boundary-witness/run-input-config/v1`，记录 `run_id`、预期 `rustc --version`、Contract snapshot hash、Schema version 集合、dataset identity/hash、`experiment_config` 的 canonical hash，以及实际实验配置对象。检查器只读输入；任一字段不一致、Git 工作树 dirty、Contract/Schema 内容漂移、dataset manifest hash 不匹配或配置 hash 不匹配时返回非零，并删除 `.partial` 或旧锁文件。
+
+成功锁文件使用 `boundary-witness/run-input-lock/v1`，绑定实际 Git commit、`code_dirty=false`、toolchain、Contract snapshot hash、Schema versions、dataset identity/hash、config hash 和 `run_id`。该锁证明本次运行启动前输入已冻结；它不证明私人服务器副本已对齐，也不证明后续执行事实。副本字节一致性仍由私有数据索引仓库的 manifest compare 证明，执行事实仍依赖 run receipt、日志、checksums 和 finalized artifact。
+
 ## 失败与重跑
 
 - `.partial`、abort、timeout 和 integrity failure 保留原 `run_id` 与失败分类，不改名为 negative。
