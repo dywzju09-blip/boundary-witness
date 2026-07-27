@@ -18,7 +18,7 @@ D1 使用 [`FuzzAction`](../../crates/bw-experiment/src/fuzz/actions.rs) 表达 
 
 ## D2：同预算基线比较
 
-D2 比较 `random_action`、`coverage_only` 与 `coverage_state`。[`D2SharedBudget`](../../crates/bw-experiment/src/fuzz/d2_compare.rs) 固定 campaign count、CPU minutes、seed list、initial corpus digest、max sequence、objective policy digest、target build 与 sanitizer；运行前验证各组预算等价。D2 回答 contract-state feedback 相对基线是否改善搜索结果，不是新的漏洞确认层。
+D2 比较 `random_action`、`coverage_only` 与 `coverage_state`。[`D2SharedBudget`](../../crates/bw-experiment/src/fuzz/d2_compare.rs) **声明** campaign count、CPU minutes、seed list、initial corpus digest、max sequence、objective policy digest、target build 与 sanitizer。当前 `verify_d2_budget_equivalence` 对组配置实际强制的是 CPU minutes、max sequence、seed 属于共享 seed list，以及 coverage 组的 sanitizer 一致；`random_action` 仅在自身声明 sanitizer 时比较该字段。它也校验共享 campaign count 与 seed-list 长度、digest 的 SHA-256 文本形状和非空 target build。加载完成的 campaign records 时，还会检查每组记录数、CPU、seed membership、API 与该组配置的 target。现有记录没有证明实际 initial corpus、objective policy 或 target build 与共享字段中声明的 digest/ID 一致，因此这里的“预算等价”只指上述已强制字段，不能扩展为所有声明字段均已运行时对齐。D2 用于观察 contract-state feedback 相对基线的差异，不是新的漏洞确认层。
 
 ## runtime、oracle 与 witness
 

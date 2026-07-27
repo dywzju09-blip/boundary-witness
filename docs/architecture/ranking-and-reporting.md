@@ -7,7 +7,7 @@ ranking 的职责是按静态证据安排人工审查与动态验证顺序，不
 1. [`build_lifecycle_graph_v3`](../../crates/bw-cli/src/commands/build_lifecycle_graph_v3.rs) 消费 candidate、evidence、candidate-scoped facts、static facts、lifecycle Contract 与 registry manifest。
 2. model 的 [`derive_v3_2_6_lifecycle_features_with_context`](../../crates/bw-model/src/lifecycle_v326.rs) 从实际 evidence/fact/graph 推导风险与保护特征，同时保留 `missing_evidence`。
 3. [`rank_lifecycle_v2`](../../crates/bw-cli/src/commands/rank_lifecycle_v2.rs) 计算 score breakdown、稳定排序，并从 graph-v3 汇总 chain layers。
-4. [`build_witness_plan`](../../crates/bw-cli/src/commands/build_witness_plan.rs) 根据 graph/chain 选择 callback lifecycle、returned-view Miri、external-buffer lifetime 或 manual review 路线。
+4. [`build_witness_plan`](../../crates/bw-cli/src/commands/build_witness_plan.rs) 当前只对 returned-view 与 external-buffer 做显式分支选择，其余 candidate 一律生成 callback lifecycle 计划。`ManualReviewOnly` 目前只存在于 model 的推荐路由枚举与 summary 推导中，builder 没有独立的 manual-review artifact 分支；因此 model 推荐为 manual review 的候选也会落入 callback 计划，消费者不得把计划类型解释为已实现四路分发。
 
 主要输出为 `graphs-v3/*.json`、`lifecycle-features.jsonl.zst`、`ranked-candidates.jsonl.zst`、`witness-plans.jsonl.zst`、统计和 checksum。
 
