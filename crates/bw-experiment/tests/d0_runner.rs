@@ -213,6 +213,11 @@ contract_id = "contract:callback-retention"
 producer = "d0-test"
 
 [[clauses]]
+clause_id = "clause:register-retains"
+kind = "retain_after_register"
+description = "register retains callback"
+
+[[clauses]]
 clause_id = "clause:borrow-outlives-retention"
 kind = "borrow_must_outlive_retention"
 description = "borrow must outlive retained callback"
