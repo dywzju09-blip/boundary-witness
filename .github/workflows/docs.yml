@@ -1,0 +1,19 @@
+name: Docs
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Markdown links
+        run: python3 tools/repository/check_markdown_links.py --root .
+      - name: Placeholder scan
+        run: |
+          ! grep -R -nE 'TBD|TODO|待补充|以后再写' README.md docs AGENTS.md CONTRIBUTING.md SECURITY.md

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+      - name: Public tree check
+        run: python3 tools/repository/check_public_tree.py --root . --max-bytes 10485760
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Workspace check
+        run: cargo check --workspace --locked
+      - name: Workspace test
+        run: cargo test --workspace --locked
+      - name: Compiler check
+        run: cargo check --manifest-path compiler/bw-rustc/Cargo.toml --locked
+      - name: Compiler test
+        run: cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
+      - name: Schema tests
+        run: cargo test -p bw-model --locked schema
+      - name: Contract tests
+        run: cargo test -p bw-model --locked contract

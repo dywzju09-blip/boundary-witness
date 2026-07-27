@@ -1,0 +1,73 @@
+name: Implementation
+description: Code, Schema, Contract, CLI, or documentation implementation work.
+title: "[Implementation]: "
+labels: ["implementation"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should become true?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: In-scope behavior, files, crates, Schema, Contract, or docs.
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: Explicitly excluded behavior or conclusions.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Blocking code, data, decisions, fixtures, or prior PRs.
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: Expected write set and ownership boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: interfaces
+    attributes:
+      label: Interfaces
+      description: Schema versions, model fields, CLI args, Contract roles, inputs, and outputs.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Completion predicates and state boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: Commands, expected outputs, and known blockers.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data
+      description: Dataset, fixture, private-data boundary, or no-data statement.
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Documentation
+      description: README, docs, ADR, runbook, or reference pages to update.
+    validations:
+      required: true

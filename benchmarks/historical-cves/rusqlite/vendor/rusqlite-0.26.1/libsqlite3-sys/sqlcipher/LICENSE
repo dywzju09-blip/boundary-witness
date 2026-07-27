@@ -1,0 +1,4 @@
+This placeholder preserves the upstream rusqlite README link for the
+bundled SQLCipher license path. BoundaryWitness does not vendor SQLCipher
+source in this public benchmark subset; SQLCipher licensing is documented
+upstream at https://github.com/sqlcipher/sqlcipher.

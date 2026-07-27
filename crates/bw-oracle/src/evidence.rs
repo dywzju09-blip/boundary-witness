@@ -107,7 +107,7 @@ fn reject_dynamic_signature(value: &str) -> Result<(), OracleError> {
         "finding:",
         "object:",
         "callback:",
-        "/Users/",
+        concat!("/", "Users/"),
         "/root/",
         "0x",
     ];

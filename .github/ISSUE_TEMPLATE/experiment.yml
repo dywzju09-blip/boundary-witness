@@ -1,0 +1,47 @@
+name: Experiment
+description: Public regression, pilot, D0/D1/D2, or holdout protocol work.
+title: "[Experiment]: "
+labels: ["experiment"]
+body:
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Exact code commit or planned method commit.
+    validations:
+      required: true
+  - type: textarea
+    id: dataset
+    attributes:
+      label: Dataset
+      description: Dataset ID, version, manifest hash, and public/private boundary.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: Config hash, Contract/API map hash, Schema versions, toolchain, and image digest.
+    validations:
+      required: true
+  - type: textarea
+    id: run
+    attributes:
+      label: Run
+      description: run_id, artifact root policy, checksum manifest, and cleanup plan.
+    validations:
+      required: true
+  - type: textarea
+    id: controls
+    attributes:
+      label: Controls
+      description: Negative controls, paired controls, public regression, or holdout separation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Required records, summaries, failures, logs, receipts, and result document.
+    validations:
+      required: true

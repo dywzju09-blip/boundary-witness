@@ -1,0 +1,36 @@
+name: Bug
+description: Incorrect behavior, validation failure, or documentation inconsistency.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Commands, minimal input, commit, and environment.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and boundary
+      description: State whether this affects candidate, static risk, dynamic witness, finding, docs, or CI only.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: Existing or proposed test coverage.

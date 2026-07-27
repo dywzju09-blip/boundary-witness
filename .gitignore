@@ -35,3 +35,7 @@
 .vscode/
 *.swp
 *.tmp
+
+# Python tooling caches
+__pycache__/
+*.pyc
