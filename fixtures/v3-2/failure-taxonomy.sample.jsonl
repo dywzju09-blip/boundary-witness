@@ -1,0 +1,1 @@
+{"schema_version":"v3.2.failure_taxonomy.1","run_id":"v3-2-taxonomy-sample","subject_kind":"crate","subject_id":"crate:demo-sys:0.1.0","crate_id":"crate:demo-sys:0.1.0","stage":"build_precheck","failure_class":"requires_system_dependency","is_infrastructure_failure":true,"is_method_negative":false,"notes":["build failure is not a no-vulnerability conclusion"]}

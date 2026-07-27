@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.lifecycle-graph-v2.1",
+  "title": "BoundaryWitness V3.2.6 Lifecycle Graph v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "nodes",
+    "edges",
+    "evidence_refs",
+    "incomplete_evidence",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.lifecycle_graph_v2.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": {
+      "enum": [
+        "retained_borrowed_callback",
+        "callback_lifecycle_release",
+        "foreign_retained_pointer",
+        "opaque_handle_transfer",
+        "native_library_boundary",
+        "returned_borrow_view",
+        "external_buffer_view"
+      ]
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "node_kind", "label"],
+        "properties": {
+          "node_id": { "type": "string", "minLength": 1 },
+          "node_kind": {
+            "enum": [
+              "rust_object",
+              "callback",
+              "borrow",
+              "raw_pointer",
+              "foreign_api",
+              "foreign_owner",
+              "drop_guard",
+              "release_api",
+              "opaque_handle"
+            ]
+          },
+          "label": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "edge_kind", "evidence_refs"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "edge_kind": {
+            "enum": [
+              "captures",
+              "borrows",
+              "moves_into",
+              "raw_pointer_escape",
+              "registered_into",
+              "foreign_retains",
+              "released_by",
+              "guarded_by_drop",
+              "drops_before_release",
+              "unknown_order"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "incomplete_evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

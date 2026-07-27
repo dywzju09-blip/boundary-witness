@@ -1,0 +1,13 @@
+schema_version = "bw.api-map/0.1"
+map_id = "api-map:pyo3-capsule-user-data"
+producer = "boundary-witness@v0.1"
+contract_id = "contract:callback-retention"
+
+[[apis]]
+api_id = "api:pyo3:pycapsule_new:register"
+rust_path = "pyo3_ffi::cpython::capsule::PyCapsule_New"
+contract_api_id = "api:register"
+callback_family = "pyo3_pycapsule"
+callback_arg_indices = [2]
+user_data_arg_indices = [0]
+notes = "CPython PyCapsule_New stores caller-provided pointer and may later invoke the provided destructor with the capsule handle."

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.lifecycle-fact.1",
+  "title": "BoundaryWitness V3.2.6 Lifecycle Fact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id",
+    "fact_id",
+    "fact_kind",
+    "source_ref",
+    "confidence",
+    "coverage_state",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.lifecycle_fact.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "fact_id": { "type": "string", "minLength": 1 },
+    "fact_kind": {
+      "enum": [
+        "callback_definition",
+        "borrowed_capture",
+        "owned_move_capture",
+        "drop_impl",
+        "drop_site",
+        "drop_prevention",
+        "callback_user_data_reconstruction",
+        "raw_pointer_escape",
+        "unsafe_cast",
+        "trait_impl",
+        "register_call",
+        "unregister_call",
+        "replace_call",
+        "release_call",
+        "release_path_proof",
+        "returned_borrow_relation",
+        "persisted_returned_borrow",
+        "returned_borrow_invalidation_order",
+        "external_buffer_binding",
+        "atomic_ordering",
+        "object_binding_gap",
+        "object_flow"
+      ]
+    },
+    "source_ref": { "$ref": "#/$defs/source_ref" },
+    "symbol_path": { "type": ["string", "null"] },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "coverage_state": { "enum": ["covered", "partial", "unavailable"] },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "object_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "line_start": { "type": ["integer", "null"], "minimum": 0 },
+        "line_end": { "type": ["integer", "null"], "minimum": 0 },
+        "symbol_path": { "type": ["string", "null"] },
+        "text_sha256": { "type": ["string", "null"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin"],
+      "properties": {
+        "origin": {
+          "enum": ["source_observation", "static_artifact"]
+        },
+        "static_fact_record_id": { "type": ["string", "null"], "minLength": 1 },
+        "static_build_id": { "type": ["string", "null"], "minLength": 1 },
+        "static_producer": { "type": ["string", "null"], "minLength": 1 },
+        "static_anchor_record_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

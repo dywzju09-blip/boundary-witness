@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2.adapter-effort.1",
+  "title": "BoundaryWitness V3.2 Adapter Effort Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "rank",
+    "score",
+    "adapter_needed",
+    "adapter_kind",
+    "effort_class",
+    "manual_minutes",
+    "generated_lines",
+    "manual_lines",
+    "blocked_reason",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.adapter_effort.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": {
+      "enum": [
+        "retained_borrowed_callback",
+        "callback_lifecycle_release",
+        "foreign_retained_pointer",
+        "opaque_handle_transfer",
+        "native_library_boundary",
+        "returned_borrow_view",
+        "external_buffer_view"
+      ]
+    },
+    "rank": { "type": "integer", "minimum": 1 },
+    "score": { "type": "integer", "minimum": 0 },
+    "adapter_needed": { "type": "boolean" },
+    "adapter_kind": {
+      "enum": [
+        "none",
+        "minimal_harness",
+        "callback_harness",
+        "pointer_harness",
+        "handle_harness",
+        "heavy_manual_analysis"
+      ]
+    },
+    "effort_class": {
+      "enum": [
+        "auto_generated",
+        "light_manual",
+        "heavy_manual",
+        "deferred"
+      ]
+    },
+    "manual_minutes": { "type": "integer", "minimum": 0 },
+    "generated_lines": { "type": "integer", "minimum": 0 },
+    "manual_lines": { "type": "integer", "minimum": 0 },
+    "blocked_reason": {
+      "type": ["string", "null"]
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "adapter_needed": { "const": false } },
+        "required": ["adapter_needed"]
+      },
+      "then": {
+        "properties": {
+          "adapter_kind": { "const": "none" },
+          "effort_class": { "const": "deferred" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "adapter_needed": { "const": true } },
+        "required": ["adapter_needed"]
+      },
+      "then": {
+        "properties": {
+          "adapter_kind": {
+            "enum": [
+              "minimal_harness",
+              "callback_harness",
+              "pointer_harness",
+              "handle_harness",
+              "heavy_manual_analysis"
+            ]
+          },
+          "blocked_reason": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

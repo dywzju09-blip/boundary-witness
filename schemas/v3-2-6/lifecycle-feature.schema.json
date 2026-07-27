@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.lifecycle-feature.1",
+  "title": "BoundaryWitness V3.2.6 Lifecycle Feature",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "features",
+    "feature_evidence",
+    "missing_evidence",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.lifecycle_feature.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": {
+      "enum": [
+        "retained_borrowed_callback",
+        "callback_lifecycle_release",
+        "foreign_retained_pointer",
+        "opaque_handle_transfer",
+        "native_library_boundary",
+        "returned_borrow_view",
+        "external_buffer_view"
+      ]
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "has_foreign_register",
+        "foreign_may_retain_callback",
+        "foreign_may_retain_user_data",
+        "has_borrowed_capture",
+        "has_raw_pointer_escape",
+        "raw_parts_transfer_without_drop_prevention",
+        "has_drop_prevention",
+        "manual_drop_prevention_without_drop_guard",
+        "callback_user_data_owner_reconstruction_without_leak_guard",
+        "has_returned_borrow_relation",
+        "has_unconstrained_return_lifetime",
+        "has_persisted_returned_borrow",
+        "returned_borrow_persistence_before_invalidation",
+        "returned_borrow_persistence_after_invalidation",
+        "has_external_buffer_binding",
+        "has_external_buffer_lifetime_bound",
+        "relaxed_atomic_load_in_iterator",
+        "acquire_atomic_load_in_iterator",
+        "has_verified_object_chain",
+        "has_release_order_chain",
+        "has_persisted_invalidation_use_chain",
+        "rust_object_may_drop_before_foreign_release",
+        "missing_unregister_before_drop",
+        "release_order_unknown",
+        "opaque_handle_without_owner",
+        "needs_dynamic_witness",
+        "has_foreign_unregister",
+        "registration_release_pair_found",
+        "has_drop_guard",
+        "has_owned_anchor",
+        "has_static_bound",
+        "has_box_into_raw",
+        "has_box_from_raw",
+        "has_arc_anchor",
+        "release_covers_callback"
+      ],
+      "properties": {
+        "has_foreign_register": { "type": "boolean" },
+        "foreign_may_retain_callback": { "type": "boolean" },
+        "foreign_may_retain_user_data": { "type": "boolean" },
+        "has_borrowed_capture": { "type": "boolean" },
+        "has_raw_pointer_escape": { "type": "boolean" },
+        "raw_parts_transfer_without_drop_prevention": { "type": "boolean" },
+        "has_drop_prevention": { "type": "boolean" },
+        "manual_drop_prevention_without_drop_guard": { "type": "boolean" },
+        "callback_user_data_owner_reconstruction_without_leak_guard": { "type": "boolean" },
+        "has_returned_borrow_relation": { "type": "boolean" },
+        "has_unconstrained_return_lifetime": { "type": "boolean" },
+        "has_persisted_returned_borrow": { "type": "boolean" },
+        "returned_borrow_persistence_before_invalidation": { "type": "boolean" },
+        "returned_borrow_persistence_after_invalidation": { "type": "boolean" },
+        "has_external_buffer_binding": { "type": "boolean" },
+        "has_external_buffer_lifetime_bound": { "type": "boolean" },
+        "relaxed_atomic_load_in_iterator": { "type": "boolean" },
+        "acquire_atomic_load_in_iterator": { "type": "boolean" },
+        "has_verified_object_chain": { "type": "boolean" },
+        "has_release_order_chain": { "type": "boolean" },
+        "has_persisted_invalidation_use_chain": { "type": "boolean" },
+        "rust_object_may_drop_before_foreign_release": { "type": "boolean" },
+        "missing_unregister_before_drop": { "type": "boolean" },
+        "release_order_unknown": { "type": "boolean" },
+        "opaque_handle_without_owner": { "type": "boolean" },
+        "needs_dynamic_witness": { "type": "boolean" },
+        "has_foreign_unregister": { "type": "boolean" },
+        "registration_release_pair_found": { "type": "boolean" },
+        "has_drop_guard": { "type": "boolean" },
+        "has_owned_anchor": { "type": "boolean" },
+        "has_static_bound": { "type": "boolean" },
+        "has_box_into_raw": { "type": "boolean" },
+        "has_box_from_raw": { "type": "boolean" },
+        "has_arc_anchor": { "type": "boolean" },
+        "release_covers_callback": { "type": "boolean" }
+      }
+    },
+    "feature_evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 }
+      }
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

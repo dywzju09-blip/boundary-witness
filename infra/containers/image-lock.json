@@ -1,0 +1,18 @@
+{
+  "schema_version": "boundary-witness.image-lock/0.1",
+  "image_tag": "boundary-witness-d0:76412fc07611",
+  "build_network": "host",
+  "ubuntu_apt_mirror": "http://mirrors.ustc.edu.cn/ubuntu",
+  "rustup_init_url": "https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup/dist/x86_64-unknown-linux-gnu/rustup-init",
+  "rustup_dist_server": "https://mirrors.ustc.edu.cn/rust-static",
+  "rustup_update_root": "https://mirrors.ustc.edu.cn/rust-static/rustup",
+  "image_id": "sha256:ddbd184450e131309b57b7c1deb4a35652f27f709f02f40c0dc8d8c19e6066f7",
+  "repo_digest": "",
+  "source_commit": "76412fc07611d3d7466abbfa848d9238bd508c6a",
+  "archive_sha256": "926cd381b35edb872ca8539020cfc98dfb5ff76f4cc82d782fc0dbb3513516d6",
+  "base_image": "docker.1panel.live/library/ubuntu@sha256:0d779ea97881505f5ef0039336ee85edba27519bdba968c284c86ee066a973c8",
+  "base_upstream": "docker.io/library/ubuntu@sha256:0d779ea97881505f5ef0039336ee85edba27519bdba968c284c86ee066a973c8",
+  "rust_stable": "1.97.0",
+  "rust_nightly": "nightly-2026-07-08",
+  "built_at_utc": "2026-07-18T15:10:43Z"
+}

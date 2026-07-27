@@ -1,0 +1,101 @@
+schema_version = "bw.contract/0.1"
+contract_id = "contract:callback-retention"
+producer = "boundary-witness@v0.1"
+
+[[clauses]]
+clause_id = "clause:register-retains"
+kind = "retain_after_register"
+description = "注册 API 调用后，外部 owner 可以保留 callback。"
+
+[[clauses]]
+clause_id = "clause:unregister-releases"
+kind = "release_on_unregister"
+description = "注销 API 调用释放当前 callback。"
+
+[[clauses]]
+clause_id = "clause:owner-drop-releases"
+kind = "release_on_owner_drop"
+description = "外部 owner 结束时释放其保留的 callback。"
+
+[[clauses]]
+clause_id = "clause:invoke-retained"
+kind = "invoke_while_retained"
+description = "只有被外部 owner 保留的 callback 才可能被后续调用。"
+
+[[clauses]]
+clause_id = "clause:borrow-outlives-retention"
+kind = "borrow_must_outlive_retention"
+description = "borrowed capture 的生命周期必须覆盖 callback 被保留的完整区间。"
+
+[[clauses]]
+clause_id = "clause:no-use-after-end"
+kind = "no_use_after_lifetime_end"
+description = "对象生命周期结束后不得再被使用。"
+
+[[clauses]]
+clause_id = "clause:free-once"
+kind = "free_at_most_once"
+description = "同一对象代次最多释放一次。"
+
+[[api_entries]]
+clause_id = "clause:register-retains"
+api_id = "api:register"
+registration_role = "register"
+release_behavior = "none"
+owner_kind = "external_owner"
+
+[[api_entries]]
+clause_id = "clause:unregister-releases"
+api_id = "api:unregister"
+registration_role = "unregister"
+release_behavior = "release_current"
+owner_kind = "external_owner"
+
+[[api_entries]]
+clause_id = "clause:invoke-retained"
+api_id = "api:invoke"
+release_behavior = "none"
+owner_kind = "external_owner"
+invoke_role = "callback"
+
+[[api_entries]]
+clause_id = "clause:register-retains"
+api_id = "api:rusqlite:update_hook"
+registration_role = "register"
+release_behavior = "none"
+owner_kind = "external_owner"
+
+[[api_entries]]
+clause_id = "clause:unregister-releases"
+api_id = "api:rusqlite:update_hook"
+registration_role = "unregister"
+release_behavior = "release_current"
+owner_kind = "external_owner"
+
+[[api_entries]]
+clause_id = "clause:invoke-retained"
+api_id = "api:rusqlite:update_hook"
+release_behavior = "none"
+owner_kind = "external_owner"
+invoke_role = "callback"
+
+[[api_entries]]
+clause_id = "clause:register-retains"
+api_id = "api:rusqlite:create_scalar_function"
+registration_role = "register"
+release_behavior = "none"
+owner_kind = "external_owner"
+
+[[api_entries]]
+clause_id = "clause:unregister-releases"
+api_id = "api:rusqlite:create_scalar_function"
+registration_role = "unregister"
+release_behavior = "release_current"
+owner_kind = "external_owner"
+
+[[api_entries]]
+clause_id = "clause:invoke-retained"
+api_id = "api:rusqlite:create_scalar_function"
+release_behavior = "none"
+owner_kind = "external_owner"
+invoke_role = "callback"

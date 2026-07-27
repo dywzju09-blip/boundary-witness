@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2.lifecycle-graph.1",
+  "title": "BoundaryWitness V3.2 Lifecycle Graph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "nodes",
+    "edges",
+    "risk_features",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.lifecycle_graph.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": {
+      "enum": [
+        "retained_borrowed_callback",
+        "callback_lifecycle_release",
+        "foreign_retained_pointer",
+        "opaque_handle_transfer",
+        "native_library_boundary",
+        "returned_borrow_view",
+        "external_buffer_view"
+      ]
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "node_kind", "label", "lifetime_role"],
+        "properties": {
+          "node_id": { "type": "string", "minLength": 1 },
+          "node_kind": {
+            "enum": [
+              "rust_object",
+              "rust_borrow",
+              "foreign_api",
+              "foreign_owner",
+              "callback_site",
+              "opaque_handle"
+            ]
+          },
+          "label": { "type": "string", "minLength": 1 },
+          "lifetime_role": {
+            "enum": ["owned", "borrowed", "external_retained", "unknown"]
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "edge_kind", "evidence_ref"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "edge_kind": {
+            "enum": [
+              "registered_into_foreign_api",
+              "foreign_retains",
+              "foreign_invokes",
+              "unregister_path",
+              "drop_rust_object",
+              "alias_across_languages",
+              "handle_transfer"
+            ]
+          },
+          "evidence_ref": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "risk_features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "foreign_retention_without_owned_anchor",
+        "missing_unregister_before_drop",
+        "cross_language_alias",
+        "opaque_handle_without_owner",
+        "callback_retained_across_drop"
+      ],
+      "properties": {
+        "foreign_retention_without_owned_anchor": { "type": "boolean" },
+        "missing_unregister_before_drop": { "type": "boolean" },
+        "cross_language_alias": { "type": "boolean" },
+        "opaque_handle_without_owner": { "type": "boolean" },
+        "callback_retained_across_drop": { "type": "boolean" }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

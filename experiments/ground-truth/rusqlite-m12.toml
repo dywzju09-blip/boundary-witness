@@ -1,0 +1,62 @@
+schema_version = "bw.rusqlite-ground-truth/0.1"
+suite_id = "suite:rusqlite-m12"
+
+[[cases]]
+case_id = "case-0001"
+expectation = "confirmed_violation"
+family = "update_hook"
+notes = "rusqlite 0.26.1 borrowed callback later invoked after tracked object drop"
+
+[[cases]]
+case_id = "case-0002"
+expectation = "clean"
+family = "update_hook"
+notes = "owned callback state; object may drop before callback invoke without borrowed UAF"
+
+[[cases]]
+case_id = "case-0003"
+expectation = "clean"
+family = "update_hook"
+notes = "callback state is moved/owned by the closure"
+
+[[cases]]
+case_id = "case-0004"
+expectation = "clean"
+family = "update_hook"
+notes = "borrowed callback is unregistered before tracked object drop"
+
+[[cases]]
+case_id = "case-0005"
+expectation = "exposure_only"
+family = "update_hook"
+notes = "borrowed callback remains retained after object drop, but no later callback invoke occurs"
+
+[[cases]]
+case_id = "case-0006"
+expectation = "confirmed_violation"
+family = "create_scalar_function"
+notes = "rusqlite 0.26.1 borrowed scalar callback later invoked after tracked object drop"
+
+[[cases]]
+case_id = "case-0007"
+expectation = "clean"
+family = "create_scalar_function"
+notes = "owned callback state; object may drop before scalar invocation without borrowed UAF"
+
+[[cases]]
+case_id = "case-0008"
+expectation = "clean"
+family = "create_scalar_function"
+notes = "callback state is moved/owned by the scalar closure"
+
+[[cases]]
+case_id = "case-0009"
+expectation = "clean"
+family = "create_scalar_function"
+notes = "borrowed scalar callback is removed before tracked object drop"
+
+[[cases]]
+case_id = "case-0010"
+expectation = "exposure_only"
+family = "create_scalar_function"
+notes = "borrowed scalar callback remains retained after object drop, but no later scalar invoke occurs"

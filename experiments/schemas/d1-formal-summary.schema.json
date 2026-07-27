@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundaryWitness D1 Formal Summary",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mode",
+    "campaign_count",
+    "primary_found_campaigns",
+    "required_primary_success_campaigns",
+    "success_threshold_met",
+    "campaigns",
+    "safe_only"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "boundary-witness.d1-formal-summary/0.1"
+    },
+    "mode": {
+      "const": "formal"
+    },
+    "campaign_count": {
+      "type": "integer",
+      "const": 30
+    },
+    "primary_found_campaigns": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 30
+    },
+    "required_primary_success_campaigns": {
+      "type": "integer",
+      "const": 18
+    },
+    "success_threshold_met": {
+      "type": "boolean"
+    },
+    "campaigns": {
+      "type": "array",
+      "minItems": 30,
+      "maxItems": 30
+    },
+    "safe_only": {
+      "type": "object",
+      "required": ["target", "cpu_minutes", "artifact_count"],
+      "properties": {
+        "target": {
+          "const": "update_hook_safe_only"
+        },
+        "cpu_minutes": {
+          "type": "integer",
+          "const": 30
+        },
+        "artifact_count": {
+          "type": "integer",
+          "const": 0
+        }
+      }
+    }
+  }
+}

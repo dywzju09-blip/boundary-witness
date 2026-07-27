@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundary-witness.local/schemas/deployment-manifest.schema.json",
+  "title": "BoundaryWitness deployment manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "commit",
+    "archive_name",
+    "archive_format",
+    "archive_sha256",
+    "source_prefix",
+    "allowed_top_level",
+    "generated_at_utc",
+    "tool_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "boundary-witness.deployment/0.1"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "archive_name": {
+      "const": "source.tar.zst"
+    },
+    "archive_format": {
+      "const": "tar+zstd"
+    },
+    "archive_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_prefix": {
+      "const": "boundary-witness/"
+    },
+    "allowed_top_level": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

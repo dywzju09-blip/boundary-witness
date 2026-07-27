@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundaryWitness Blind Ground Truth",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "split", "public_manifest_sha256", "cases"],
+  "properties": {
+    "schema_version": { "const": "boundary-witness.blind-ground-truth/0.1" },
+    "suite_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "split": { "enum": ["gate", "evaluation"] },
+    "public_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "cases": { "type": "array", "items": { "$ref": "#/$defs/case" } }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "curator_key",
+        "role",
+        "component",
+        "api",
+        "root_cause_key",
+        "paired_case_ids",
+        "source_revision"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" },
+        "curator_key": { "type": "string", "minLength": 1 },
+        "role": { "enum": ["violation", "safe_control", "fixed_control"] },
+        "component": { "type": "string", "minLength": 1 },
+        "api": { "type": "string", "minLength": 1 },
+        "root_cause_key": { "type": "string", "minLength": 1 },
+        "paired_case_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" }
+        },
+        "source_revision": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

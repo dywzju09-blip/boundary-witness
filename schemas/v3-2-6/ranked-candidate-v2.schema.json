@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.ranked-candidate-v2.1",
+  "title": "BoundaryWitness V3.2.6 Ranked Candidate v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "rank",
+    "score",
+    "score_breakdown",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "risk_features",
+    "protective_features",
+    "feature_evidence_refs",
+    "missing_evidence",
+    "lifecycle_graph_path",
+    "ranking_reason",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.ranked_candidate_v2.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "rank": { "type": "integer", "minimum": 1 },
+    "score": { "type": "integer", "minimum": 0 },
+    "score_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "has_foreign_register",
+        "foreign_may_retain_callback",
+        "foreign_may_retain_user_data",
+        "has_borrowed_capture",
+        "has_raw_pointer_escape",
+        "raw_parts_transfer_without_drop_prevention",
+        "has_drop_prevention",
+        "manual_drop_prevention_without_drop_guard",
+        "callback_user_data_owner_reconstruction_without_leak_guard",
+        "has_returned_borrow_relation",
+        "has_unconstrained_return_lifetime",
+        "has_persisted_returned_borrow",
+        "returned_borrow_persistence_before_invalidation",
+        "returned_borrow_persistence_after_invalidation",
+        "has_external_buffer_binding",
+        "has_external_buffer_lifetime_bound",
+        "relaxed_atomic_load_in_iterator",
+        "acquire_atomic_load_in_iterator",
+        "has_verified_object_chain",
+        "has_release_order_chain",
+        "has_persisted_invalidation_use_chain",
+        "rust_object_may_drop_before_foreign_release",
+        "missing_unregister_before_drop",
+        "release_order_unknown",
+        "opaque_handle_without_owner",
+        "needs_dynamic_witness",
+        "has_owned_anchor",
+        "has_drop_guard",
+        "registration_release_pair_found",
+        "has_static_bound",
+        "has_arc_anchor",
+        "release_covers_callback"
+      ],
+      "properties": {
+        "has_foreign_register": { "type": "integer" },
+        "foreign_may_retain_callback": { "type": "integer" },
+        "foreign_may_retain_user_data": { "type": "integer" },
+        "has_borrowed_capture": { "type": "integer" },
+        "has_raw_pointer_escape": { "type": "integer" },
+        "raw_parts_transfer_without_drop_prevention": { "type": "integer" },
+        "has_drop_prevention": { "type": "integer" },
+        "manual_drop_prevention_without_drop_guard": { "type": "integer" },
+        "callback_user_data_owner_reconstruction_without_leak_guard": { "type": "integer" },
+        "has_returned_borrow_relation": { "type": "integer" },
+        "has_unconstrained_return_lifetime": { "type": "integer" },
+        "has_persisted_returned_borrow": { "type": "integer" },
+        "returned_borrow_persistence_before_invalidation": { "type": "integer" },
+        "returned_borrow_persistence_after_invalidation": { "type": "integer" },
+        "has_external_buffer_binding": { "type": "integer" },
+        "has_external_buffer_lifetime_bound": { "type": "integer" },
+        "relaxed_atomic_load_in_iterator": { "type": "integer" },
+        "acquire_atomic_load_in_iterator": { "type": "integer" },
+        "has_verified_object_chain": { "type": "integer" },
+        "has_release_order_chain": { "type": "integer" },
+        "has_persisted_invalidation_use_chain": { "type": "integer" },
+        "rust_object_may_drop_before_foreign_release": { "type": "integer" },
+        "missing_unregister_before_drop": { "type": "integer" },
+        "release_order_unknown": { "type": "integer" },
+        "opaque_handle_without_owner": { "type": "integer" },
+        "needs_dynamic_witness": { "type": "integer" },
+        "has_owned_anchor": { "type": "integer" },
+        "has_drop_guard": { "type": "integer" },
+        "registration_release_pair_found": { "type": "integer" },
+        "has_static_bound": { "type": "integer" },
+        "has_arc_anchor": { "type": "integer" },
+        "release_covers_callback": { "type": "integer" }
+      }
+    },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": {
+      "enum": [
+        "retained_borrowed_callback",
+        "callback_lifecycle_release",
+        "foreign_retained_pointer",
+        "opaque_handle_transfer",
+        "native_library_boundary",
+        "returned_borrow_view",
+        "external_buffer_view"
+      ]
+    },
+    "risk_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "protective_features": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "feature_evidence_refs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 }
+      }
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "lifecycle_graph_path": { "type": "string", "minLength": 1 },
+    "chain_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "top_chain_id": { "type": ["string", "null"], "minLength": 1 },
+        "top_chain_status": {
+          "type": ["string", "null"],
+          "enum": [
+            "verified_static_chain",
+            "partial_chain",
+            "ambiguous_chain",
+            "observation_only",
+            null
+          ]
+        },
+        "verified_chain_count": { "type": "integer", "minimum": 0 },
+        "partial_chain_count": { "type": "integer", "minimum": 0 },
+        "ambiguous_chain_count": { "type": "integer", "minimum": 0 },
+        "observation_only_chain_count": { "type": "integer", "minimum": 0 },
+        "identity_transport_chain_count": { "type": "integer", "minimum": 0 },
+        "lifecycle_ordering_chain_count": { "type": "integer", "minimum": 0 },
+        "complete_risk_chain_count": { "type": "integer", "minimum": 0 },
+        "chain_fact_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "chain_incomplete_reasons": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "recommended_witness_route": {
+          "enum": [
+            "callback_lifecycle",
+            "returned_view_miri",
+            "external_buffer_lifetime",
+            "manual_review_only"
+          ]
+        }
+      }
+    },
+    "ranking_reason": { "type": "string", "minLength": 1 },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

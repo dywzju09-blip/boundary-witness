@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-5.private-ground-truth.1",
+  "title": "BoundaryWitness V3.2.5 Private Ground Truth Sample",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "sample_id",
+    "public_crate_id",
+    "role",
+    "paired_with",
+    "expected_pattern_families",
+    "root_cause_key",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.5.private_ground_truth.1" },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "sample_id": { "type": "string", "minLength": 1 },
+    "public_crate_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:._+-]+$"
+    },
+    "role": {
+      "enum": [
+        "vulnerable",
+        "fixed_control",
+        "safe_control",
+        "distractor",
+        "negative"
+      ]
+    },
+    "paired_with": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "expected_pattern_families": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "retained_borrowed_callback",
+          "callback_lifecycle_release",
+          "foreign_retained_pointer",
+          "opaque_handle_transfer",
+          "native_library_boundary",
+          "returned_borrow_view",
+          "external_buffer_view"
+        ]
+      }
+    },
+    "expected_api_substrings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "expected_path_substrings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "root_cause_key": { "type": "string", "minLength": 1 },
+    "vulnerability_identity": {
+      "type": ["string", "null"]
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

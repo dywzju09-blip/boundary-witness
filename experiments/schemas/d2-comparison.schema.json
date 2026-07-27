@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundary-witness.local/schemas/d2-comparison.schema.json",
+  "title": "BoundaryWitness D2 Comparison Summary",
+  "type": "object",
+  "required": ["schema_version", "suite_id", "config_digest", "groups", "group_results"],
+  "properties": {
+    "schema_version": {
+      "const": "boundary-witness.d2-comparison/0.1"
+    },
+    "suite_id": {
+      "type": "string"
+    },
+    "config_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "enum": ["random_action", "coverage_only", "coverage_state"]
+      }
+    },
+    "group_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "group",
+          "baseline_id",
+          "status",
+          "campaign_count",
+          "cpu_minutes",
+          "seed_list",
+          "primary_success_count",
+          "time_to_first_primary_ms",
+          "valid_sequence_ratio",
+          "minimized_sequence_len",
+          "replay_success_count",
+          "progress_state_coverage",
+          "secondary_finding_count"
+        ],
+        "properties": {
+          "group": {
+            "enum": ["random_action", "coverage_only", "coverage_state"]
+          },
+          "baseline_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": ["configured", "completed", "failed", "timed_out"]
+          },
+          "campaign_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cpu_minutes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seed_list": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "primary_success_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "time_to_first_primary_ms": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "valid_sequence_ratio": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minimized_sequence_len": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "replay_success_count": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "progress_state_coverage": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "secondary_finding_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

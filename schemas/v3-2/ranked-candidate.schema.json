@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2.ranked-candidate.1",
+  "title": "BoundaryWitness V3.2 Ranked Candidate Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "rank",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "score",
+    "score_breakdown",
+    "risk_features",
+    "lifecycle_graph_path",
+    "ranking_reason",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.ranked_candidate.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "rank": { "type": "integer", "minimum": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": {
+      "enum": [
+        "retained_borrowed_callback",
+        "callback_lifecycle_release",
+        "foreign_retained_pointer",
+        "opaque_handle_transfer",
+        "native_library_boundary",
+        "returned_borrow_view",
+        "external_buffer_view"
+      ]
+    },
+    "score": { "type": "integer", "minimum": 0 },
+    "score_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "foreign_retention_without_owned_anchor",
+        "missing_unregister_before_drop",
+        "cross_language_alias",
+        "opaque_handle_without_owner",
+        "callback_retained_across_drop",
+        "confidence_bonus"
+      ],
+      "properties": {
+        "foreign_retention_without_owned_anchor": { "type": "integer", "minimum": 0 },
+        "missing_unregister_before_drop": { "type": "integer", "minimum": 0 },
+        "cross_language_alias": { "type": "integer", "minimum": 0 },
+        "opaque_handle_without_owner": { "type": "integer", "minimum": 0 },
+        "callback_retained_across_drop": { "type": "integer", "minimum": 0 },
+        "confidence_bonus": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "risk_features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "foreign_retention_without_owned_anchor",
+        "missing_unregister_before_drop",
+        "cross_language_alias",
+        "opaque_handle_without_owner",
+        "callback_retained_across_drop"
+      ],
+      "properties": {
+        "foreign_retention_without_owned_anchor": { "type": "boolean" },
+        "missing_unregister_before_drop": { "type": "boolean" },
+        "cross_language_alias": { "type": "boolean" },
+        "opaque_handle_without_owner": { "type": "boolean" },
+        "callback_retained_across_drop": { "type": "boolean" }
+      }
+    },
+    "lifecycle_graph_path": { "type": "string", "minLength": 1 },
+    "ranking_reason": { "type": "string", "minLength": 1 },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

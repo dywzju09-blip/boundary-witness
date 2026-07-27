@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundaryWitness Blind Observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "split", "case_id", "method_commit", "public_manifest_sha256", "status", "findings", "witness"],
+  "properties": {
+    "schema_version": { "const": "boundary-witness.blind-observed/0.1" },
+    "suite_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "split": { "enum": ["gate", "evaluation"] },
+    "case_id": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" },
+    "method_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "public_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "status": { "enum": ["completed", "build_failed", "unsupported", "timed_out", "tool_error"] },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "witness": { "anyOf": [{ "$ref": "#/$defs/witness" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "classification", "normalized_signature", "evidence_complete"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["exposure", "confirmed_violation"] },
+        "normalized_signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evidence_complete": { "type": "boolean" }
+      }
+    },
+    "witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_path", "artifact_sha256", "replay_attempts", "replay_successes"],
+      "properties": {
+        "artifact_path": {
+          "type": "string",
+          "pattern": "^(?:[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\][^/\\\\]*)(?:/(?:[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\][^/\\\\]*))*$",
+          "not": { "pattern": "(^|/)\\.\\.($|/)" }
+        },
+        "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "replay_attempts": { "type": "integer", "minimum": 0 },
+        "replay_successes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

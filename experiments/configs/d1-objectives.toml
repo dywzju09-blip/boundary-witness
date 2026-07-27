@@ -1,0 +1,6 @@
+schema_version = "boundary-witness.d1-objectives/0.1"
+policy_id = "d1-callback-lifetime"
+
+primary = ["BW-LIFE-001", "BW-LIFE-002"]
+progress = ["BW-LIFE-003"]
+secondary = ["BW-FREE-001"]

@@ -1,0 +1,11 @@
+output_dir = "$BW_RUSQLITE_OUTPUT_DIR"
+metadata_path = "$BW_RUSQLITE_METADATA_PATH"
+
+[[allowlist]]
+crate_name = "$BW_RUSQLITE_APP_CRATE"
+target = "bin"
+
+[[allowlist]]
+crate_name = "rusqlite"
+package_name = "rusqlite"
+target = "lib"

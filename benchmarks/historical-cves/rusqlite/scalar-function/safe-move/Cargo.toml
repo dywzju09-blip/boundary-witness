@@ -1,0 +1,20 @@
+[package]
+name = "bw_rusqlite_scalar_0261_safe_move"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[[bin]]
+name = "bw_rusqlite_scalar_0261_safe_move"
+path = "src/main.rs"
+
+[dependencies]
+bw-model = { path = "../../../../../crates/bw-model" }
+bw-runtime = { path = "../../../../../crates/bw-runtime" }
+rusqlite-lab-shared = { path = "../../shared" }
+rusqlite = { version = "=0.26.1", features = ["bundled", "functions", "hooks"] }
+
+[patch.crates-io]
+rusqlite = { path = "../../vendor/rusqlite-0.26.1" }

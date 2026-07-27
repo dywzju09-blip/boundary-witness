@@ -1,0 +1,20 @@
+{
+  "name": "finding_and_asan",
+  "facts": {
+    "has_contract_finding": true,
+    "has_asan_evidence": true,
+    "has_native_crash": false,
+    "has_panic": false,
+    "has_timeout": false,
+    "invalid_input": false,
+    "tool_error": false
+  },
+  "expected_primary_outcome": "contract_finding",
+  "expected_evidence": {
+    "has_contract_finding": true,
+    "has_asan_evidence": true,
+    "has_native_crash": false,
+    "has_panic": false,
+    "has_timeout": false
+  }
+}

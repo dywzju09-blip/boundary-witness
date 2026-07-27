@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bw.mir-coverage/0.1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "expected_packages",
+    "seen_packages",
+    "seen_targets",
+    "seen_bodies",
+    "skipped"
+  ],
+  "properties": {
+    "schema_version": { "const": "bw.mir-coverage/0.1" },
+    "expected_packages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/package" }
+    },
+    "seen_packages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/package" }
+    },
+    "seen_targets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/target" }
+    },
+    "seen_bodies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/body" }
+    },
+    "skipped": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/skipped" }
+    }
+  },
+  "$defs": {
+    "package": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": ["package", "version", "target"],
+      "properties": {
+        "package": { "type": "string" },
+        "version": { "type": "string" },
+        "target": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "body": {
+      "type": "object",
+      "required": ["package", "version", "target", "def_path"],
+      "properties": {
+        "package": { "type": "string" },
+        "version": { "type": "string" },
+        "target": { "type": "string" },
+        "def_path": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "skipped": {
+      "type": "object",
+      "required": ["package", "version", "target", "def_path", "reason"],
+      "properties": {
+        "package": { "type": "string" },
+        "version": { "type": "string" },
+        "target": { "type": "string" },
+        "def_path": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,20 @@
+{
+  "name": "tool_error",
+  "facts": {
+    "has_contract_finding": false,
+    "has_asan_evidence": false,
+    "has_native_crash": false,
+    "has_panic": false,
+    "has_timeout": false,
+    "invalid_input": false,
+    "tool_error": true
+  },
+  "expected_primary_outcome": "tool_error",
+  "expected_evidence": {
+    "has_contract_finding": false,
+    "has_asan_evidence": false,
+    "has_native_crash": false,
+    "has_panic": false,
+    "has_timeout": false
+  }
+}

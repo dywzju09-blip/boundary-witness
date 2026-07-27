@@ -1,0 +1,57 @@
+use std::sync::Arc;
+
+use bw_model::{CheckpointKind, SiteId};
+use bw_runtime::Tracked;
+use rusqlite::{hooks::Action, Connection};
+use rusqlite_lab_shared::{
+    runtime::{benchmark_build_id, benchmark_runtime},
+    update_hook::UpdateHookConnection,
+    BorrowedCounter,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = benchmark_runtime(
+        "run:update:0261-unregister-before-drop",
+        "trace:update:0261-unregister-before-drop",
+    )?;
+    runtime.emit_trace_start(benchmark_build_id(
+        "build:update:0261-unregister-before-drop",
+    ))?;
+
+    let sql = Connection::open_in_memory()?;
+    sql.execute("CREATE TABLE item(id INTEGER PRIMARY KEY)", [])?;
+
+    let observed = UpdateHookConnection::open(runtime.clone(), site("site:update:connection"))?;
+    let counter = Tracked::new(
+        runtime.clone(),
+        site("site:update:object"),
+        BorrowedCounter::new(),
+    );
+    let token = observed.register(site("site:update:callback"))?;
+    token.bind_object(counter.id(), &site("site:update:object"))?;
+    runtime.emit_checkpoint(CheckpointKind::Registered)?;
+
+    let callback_token = Arc::clone(&token);
+    let callback_counter = &counter;
+    sql.update_hook(Some(
+        move |action: Action, database: &str, table: &str, rowid: i64| {
+            let _ = (action, database, table);
+            let _ = callback_token.invoke(site("site:update:invoke"));
+            callback_counter.get().record(rowid);
+        },
+    ));
+
+    sql.update_hook(None::<fn(Action, &str, &str, i64)>);
+    observed.unregister(&token, site("site:update:unregister"))?;
+    runtime.emit_checkpoint(CheckpointKind::OwnerEndedOrReleased)?;
+    drop(counter);
+    sql.execute("INSERT INTO item DEFAULT VALUES", [])?;
+    observed.close(site("site:update:connection-drop"))?;
+    runtime.emit_trace_end()?;
+    runtime.finish()?;
+    Ok(())
+}
+
+fn site(value: &'static str) -> SiteId {
+    SiteId::from(value)
+}

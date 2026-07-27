@@ -1,0 +1,49 @@
+schema_version = "bw.rusqlite-runner/0.1"
+suite_id = "suite:rusqlite-m12"
+build_id = "build:rusqlite-m12"
+contract = "contracts/callback-retention/contract.toml"
+bw_binary = "target/debug/bw"
+output_dir = "experiments/runs/rusqlite-m12"
+
+# 注意：这里故意只出现 opaque case 路径。
+# 真实 vulnerability/fixed/expected 标签只允许出现在 experiments/ground-truth。
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0001.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0001"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0002.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0002"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0003.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0003"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0004.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0004"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0005.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0005"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0006.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0006"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0007.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0007"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0008.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0008"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0009.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0009"
+
+[[cases]]
+static_facts = "experiments/artifacts/rusqlite-m12/static/case-0010.jsonl"
+executable = "experiments/artifacts/rusqlite-m12/bin/case-0010"

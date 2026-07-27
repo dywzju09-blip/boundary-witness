@@ -1,0 +1,55 @@
+schema_version = "boundary-witness.d2-baselines/0.1"
+suite_id = "suite:d2-rusqlite-update-hook"
+groups = ["random_action", "coverage_only", "coverage_state"]
+
+[shared_budget]
+campaign_count = 5
+cpu_minutes = 10
+seed_list = [1784401001, 1784401002, 1784401003, 1784401004, 1784401005]
+initial_corpus_digest = "1111111111111111111111111111111111111111111111111111111111111111"
+max_sequence_len = 32
+objective_policy_digest = "2222222222222222222222222222222222222222222222222222222222222222"
+target_build_id = "build:d1:rusqlite:callback-lifecycle"
+sanitizer = "asan"
+
+[random_action]
+baseline_id = "random-action-small"
+api = "update_hook"
+target = "update_hook_actions"
+cpu_minutes = 10
+max_sequence_len = 32
+execution_budget = 1000
+seed = 1784401001
+initial_corpus = "target/d2/input/update-hook-corpus"
+artifact_dir = "target/d2/random-action/artifacts"
+objective_config = "experiments/configs/d1-objectives.toml"
+sanitizer = "asan"
+replay_repeat_count = 20
+
+[coverage_only]
+baseline_id = "coverage-only-small"
+api = "update_hook"
+target = "update_hook_coverage_only"
+cpu_minutes = 10
+max_sequence_len = 32
+initial_corpus = "target/d2/input/update-hook-corpus"
+artifact_dir = "target/d2/coverage-only/artifacts"
+objective_config = "experiments/configs/d1-objectives.toml"
+sanitizer = "asan"
+replay_repeat_count = 20
+seed = 1784401001
+contract_state_feedback = false
+
+[coverage_state]
+baseline_id = "coverage-state-small"
+api = "update_hook"
+target = "update_hook_state_feedback"
+cpu_minutes = 10
+max_sequence_len = 32
+initial_corpus = "target/d2/input/update-hook-corpus"
+artifact_dir = "target/d2/coverage-state/artifacts"
+objective_config = "experiments/configs/d1-objectives.toml"
+sanitizer = "asan"
+replay_repeat_count = 20
+seed = 1784401001
+contract_state_feedback = true

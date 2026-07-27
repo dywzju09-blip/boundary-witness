@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundaryWitness Blind Install Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "installer_version",
+    "installer_commit",
+    "method_commit",
+    "archive_sha256",
+    "deployment_json_sha256",
+    "public_manifest_sha256",
+    "policy_sha256",
+    "installed_pack_tree_sha256",
+    "installed_path",
+    "created_at_utc",
+    "host_id",
+    "trust"
+  ],
+  "properties": {
+    "schema_version": { "const": "boundary-witness.blind-install-receipt/0.1" },
+    "installer_version": { "type": "string", "minLength": 1 },
+    "installer_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "method_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "archive_sha256": { "$ref": "#/$defs/sha256" },
+    "deployment_json_sha256": { "$ref": "#/$defs/sha256" },
+    "public_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "policy_sha256": { "$ref": "#/$defs/sha256" },
+    "installed_pack_tree_sha256": { "$ref": "#/$defs/sha256" },
+    "installed_path": { "type": "string", "minLength": 1 },
+    "created_at_utc": { "type": "string", "minLength": 1 },
+    "host_id": { "type": "string", "minLength": 1 },
+    "trust": { "$ref": "#/$defs/trust" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "signature_sha256"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1 },
+        "signature_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+schema_version = "boundary-witness.d1-campaigns/0.1"
+suite_id = "d1-rusqlite-callbacks"
+
+[[campaigns]]
+campaign_id = "d1-uh-formal-001"
+api = "update_hook"
+target = "update_hook_actions"
+cpu_minutes = 30
+max_sequence_len = 32
+initial_corpus = "experiments/corpus/d1/update-hook/safe-fragments.jsonl"
+artifact_dir = "artifacts/d1/update-hook"
+objective_config = "experiments/configs/d1-objectives.toml"
+sanitizer = "asan"
+replay_repeat_count = 20
+seed = 1001
+
+[[campaigns]]
+campaign_id = "d1-uh-safe-001"
+api = "update_hook"
+target = "update_hook_safe_only"
+cpu_minutes = 30
+max_sequence_len = 32
+initial_corpus = "experiments/corpus/d1/update-hook/safe-fragments.jsonl"
+artifact_dir = "artifacts/d1/update-hook-safe-only"
+objective_config = "experiments/configs/d1-objectives.toml"
+sanitizer = "asan"
+replay_repeat_count = 20
+seed = 9001
+
+[[campaigns]]
+campaign_id = "d1-scalar-smoke-001"
+api = "create_scalar_function"
+target = "scalar_function_actions"
+cpu_minutes = 10
+max_sequence_len = 32
+initial_corpus = "experiments/corpus/d1/scalar-function/safe-fragments.jsonl"
+artifact_dir = "artifacts/d1/scalar-function"
+objective_config = "experiments/configs/d1-objectives.toml"
+sanitizer = "asan"
+replay_repeat_count = 20
+seed = 2001

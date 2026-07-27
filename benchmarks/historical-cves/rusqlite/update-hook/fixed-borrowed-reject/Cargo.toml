@@ -1,0 +1,15 @@
+[package]
+name = "bw_rusqlite_update_0262_borrowed_reject"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[[bin]]
+name = "bw_rusqlite_update_0262_borrowed_reject"
+path = "src/main.rs"
+
+[dependencies]
+rusqlite-lab-shared = { path = "../../shared" }
+rusqlite = { version = "=0.26.2", features = ["bundled", "functions", "hooks"] }

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.lifecycle-evidence.1",
+  "title": "BoundaryWitness V3.2.6 Lifecycle Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "record_id",
+    "crate_id",
+    "candidate_id",
+    "evidence_kind",
+    "source_ref",
+    "confidence"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.lifecycle_evidence.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "record_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "evidence_kind": {
+      "enum": [
+        "callback_candidate",
+        "object_candidate",
+        "capture_edge",
+        "borrow_edge",
+        "move_edge",
+        "raw_pointer_escape",
+        "foreign_register",
+        "foreign_unregister",
+        "foreign_replace",
+        "foreign_retention_hint",
+        "drop_site",
+        "drop_guard",
+        "release_site",
+        "owned_anchor",
+        "lifetime_bound",
+        "opaque_handle_transfer"
+      ]
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "line_start": { "type": ["integer", "null"], "minimum": 0 },
+        "line_end": { "type": ["integer", "null"], "minimum": 0 },
+        "symbol_path": { "type": ["string", "null"] },
+        "text_sha256": { "type": ["string", "null"] }
+      }
+    },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "details": {},
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

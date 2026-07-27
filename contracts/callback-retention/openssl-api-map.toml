@@ -1,0 +1,56 @@
+schema_version = "bw.api-map/0.1"
+map_id = "api-map:openssl-retained-user-data"
+producer = "boundary-witness@v0.1"
+contract_id = "contract:callback-retention"
+
+[[apis]]
+api_id = "api:openssl:ssl_ctx_set_ex_data:register"
+rust_path = "openssl_sys::SSL_CTX_set_ex_data"
+contract_api_id = "api:register"
+callback_family = "openssl_ssl_ctx_ex_data"
+opaque_handle_role = "set"
+opaque_binding_api_id = "api:openssl:ssl_ctx_set_ex_data:register"
+opaque_handle_arg_index = 0
+opaque_key_arg_index = 1
+opaque_payload_arg_index = 2
+opaque_generation_key = ["binding_api_id", "handle_arg", "key_arg", "payload_arg"]
+user_data_arg_indices = [2]
+notes = "SSL_CTX_set_ex_data 保存 caller-provided user-data pointer；该 pointer 绑定到 SSL_CTX ex_data slot。"
+
+[[apis]]
+api_id = "api:openssl:ssl_set_ex_data:register"
+rust_path = "openssl_sys::SSL_set_ex_data"
+contract_api_id = "api:register"
+callback_family = "openssl_ssl_ex_data"
+opaque_handle_role = "set"
+opaque_binding_api_id = "api:openssl:ssl_set_ex_data:register"
+opaque_handle_arg_index = 0
+opaque_key_arg_index = 1
+opaque_payload_arg_index = 2
+opaque_generation_key = ["binding_api_id", "handle_arg", "key_arg", "payload_arg"]
+user_data_arg_indices = [2]
+notes = "SSL_set_ex_data 保存 caller-provided user-data pointer；该 pointer 绑定到 SSL ex_data slot。"
+
+[[apis]]
+api_id = "api:openssl:ssl_ctx_get_ex_data:get"
+rust_path = "openssl_sys::SSL_CTX_get_ex_data"
+contract_api_id = "api:opaque_get"
+callback_family = "openssl_ssl_ctx_ex_data"
+opaque_handle_role = "get"
+opaque_binding_api_id = "api:openssl:ssl_ctx_set_ex_data:register"
+opaque_handle_arg_index = 0
+opaque_key_arg_index = 1
+opaque_generation_key = ["binding_api_id", "handle_arg", "key_arg"]
+notes = "SSL_CTX_get_ex_data 根据 caller-provided SSL_CTX handle 与 ex_data slot 取回此前保存的 pointer。"
+
+[[apis]]
+api_id = "api:openssl:ssl_get_ex_data:get"
+rust_path = "openssl_sys::SSL_get_ex_data"
+contract_api_id = "api:opaque_get"
+callback_family = "openssl_ssl_ex_data"
+opaque_handle_role = "get"
+opaque_binding_api_id = "api:openssl:ssl_set_ex_data:register"
+opaque_handle_arg_index = 0
+opaque_key_arg_index = 1
+opaque_generation_key = ["binding_api_id", "handle_arg", "key_arg"]
+notes = "SSL_get_ex_data 根据 caller-provided SSL handle 与 ex_data slot 取回此前保存的 pointer。"

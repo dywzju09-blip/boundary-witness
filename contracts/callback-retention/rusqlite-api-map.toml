@@ -1,0 +1,80 @@
+schema_version = "bw.api-map/0.1"
+map_id = "api-map:rusqlite-callbacks"
+producer = "boundary-witness@v0.1"
+contract_id = "contract:callback-retention"
+
+[[apis]]
+api_id = "api:rusqlite:update_hook:register"
+rust_path = "rusqlite::Connection::update_hook"
+contract_api_id = "api:register"
+callback_family = "sqlite_update_hook"
+callback_arg_indices = [1]
+user_data_arg_indices = [2]
+notes = "Some(callback) 表示注册或替换 callback。"
+
+[[apis]]
+api_id = "api:rusqlite:update_hook:unregister"
+rust_path = "rusqlite::Connection::update_hook"
+contract_api_id = "api:unregister"
+callback_family = "sqlite_update_hook"
+callback_arg_indices = [1]
+notes = "None 表示清除当前 callback。"
+
+[[apis]]
+api_id = "api:rusqlite:commit_hook:register"
+rust_path = "rusqlite::Connection::commit_hook"
+contract_api_id = "api:register"
+callback_family = "sqlite_commit_hook"
+callback_arg_indices = [1]
+user_data_arg_indices = [2]
+notes = "Some(callback) 表示注册或替换 commit callback；SQLite 侧保留 callback 与 caller-provided user-data。"
+
+[[apis]]
+api_id = "api:rusqlite:commit_hook:unregister"
+rust_path = "rusqlite::Connection::commit_hook"
+contract_api_id = "api:unregister"
+callback_family = "sqlite_commit_hook"
+callback_arg_indices = [1]
+notes = "None 表示清除当前 commit callback。"
+
+[[apis]]
+api_id = "api:rusqlite:rollback_hook:register"
+rust_path = "rusqlite::Connection::rollback_hook"
+contract_api_id = "api:register"
+callback_family = "sqlite_rollback_hook"
+callback_arg_indices = [1]
+user_data_arg_indices = [2]
+notes = "Some(callback) 表示注册或替换 rollback callback；SQLite 侧保留 callback 与 caller-provided user-data。"
+
+[[apis]]
+api_id = "api:rusqlite:rollback_hook:unregister"
+rust_path = "rusqlite::Connection::rollback_hook"
+contract_api_id = "api:unregister"
+callback_family = "sqlite_rollback_hook"
+callback_arg_indices = [1]
+notes = "None 表示清除当前 rollback callback。"
+
+[[apis]]
+api_id = "api:rusqlite:create_scalar_function:register"
+rust_path = "rusqlite::Connection::create_scalar_function"
+contract_api_id = "api:register"
+callback_family = "sqlite_scalar_function"
+callback_arg_indices = [2]
+user_data_arg_indices = [4]
+notes = "注册 SQL scalar function callback。"
+
+[[apis]]
+api_id = "api:rusqlite:set_callback_with_user_data:register"
+rust_path = "rusqlite::Connection::set_callback_with_user_data"
+contract_api_id = "api:register"
+callback_family = "sqlite_callback_user_data"
+callback_arg_indices = [1]
+user_data_arg_indices = [2]
+notes = "注册 callback 并传入 caller-owned raw user-data pointer。"
+
+[[apis]]
+api_id = "api:rusqlite:callback:invoke"
+rust_path = "SQLite callback trampoline"
+contract_api_id = "api:invoke"
+callback_family = "sqlite_callback"
+notes = "SQLite 侧进入 Rust callback trampoline。"

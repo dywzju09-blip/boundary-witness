@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.lifecycle-graph-v3.1",
+  "title": "BoundaryWitness V3.2.6 Lifecycle Graph V3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id",
+    "pattern_family",
+    "objects",
+    "edges"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.lifecycle_graph_v3.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "pattern_family": { "type": "string", "minLength": 1 },
+    "objects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/object" },
+      "minItems": 1
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" }
+    },
+    "object_chains": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/object_chain" }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "incomplete_reasons": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "line_start": { "type": ["integer", "null"], "minimum": 0 },
+        "line_end": { "type": ["integer", "null"], "minimum": 0 },
+        "symbol_path": { "type": ["string", "null"] },
+        "text_sha256": { "type": ["string", "null"] }
+      }
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "object_kind", "label"],
+      "properties": {
+        "object_id": { "type": "string", "minLength": 1 },
+        "object_kind": {
+          "enum": [
+            "callback",
+            "user_data",
+            "rust_owner",
+            "returned_ref",
+            "storage",
+            "static_site",
+            "foreign_owner",
+            "release_endpoint",
+            "opaque_handle",
+            "unknown"
+          ]
+        },
+        "label": { "type": "string", "minLength": 1 },
+        "source_ref": { "anyOf": [{ "$ref": "#/$defs/source_ref" }, { "type": "null" }] },
+        "fact_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "edge_id",
+        "from_object_id",
+        "to_object_id",
+        "relation",
+        "ordering"
+      ],
+      "properties": {
+        "edge_id": { "type": "string", "minLength": 1 },
+        "from_object_id": { "type": "string", "minLength": 1 },
+        "to_object_id": { "type": "string", "minLength": 1 },
+        "relation": {
+          "enum": [
+            "register",
+            "retain",
+            "replace",
+            "release",
+            "drop",
+            "borrow",
+            "persist",
+            "invalidate",
+            "use",
+            "move",
+            "raw_escape",
+            "callback_trigger"
+          ]
+        },
+        "ordering": { "enum": ["before", "after", "same_site", "unknown"] },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "fact_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "object_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chain_id", "chain_status"],
+      "properties": {
+        "chain_id": { "type": "string", "minLength": 1 },
+        "object_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "edge_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "fact_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "verified_layers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/object_chain_layer" }
+        },
+        "missing_layers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/object_chain_layer" }
+        },
+        "chain_status": {
+          "enum": [
+            "verified_static_chain",
+            "partial_chain",
+            "ambiguous_chain",
+            "observation_only"
+          ]
+        }
+      }
+    },
+    "object_chain_layer": {
+      "enum": [
+        "identity_transport",
+        "lifecycle_ordering",
+        "complete_risk_chain"
+      ]
+    }
+  }
+}

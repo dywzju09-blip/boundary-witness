@@ -1,0 +1,52 @@
+{
+  "schema_version": "v3.2.lifecycle_graph.1",
+  "run_id": "v3-2-lifecycle-sample",
+  "candidate_id": "candidate:ffi-wrapper:callback-registration:0001",
+  "crate_id": "crate:ffi-wrapper:0.1.0",
+  "pattern_family": "retained_borrowed_callback",
+  "nodes": [
+    {
+      "node_id": "n1",
+      "node_kind": "rust_object",
+      "label": "callback-capture-object",
+      "lifetime_role": "borrowed"
+    },
+    {
+      "node_id": "n2",
+      "node_kind": "foreign_api",
+      "label": "register_callback",
+      "lifetime_role": "external_retained"
+    },
+    {
+      "node_id": "n3",
+      "node_kind": "foreign_owner",
+      "label": "external-owner",
+      "lifetime_role": "external_retained"
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n2",
+      "edge_kind": "registered_into_foreign_api",
+      "evidence_ref": "src/lib.rs:12"
+    },
+    {
+      "from": "n2",
+      "to": "n3",
+      "edge_kind": "foreign_retains",
+      "evidence_ref": "src/lib.rs:12"
+    }
+  ],
+  "risk_features": {
+    "foreign_retention_without_owned_anchor": true,
+    "missing_unregister_before_drop": true,
+    "cross_language_alias": true,
+    "opaque_handle_without_owner": false,
+    "callback_retained_across_drop": true
+  },
+  "notes": [
+    "lifecycle graph tracks boundary-related objects only",
+    "graph is not a vulnerability conclusion"
+  ]
+}

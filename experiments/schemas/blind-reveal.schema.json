@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundaryWitness Blind Reveal Output",
+  "oneOf": [
+    { "$ref": "#/$defs/reveal_report" },
+    { "$ref": "#/$defs/gate_decision" }
+  ],
+  "$defs": {
+    "reveal_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "suite_id",
+        "split",
+        "method_commit",
+        "public_manifest_sha256",
+        "policy_sha256",
+        "ground_truth_sha256",
+        "run_id",
+        "deployment_sha256",
+        "run_checksums_sha256",
+        "observations_sha256",
+        "total_cases",
+        "cases",
+        "integrity_errors"
+      ],
+      "properties": {
+        "schema_version": { "const": "boundary-witness.blind-reveal/0.1" },
+        "suite_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "split": { "enum": ["gate", "evaluation"] },
+        "method_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "public_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "policy_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "ground_truth_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "run_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "deployment_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "run_checksums_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "observations_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "total_cases": { "type": "integer", "minimum": 0 },
+        "cases": { "type": "array", "items": { "$ref": "#/$defs/revealed_case" } },
+        "integrity_errors": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "revealed_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "curator_key",
+        "role",
+        "component",
+        "api",
+        "root_cause_key",
+        "paired_case_ids",
+        "source_revision",
+        "status",
+        "findings",
+        "witness"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" },
+        "curator_key": { "type": "string", "minLength": 1 },
+        "role": { "enum": ["violation", "safe_control", "fixed_control"] },
+        "component": { "type": "string", "minLength": 1 },
+        "api": { "type": "string", "minLength": 1 },
+        "root_cause_key": { "type": "string", "minLength": 1 },
+        "paired_case_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" }
+        },
+        "source_revision": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["completed", "build_failed", "unsupported", "timed_out", "tool_error"] },
+        "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+        "witness": { "oneOf": [{ "$ref": "#/$defs/witness" }, { "type": "null" }] }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "classification", "normalized_signature", "evidence_complete"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["exposure", "confirmed_violation"] },
+        "normalized_signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evidence_complete": { "type": "boolean" }
+      }
+    },
+    "witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_path", "artifact_sha256", "replay_attempts", "replay_successes"],
+      "properties": {
+        "artifact_path": { "type": "string", "minLength": 1 },
+        "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "replay_attempts": { "type": "integer", "minimum": 0 },
+        "replay_successes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "gate_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "suite_id",
+        "split",
+        "method_commit",
+        "public_manifest_sha256",
+        "deployment_sha256",
+        "run_id",
+        "run_checksums_sha256",
+        "observations_sha256",
+        "reveal_report_sha256",
+        "gate_passed",
+        "minimum_confirmed_cases",
+        "passed_violation_cases",
+        "confirmed_root_causes",
+        "control_failures",
+        "incomplete_cases"
+      ],
+      "properties": {
+        "schema_version": { "const": "boundary-witness.blind-reveal/0.1" },
+        "suite_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "split": { "const": "gate" },
+        "method_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "public_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "deployment_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "run_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "run_checksums_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "observations_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reveal_report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "gate_passed": { "type": "boolean" },
+        "minimum_confirmed_cases": { "type": "integer", "minimum": 1 },
+        "passed_violation_cases": { "type": "integer", "minimum": 0 },
+        "confirmed_root_causes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "control_failures": { "type": "array", "items": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" } },
+        "incomplete_cases": { "type": "array", "items": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" } }
+      }
+    }
+  }
+}

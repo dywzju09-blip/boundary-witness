@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundary-witness.local/schemas/run-integrity.schema.json",
+  "title": "BoundaryWitness finalized run summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "status",
+    "finalized_at_utc",
+    "required_trace_files",
+    "required_log_files",
+    "user_summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "boundary-witness.run-integrity/0.1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "const": "finalized"
+    },
+    "finalized_at_utc": {
+      "type": "string",
+      "minLength": 1
+    },
+    "required_trace_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "required_log_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "user_summary": true
+  }
+}

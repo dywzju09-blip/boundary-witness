@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundaryWitness Blind Public Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "split", "method_commit", "policy_sha256", "cases"],
+  "properties": {
+    "schema_version": { "const": "boundary-witness.blind-public/0.1" },
+    "suite_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "split": { "enum": ["gate", "evaluation"] },
+    "method_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "policy_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "cases": { "type": "array", "items": { "$ref": "#/$defs/case" } }
+  },
+  "$defs": {
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["program", "args", "env"],
+      "properties": {
+        "program": { "type": "string", "pattern": "^(?:[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\][^/\\\\]*)(?:/(?:[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\][^/\\\\]*))*$" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "case_root", "case_sha256", "command", "timeout_seconds"],
+      "properties": {
+        "case_id": { "type": "string", "pattern": "^blind-[0-9a-f]{16}$" },
+        "case_root": { "type": "string", "pattern": "^cases/blind-[0-9a-f]{16}$" },
+        "case_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "command": { "$ref": "#/$defs/command" },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

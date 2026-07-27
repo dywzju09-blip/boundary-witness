@@ -1,0 +1,86 @@
+schema_version = "boundary-witness.d0-ground-truth/0.1"
+suite_id = "d0-rusqlite-callbacks"
+
+[[cases]]
+case_id = "d0-uh-001"
+api = "update_hook"
+scenario = "vulnerable_borrowed"
+expectation = "confirmed_violation"
+cves = []
+
+[[cases]]
+case_id = "d0-uh-002"
+api = "update_hook"
+scenario = "safe_move"
+expectation = "clean"
+cves = []
+
+[[cases]]
+case_id = "d0-uh-003"
+api = "update_hook"
+scenario = "unregister_before_drop"
+expectation = "clean"
+cves = []
+
+[[cases]]
+case_id = "d0-uh-004"
+api = "update_hook"
+scenario = "no_trigger"
+expectation = "exposure_only"
+cves = []
+
+[[cases]]
+case_id = "d0-uh-005"
+api = "update_hook"
+scenario = "fixed_runnable"
+expectation = "clean"
+cves = []
+
+[[cases]]
+case_id = "d0-uh-006"
+api = "update_hook"
+scenario = "fixed_borrowed_compile_rejection"
+expectation = "compile_rejection"
+cves = []
+
+[[cases]]
+case_id = "d0-sf-001"
+api = "create_scalar_function"
+scenario = "vulnerable_borrowed"
+expectation = "confirmed_violation"
+cves = []
+
+[[cases]]
+case_id = "d0-sf-002"
+api = "create_scalar_function"
+scenario = "safe_move"
+expectation = "clean"
+cves = []
+
+[[cases]]
+case_id = "d0-sf-003"
+api = "create_scalar_function"
+scenario = "unregister_before_drop"
+expectation = "clean"
+cves = []
+
+[[cases]]
+case_id = "d0-sf-004"
+api = "create_scalar_function"
+scenario = "no_trigger"
+expectation = "exposure_only"
+cves = []
+
+[[cases]]
+case_id = "d0-sf-005"
+api = "create_scalar_function"
+scenario = "fixed_runnable"
+expectation = "clean"
+cves = []
+
+[[cases]]
+case_id = "d0-sf-006"
+api = "create_scalar_function"
+scenario = "fixed_borrowed_compile_rejection"
+expectation = "compile_rejection"
+cves = []

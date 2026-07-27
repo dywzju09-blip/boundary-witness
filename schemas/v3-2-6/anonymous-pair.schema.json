@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.anonymous-pair.1",
+  "title": "BoundaryWitness V3.2.6 Anonymous Pair",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "pair_id",
+    "left_crate_id",
+    "right_crate_id",
+    "relation_hint",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.anonymous_pair.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "pair_id": { "type": "string", "minLength": 1 },
+    "left_crate_id": { "type": "string", "minLength": 1 },
+    "right_crate_id": { "type": "string", "minLength": 1 },
+    "relation_hint": { "type": "string", "minLength": 1 },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

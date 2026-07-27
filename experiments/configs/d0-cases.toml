@@ -1,0 +1,87 @@
+schema_version = "boundary-witness.d0-cases/0.1"
+suite_id = "d0-rusqlite-callbacks"
+repetitions = 20
+timeout_ms = 5000
+compile_timeout_ms = 120000
+
+[[cases]]
+case_id = "d0-uh-001"
+api = "update_hook"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-uh-001.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-uh-001"
+
+[[cases]]
+case_id = "d0-uh-002"
+api = "update_hook"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-uh-002.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-uh-002"
+
+[[cases]]
+case_id = "d0-uh-003"
+api = "update_hook"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-uh-003.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-uh-003"
+
+[[cases]]
+case_id = "d0-uh-004"
+api = "update_hook"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-uh-004.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-uh-004"
+
+[[cases]]
+case_id = "d0-uh-005"
+api = "update_hook"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-uh-005.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-uh-005"
+
+[[cases]]
+case_id = "d0-uh-006"
+api = "update_hook"
+operation = "compile_check"
+source = "experiments/artifacts/d0/source/d0-uh-006"
+
+[[cases]]
+case_id = "d0-sf-001"
+api = "create_scalar_function"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-sf-001.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-sf-001"
+
+[[cases]]
+case_id = "d0-sf-002"
+api = "create_scalar_function"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-sf-002.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-sf-002"
+
+[[cases]]
+case_id = "d0-sf-003"
+api = "create_scalar_function"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-sf-003.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-sf-003"
+
+[[cases]]
+case_id = "d0-sf-004"
+api = "create_scalar_function"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-sf-004.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-sf-004"
+
+[[cases]]
+case_id = "d0-sf-005"
+api = "create_scalar_function"
+operation = "run"
+static_facts = "experiments/artifacts/d0/static/d0-sf-005.jsonl"
+executable = "experiments/artifacts/d0/bin/d0-sf-005"
+
+[[cases]]
+case_id = "d0-sf-006"
+api = "create_scalar_function"
+operation = "compile_check"
+source = "experiments/artifacts/d0/source/d0-sf-006"

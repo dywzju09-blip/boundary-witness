@@ -1,0 +1,13 @@
+schema_version = "bw.api-map/0.1"
+map_id = "api-map:diesel-sqlite-create-function"
+producer = "boundary-witness@v0.1"
+contract_id = "contract:callback-retention"
+
+[[apis]]
+api_id = "api:diesel:sqlite3_create_function_v2:register"
+rust_path = "diesel::sqlite::connection::ffi::sqlite3_create_function_v2"
+contract_api_id = "api:register"
+callback_family = "diesel_sqlite_create_function"
+callback_arg_indices = [5, 6, 7]
+user_data_arg_indices = [4]
+notes = "Diesel sqlite raw wrapper passes caller-provided function state as sqlite user-data and provides a destructor callback."

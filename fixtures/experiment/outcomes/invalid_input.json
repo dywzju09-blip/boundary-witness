@@ -1,0 +1,20 @@
+{
+  "name": "invalid_input",
+  "facts": {
+    "has_contract_finding": false,
+    "has_asan_evidence": false,
+    "has_native_crash": false,
+    "has_panic": false,
+    "has_timeout": false,
+    "invalid_input": true,
+    "tool_error": false
+  },
+  "expected_primary_outcome": "invalid_input",
+  "expected_evidence": {
+    "has_contract_finding": false,
+    "has_asan_evidence": false,
+    "has_native_crash": false,
+    "has_panic": false,
+    "has_timeout": false
+  }
+}

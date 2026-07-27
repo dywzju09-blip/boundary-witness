@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.witness-plan.1",
+  "title": "BoundaryWitness V3.2.6 Witness Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "plan_id",
+    "candidate_id",
+    "lifecycle_graph_ref",
+    "actions"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.witness_plan.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "lifecycle_graph_ref": { "type": "string", "minLength": 1 },
+    "actions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/action" },
+      "minItems": 1
+    },
+    "runtime_observers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "oracle_assertions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "replay_evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "action_kind"],
+      "properties": {
+        "action_id": { "type": "string", "minLength": 1 },
+        "action_kind": {
+          "enum": [
+            "setup_controlled_fixture",
+            "register_callback",
+            "replace_or_unregister",
+            "drop_rust_owner",
+            "persist_returned_view",
+            "invalidate_owner",
+            "use_returned_view",
+            "run_miri_check",
+            "trigger_callback_in_local_harness",
+            "collect_oracle_evidence"
+          ]
+        },
+        "graph_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

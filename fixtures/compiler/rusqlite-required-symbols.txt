@@ -1,0 +1,9 @@
+# Format: <package> <version> <target> <symbol-fragment>
+rusqlite 0.26.1 lib update_hook
+rusqlite 0.26.1 lib update_hook::call_boxed_closure
+rusqlite 0.26.1 lib create_scalar_function
+rusqlite 0.26.1 lib create_scalar_function::call_boxed_closure
+rusqlite 0.26.2 lib update_hook
+rusqlite 0.26.2 lib update_hook::call_boxed_closure
+rusqlite 0.26.2 lib create_scalar_function
+rusqlite 0.26.2 lib create_scalar_function::call_boxed_closure

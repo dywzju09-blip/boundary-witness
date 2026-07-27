@@ -1,0 +1,2 @@
+{"schema_version":"bw.static/0.1","record_id":"fact:object","producer":"bw-rustc@test-commit","build_id":"build:test","payload":{"kind":"object_site","site_id":"site:object","semantic_site_key":"semantic:object","type_name":"TrackedState"}}
+{"schema_version":"bw.static/0.1","record_id":"fact:capture","producer":"bw-rustc@test-commit","build_id":"build:test","payload":{"kind":"callback_capture","site_id":"site:capture","semantic_site_key":"semantic:capture","callback_site_id":"site:callback","object_site_id":"site:object","capture_ordinal":0,"capture_mode":"borrowed"}}

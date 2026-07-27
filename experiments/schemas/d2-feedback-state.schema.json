@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundary-witness.local/schemas/d2-feedback-state.schema.json",
+  "title": "BoundaryWitness D2 Feedback State Snapshot",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "states",
+    "feedback_key",
+    "transition_count",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "bw.feedback-state/0.1"
+    },
+    "states": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "borrowed_retained",
+          "borrow_ended_retained",
+          "invoked_after_end",
+          "released_before_end",
+          "closed_owner_with_retained_callback"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "feedback_key": {
+      "type": "string"
+    },
+    "transition_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["state", "first_event", "context", "count"],
+        "properties": {
+          "state": {
+            "enum": [
+              "borrowed_retained",
+              "borrow_ended_retained",
+              "invoked_after_end",
+              "released_before_end",
+              "closed_owner_with_retained_callback"
+            ]
+          },
+          "first_event": {
+            "type": "string"
+          },
+          "context": {
+            "enum": [
+              "borrowed_capture_retained_callback",
+              "borrow_ended_retained_callback",
+              "callback_invoked_after_borrow_end",
+              "callback_released_before_borrow_end",
+              "owner_closed_before_callback_release"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

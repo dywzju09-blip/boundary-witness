@@ -1,0 +1,24 @@
+[package]
+name = "bw-experiment"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+arbitrary.workspace = true
+bw-model = { path = "../bw-model" }
+bw-oracle = { path = "../bw-oracle" }
+bw-runtime = { path = "../bw-runtime" }
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

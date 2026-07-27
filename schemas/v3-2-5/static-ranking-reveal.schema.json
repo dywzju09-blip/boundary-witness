@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-5.static-ranking-reveal.1",
+  "title": "BoundaryWitness V3.2.5 Static Ranking Reveal Summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "suite_id",
+    "ranked_candidates_sha256",
+    "ground_truth_sha256",
+    "top_k_values",
+    "metrics",
+    "miss_class_counts",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.5.static_ranking_reveal.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "ranked_candidates_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "ground_truth_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "top_k_values": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vulnerable_sample_count",
+        "control_sample_count",
+        "buildable_vulnerable_count",
+        "nday_candidate_hit_count",
+        "top1_hit_count",
+        "top5_hit_count",
+        "top10_hit_count",
+        "ranking_miss_count",
+        "boundary_miss_count",
+        "build_failure_count",
+        "false_positive_control_count",
+        "paired_control_clean_count"
+      ],
+      "properties": {
+        "vulnerable_sample_count": { "type": "integer", "minimum": 0 },
+        "control_sample_count": { "type": "integer", "minimum": 0 },
+        "buildable_vulnerable_count": { "type": "integer", "minimum": 0 },
+        "nday_candidate_hit_count": { "type": "integer", "minimum": 0 },
+        "top1_hit_count": { "type": "integer", "minimum": 0 },
+        "top5_hit_count": { "type": "integer", "minimum": 0 },
+        "top10_hit_count": { "type": "integer", "minimum": 0 },
+        "ranking_miss_count": { "type": "integer", "minimum": 0 },
+        "boundary_miss_count": { "type": "integer", "minimum": 0 },
+        "build_failure_count": { "type": "integer", "minimum": 0 },
+        "false_positive_control_count": { "type": "integer", "minimum": 0 },
+        "paired_control_clean_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "miss_class_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

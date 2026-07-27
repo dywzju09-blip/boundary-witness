@@ -1,0 +1,3 @@
+{"schema_version":"bw.trace/0.1","record_id":"event:1","run_id":"run:test","trace_id":"trace:test","seq":0,"thread_id":"main","source":"bw-runtime","payload":{"kind":"trace_start","build_id":"build:test"}}
+{"schema_version":"bw.trace/0.1","record_id":"event:2","run_id":"run:test","trace_id":"trace:test","seq":1,"thread_id":"main","source":"bw-runtime","payload":{"kind":"object_create","instance_id":"object:1","site_id":"site:object","object_kind":"tracked","epoch":0,"address_diag":null}}
+{"schema_version":"bw.trace/0.1","record_id":"event:3","run_id":"run:test","trace_id":"trace:test","seq":1,"thread_id":"main","source":"bw-runtime","payload":{"kind":"checkpoint","checkpoint":"registered"}}

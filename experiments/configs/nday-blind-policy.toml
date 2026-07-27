@@ -1,0 +1,17 @@
+schema_version = "boundary-witness.blind-policy/0.1"
+minimum_replay_attempts = 20
+gate_minimum_confirmed_cases = 1
+forbidden_public_filename_tokens = [
+  "ground-truth",
+  "ground_truth",
+  "cve-",
+  "ghsa-",
+  "advisory",
+  "poc",
+  "proof-of-concept",
+  "proof_of_concept",
+  "expected-result",
+  "expected_result",
+  "expected result",
+  "private",
+]

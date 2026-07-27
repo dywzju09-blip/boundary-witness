@@ -1,0 +1,55 @@
+[package]
+name = "rusqlite-lab-shared-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+bw-experiment = { path = "../../../../../crates/bw-experiment" }
+bw-fuzz-observer = { path = "../../../../../crates/bw-fuzz-observer" }
+bw-model = { path = "../../../../../crates/bw-model" }
+libfuzzer-sys = "0.4"
+rusqlite-lab-shared = { path = ".." }
+
+[patch.crates-io]
+rusqlite = { path = "../../vendor/rusqlite-0.26.1" }
+
+[[bin]]
+name = "update_hook_actions"
+path = "fuzz_targets/update_hook_actions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "update_hook_safe_only"
+path = "fuzz_targets/update_hook_safe_only.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "update_hook_coverage_only"
+path = "fuzz_targets/update_hook_coverage_only.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "update_hook_state_feedback"
+path = "fuzz_targets/update_hook_state_feedback.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scalar_function_actions"
+path = "fuzz_targets/scalar_function_actions.rs"
+test = false
+doc = false
+bench = false

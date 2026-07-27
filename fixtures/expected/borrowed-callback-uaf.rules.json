@@ -1,0 +1,9 @@
+{
+  "core_rule_ids": ["BW-LIFE-002"],
+  "exposure_rule_ids": ["BW-LIFE-003"],
+  "required_checkpoints": [
+    "registered",
+    "owner_ended_or_released",
+    "later_callback_phase"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "native_signal",
+  "facts": {
+    "has_contract_finding": false,
+    "has_asan_evidence": false,
+    "has_native_crash": true,
+    "has_panic": false,
+    "has_timeout": false,
+    "invalid_input": false,
+    "tool_error": false
+  },
+  "expected_primary_outcome": "native_crash",
+  "expected_evidence": {
+    "has_contract_finding": false,
+    "has_asan_evidence": false,
+    "has_native_crash": true,
+    "has_panic": false,
+    "has_timeout": false
+  }
+}

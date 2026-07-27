@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundary-witness.v3-2-6.lifecycle-coverage.1",
+  "title": "BoundaryWitness V3.2.6 Lifecycle Coverage",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "candidate_id",
+    "crate_id"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3.2.6.lifecycle_coverage.1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "crate_id": { "type": "string", "minLength": 1 },
+    "covered_function_bodies": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "covered_trait_impls": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "covered_drop_impls": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "unavailable_paths": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/coverage_gap" }
+    },
+    "fact_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "coverage_gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "reason"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "reason": {
+          "enum": [
+            "macro_expansion",
+            "missing_dependency",
+            "compile_cfg",
+            "insufficient_span",
+            "source_only_fallback",
+            "static_facts_missing",
+            "drop_impl_unavailable"
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

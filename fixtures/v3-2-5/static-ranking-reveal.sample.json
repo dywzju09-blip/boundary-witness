@@ -1,0 +1,30 @@
+{
+  "schema_version": "v3.2.5.static_ranking_reveal.1",
+  "run_id": "v3-2-5-smoke-sample",
+  "suite_id": "suite.v3-2-5.nday.smoke.sample",
+  "ranked_candidates_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "ground_truth_sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+  "top_k_values": [1, 5, 10],
+  "metrics": {
+    "vulnerable_sample_count": 1,
+    "control_sample_count": 1,
+    "buildable_vulnerable_count": 1,
+    "nday_candidate_hit_count": 1,
+    "top1_hit_count": 1,
+    "top5_hit_count": 1,
+    "top10_hit_count": 1,
+    "ranking_miss_count": 0,
+    "boundary_miss_count": 0,
+    "build_failure_count": 0,
+    "false_positive_control_count": 0,
+    "paired_control_clean_count": 1
+  },
+  "miss_class_counts": {
+    "hit_top_k": 1
+  },
+  "notes": [
+    "synthetic fixture only",
+    "static ranking blind smoke",
+    "not a vulnerability conclusion"
+  ]
+}

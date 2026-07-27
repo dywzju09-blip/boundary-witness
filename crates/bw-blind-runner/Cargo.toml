@@ -1,0 +1,24 @@
+[package]
+name = "bw-blind-runner"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bw-blind-model = { path = "../bw-blind-model" }
+bw-experiment = { path = "../bw-experiment" }
+clap.workspace = true
+libc.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
