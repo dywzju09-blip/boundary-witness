@@ -400,13 +400,13 @@ impl CompilerConfig {
                 actual: actual_manifest_sha256,
             });
         }
-        let manifest: CallbackRetentionApiMapRegistryManifest = serde_json::from_slice(
-            &manifest_bytes,
-        )
-        .map_err(|source| ConfigError::RegistryManifestJsonParse {
-            path: manifest_path.clone(),
-            source,
-        })?;
+        let manifest: CallbackRetentionApiMapRegistryManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|source| {
+                ConfigError::RegistryManifestJsonParse {
+                    path: manifest_path.clone(),
+                    source,
+                }
+            })?;
         if manifest.schema != CALLBACK_RETENTION_API_MAP_REGISTRY_MANIFEST_SCHEMA_V01 {
             return Err(ConfigError::RegistryManifestSchema {
                 path: manifest_path,
@@ -497,12 +497,13 @@ impl CompilerConfig {
         }
         let resolved_manifest_registry_path =
             resolve_manifest_relative_path(manifest_path, manifest_registry_path);
-        let manifest_registry_bytes = fs::read(&resolved_manifest_registry_path).map_err(
-            |source| ConfigError::RegistryRead {
-                path: resolved_manifest_registry_path.clone(),
-                source,
-            },
-        )?;
+        let manifest_registry_bytes =
+            fs::read(&resolved_manifest_registry_path).map_err(|source| {
+                ConfigError::RegistryRead {
+                    path: resolved_manifest_registry_path.clone(),
+                    source,
+                }
+            })?;
         let actual_registry_sha256 = sha256_hex(&manifest_registry_bytes);
         if actual_registry_sha256 != registry_sha256.to_ascii_lowercase() {
             return Err(ConfigError::RegistryChecksumMismatch {
@@ -856,7 +857,12 @@ impl fmt::Display for ConfigError {
                 write!(formatter, "registry {}: {}", path.display(), source)
             }
             Self::RegistryUtf8 { path, source } => {
-                write!(formatter, "registry {} is not valid UTF-8: {}", path.display(), source)
+                write!(
+                    formatter,
+                    "registry {} is not valid UTF-8: {}",
+                    path.display(),
+                    source
+                )
             }
             Self::CallbackApiMap { path, source } => {
                 write!(formatter, "callback API map {}: {}", path.display(), source)
