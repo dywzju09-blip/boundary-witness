@@ -1,0 +1,15 @@
+.git
+.github
+.superpowers
+.worktrees
+target
+**/target
+artifacts
+results
+runs
+cache
+logs
+.DS_Store
+*.log
+*.local.toml
+*.local.json

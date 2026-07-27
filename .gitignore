@@ -1,1 +1,37 @@
+# Rust build output
+/target/
+**/target/
+
+# BoundaryWitness generated data
+/artifacts/
+/results/
+/runs/
+/cache/
+/logs/
+*.log
+*.profraw
+
+# Private or large data
+/boundary-witness-data/
+/private/
+/private-results/
+/holdout/
+/sealed-holdout/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+*.local.toml
+*.local.json
+
+# Agent and worktree state
+.superpowers/
 .worktrees/
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.tmp
