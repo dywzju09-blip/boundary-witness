@@ -75,22 +75,22 @@ VPS 不保存完整 corpus，也不承担大规模验证。数据无需加密，
 
 ## 4. 非破坏式迁移
 
-源目录为：
+源工作区由本地环境变量标识：
 
 ```text
-/Users/dingyanwen/Desktop/CodeLearn/boundary-witness
+BW_SOURCE_WORKSPACE
 ```
 
-目标整理目录为：
+目标整理目录由本地环境变量标识：
 
 ```text
-/Users/dingyanwen/Desktop/CodeLearn/boundary-witness-github
+BW_TARGET_REPOSITORY
 ```
 
-私有索引目录为：
+私有索引目录由本地环境变量标识：
 
 ```text
-/Users/dingyanwen/Desktop/CodeLearn/boundary-witness-data-index
+BW_DATA_INDEX_REPOSITORY
 ```
 
 迁移采用选择性复制，不在源目录中执行删除、移动、覆盖、Git 清理或历史改写。目标仓库独立初始化 Git，只复制经过分类确认的内容。
