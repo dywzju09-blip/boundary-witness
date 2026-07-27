@@ -37,6 +37,6 @@ cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
 
 ## 常见阻塞
 
-- `cargo test -p bw-experiment --locked` 当前因 ASan parser fixture 未迁入公开仓库而处于 `Blocked`，不能作为全仓 green gate。
+- `cargo test -p bw-experiment --locked` 只覆盖公开 fixtures 上的实验组件测试，不能替代 formal run 或 public regression。
 - D0/D1/D2 formal run 还依赖 Linux 环境、固定 artifact、真实 image digest 和对齐的 run manifest。
 - V3.3 gate 未通过；任何本地小测试成功都不能升级为 `Verified` 结论。

@@ -1,0 +1,5 @@
+==12345==ERROR: AddressSanitizer: heap-use-after-free on address 0x000000000010
+READ of size 8 at 0x000000000010 thread T0
+    #0 0x1000 in rusqlite_update_hook_callback /workspace/rusqlite/src/hooks.rs:42:7
+    #1 0x2000 in sqlite3_update_hook /workspace/sqlite3.c:900:3
+SUMMARY: AddressSanitizer: heap-use-after-free /workspace/rusqlite/src/hooks.rs:42:7 in rusqlite_update_hook_callback

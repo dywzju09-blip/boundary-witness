@@ -49,7 +49,7 @@ rusqlite API map 当前覆盖 `update_hook`、`commit_hook`、`rollback_hook` �
 
 - 历史 D1 formal：`unix1784400047-f3fa5ed-d1formal` 为 30/30 primary、每个 20/20 replay；第二 API smoke 为 3/3。详见 [D1 result](../experiments/results/d1-structured-search-2026-07-19.md)。
 - 历史 M12 blind gate：10/10 completed、2 个 confirmed case 各 20/20 replay、controls clean。详见 [M12 result](../experiments/results/rusqlite-m12-blind-gate-2026-07-20.md)。
-- 这些 evidence 绑定旧 commits；当前迁移 commit 没有新 formal run。`bw-experiment` 的 ASan parser fixtures 不完整，完整 experiment regression 仍 Blocked。
+- 这些 evidence 绑定旧 commits；当前迁移 commit 没有新 formal run。公开 ASan parser fixtures 只支撑组件测试，完整 experiment regression 仍需新的对齐 run。
 
 ## 当前检测覆盖
 

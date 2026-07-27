@@ -20,7 +20,7 @@ Public regression 使用已揭示、可公开审计的数据检查当前 core-ef
 1. 当前 commit clean，compiler wrapper 与 `bw --help` 已核对。
 2. public corpus 的每个 source_ref 已物化；dataset manifest 与 checksum 可验证。
 3. callback-retention Contract/API maps 已 materialize 并审计。
-4. `bw-experiment` 全量测试目前因缺少两个 ASan parser fixture 而 Blocked；约 100-crate pilot 和统一 regression orchestrator 也尚未提供。
+4. `bw-experiment` 组件测试可使用公开 fixtures 运行；约 100-crate pilot 和统一 regression orchestrator 尚未提供。
 
 ## 精确命令入口与阻塞边界
 

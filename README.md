@@ -91,7 +91,7 @@ cargo check --manifest-path compiler/bw-rustc/Cargo.toml --locked
 
 PR 层运行格式、workspace check、核心 crate 测试和相关 compiler 测试；VPS smoke 验证部署链；本地或受控环境执行 public regression、D0/D1/D2 formal、约 100 crate pilot 和 sealed holdout。
 
-`cargo test -p bw-experiment --locked` 当前因 ASan parser fixture 未进入公开仓库而处于 `Blocked`，不得写成全仓 green。测试策略见 [testing strategy](docs/development/testing-strategy.md)。
+`cargo test -p bw-experiment --locked` 可用公开 fixtures 运行组件测试；这仍不等于当前 commit 上已经完成 D0/D1/D2 formal 或 public regression。测试策略见 [testing strategy](docs/development/testing-strategy.md)。
 
 ## 数据与复现
 

@@ -9,6 +9,7 @@
 /cache/
 /logs/
 *.log
+!fixtures/experiment/asan/*.log
 *.profraw
 
 # Private or large data

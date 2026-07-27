@@ -48,4 +48,4 @@ public regression、约 100 crate pilot 和 sealed holdout 都属于该层。结
 
 ## 已知测试边界
 
-`bw-experiment` 完整测试当前为 `Blocked`，因为 ASan parser fixture 未进入公开仓库。不得删除测试、跳过测试、放宽 validator 或把该阻塞解释为方法阴性。补齐 fixture 后应重新运行并更新 [current-status](../project/current-status.md)。
+`bw-experiment` 组件测试依赖公开 `fixtures/experiment/asan/` 与 outcome fixtures。测试通过只能说明 parser、runner、summary 和 fuzz 基础在公开 fixtures 上受约束；不得把它解释为 D0/D1/D2 formal、public regression 或 V3.3 gate 通过。

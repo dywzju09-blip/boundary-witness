@@ -17,7 +17,6 @@
 | `Implemented` | runtime、oracle 与 fuzz observer 基础 | 组件测试通过；不是任意候选 executor |
 | `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状，尚未达到普遍能力 |
 | `Planned` | 通用 dynamic witness executor | witness plan 到自动 harness/executor/receipt 的闭环不完整 |
-| `Blocked` | 迁移后的完整 `bw-experiment` 测试集 | ASan parser 测试所需 fixture 未迁入，当前无法全绿 |
 | `Blocked` | V3.3、约 100 crate pilot、sealed holdout | clean method commit、完整 public regression、pilot、freeze 与新 sealed smoke 尚未全部完成 |
 | `Deprecated` | 以 `verified_static_chain` 单字段代表所有证明层 | 字段仅作兼容保留，规范语义改用 `verified_layers`/`missing_layers` |
 | `Verified` | 当前迁移仓库中的正式实验能力结论 | 无；仓库内尚无与当前迁移 commit 对齐的完整运行证据可支撑新的 `Verified` 声明 |
@@ -139,7 +138,7 @@ runtime 能记录对象和 callback 事件；oracle 能融合 static/runtime/con
   - `crates/bw-oracle/tests/`
   - `crates/bw-fuzz-observer/tests/`
 
-这些测试证明组件行为，不构成当前迁移 commit 上的正式动态实验记录，因此不标为 `Verified`。`bw-experiment` 与 rusqlite 定向 harness 的代码和测试虽然已迁入，但完整实验测试集当前有明确 fixture 缺口，见下文。
+这些测试证明组件行为，不构成当前迁移 commit 上的正式动态实验记录，因此不标为 `Verified`。`bw-experiment` 与 rusqlite 定向 harness 的代码和公开 fixtures 已迁入，可用于组件级测试，但 formal D0/D1/D2 和 public regression 仍需要独立 run manifest、checksum 与对照证据。
 
 ## Planned：仍不完整的核心能力
 
@@ -156,13 +155,11 @@ runtime 能记录对象和 callback 事件；oracle 能融合 static/runtime/con
 
 ## Blocked：V3.3 与正式 gate
 
-迁移后的完整 `bw-experiment` 测试集目前也是 `Blocked`：
+迁移后的 `bw-experiment` 组件测试现在包含公开 ASan parser fixtures：
 
 - `crates/bw-experiment/tests/asan_log_parser.rs` 读取 `fixtures/experiment/asan/positive.log` 与 `fixtures/experiment/asan/negative.log`；
-- 这两个 fixture 当前不在公开工作树中；
-- 因此 `cargo test -p bw-experiment --locked` 会在 ASan parser 测试处因文件不存在而失败。
-
-在补齐经公开审查的最小 fixture 或调整迁移清单并重新执行测试前，不把 `bw-experiment` 整体状态写成 `Implemented` 或 `Verified`。
+- 这两个 fixture 是公开、合成、最小的 parser 输入，不包含私有 run 或样本身份；
+- 组件测试通过只支持 `Implemented` 层的 parser/runner/summary 基础，不支持把动态实验能力标为 `Verified`。
 
 以下事项仍为 `Blocked`：
 

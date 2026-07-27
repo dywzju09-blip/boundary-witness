@@ -1,0 +1,3 @@
+The experiment notes mention ASan as a possible tool, but this text is not a
+sanitizer report and intentionally has no AddressSanitizer error header or
+summary line.

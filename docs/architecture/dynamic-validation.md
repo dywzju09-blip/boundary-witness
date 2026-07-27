@@ -48,7 +48,7 @@ VPS smoke 不能替代正式预算运行，本地一次成功也不能替代跨�
 ## 当前缺口与状态
 
 - witness plan 到通用 harness 选择/生成、Miri/fuzz/runtime/oracle 和 receipt 的自动桥尚未完成；
-- `bw-experiment` 完整测试当前因公开工作树缺少 ASan parser fixture 而受阻，不能把整个 crate 写成已完整验证；
+- `bw-experiment` 组件测试已有公开 ASan parser fixtures；这不等于当前 commit 上完成 formal dynamic run；
 - 当前工作树没有与最新 commit、数据 manifest、Contract/config checksum 对齐的正式 public regression、约 100-crate pilot 或新 sealed holdout 记录；
 - 因此 V3.3 gate 未通过。
 
