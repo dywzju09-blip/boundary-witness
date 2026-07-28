@@ -8,8 +8,27 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 engine="${BW_CONTAINER_ENGINE:-docker}"
 image="${BW_CONTAINER_IMAGE:-boundary-witness-d0:test}"
 require_container="${BW_REQUIRE_CONTAINER:-0}"
-tmp_root="${repo_root}/target/tmp/blind-runner-container-policy"
-reveal_root="${repo_root}/target/tmp/blind-runner-container-policy-reveal"
+cargo_target_dir="${CARGO_TARGET_DIR:-${repo_root}/target}"
+bin_dir="${cargo_target_dir}/debug"
+policy_tmp_root="${BW_BLIND_RUNNER_CONTAINER_POLICY_TMP_ROOT:-}"
+policy_tmp_owned=0
+if [[ -z "$policy_tmp_root" ]]; then
+  policy_tmp_root="$(mktemp -d -t bw-blind-runner-container-policy.XXXXXX)"
+  policy_tmp_owned=1
+else
+  mkdir -p "$policy_tmp_root"
+fi
+tmp_root="${policy_tmp_root}/blind-runner-container-policy"
+reveal_root="${policy_tmp_root}/blind-runner-container-policy-reveal"
+
+cleanup() {
+  # Only remove the scratch root we created; an explicitly provided root is left
+  # in place so its receipts and reveal output remain inspectable.
+  if [[ "$policy_tmp_owned" == "1" ]]; then
+    rm -rf "$policy_tmp_root"
+  fi
+}
+trap cleanup EXIT
 
 fail() {
   printf 'blind-runner-container-policy: %s\n' "$*" >&2
@@ -209,10 +228,10 @@ pack_root="$packs_root/$deployment_sha"
 
 cargo build -p bw-blind-runner --bin bw-blind-audit --bin bw-blind-run \
   -p bw-blind-curator --bin bw-blind-reveal --locked >/dev/null
-"$repo_root/target/debug/bw-blind-audit" "$pack_root" >/dev/null
+"${bin_dir}/bw-blind-audit" "$pack_root" >/dev/null
 run_json="$(
   BW_CONTAINER_ENGINE="$engine" \
-  "$repo_root/target/debug/bw-blind-run" \
+  "${bin_dir}/bw-blind-run" \
     --pack "$pack_root" \
     --runs-root "$runs_root" \
     --commit "$method_commit" \
@@ -238,7 +257,7 @@ find "$run_path/logs/children" -name case-b-marker -type f -exec sh -c \
 
 container_reveal_out="$reveal_root/container/container-reveal.json"
 container_decision="$(
-  "$repo_root/target/debug/bw-blind-reveal" \
+  "${bin_dir}/bw-blind-reveal" \
     --manifest "$pack_root/manifest.json" \
     --policy "$pack_root/policy.toml" \
     --run "$run_path" \
@@ -254,7 +273,7 @@ python3 -c 'import json,sys; assert json.load(sys.stdin)["gate_passed"], "contai
   || fail "container-backed receipt did not pass gate"
 
 native_run_json="$(
-  "$repo_root/target/debug/bw-blind-run" \
+  "${bin_dir}/bw-blind-run" \
     --pack "$pack_root" \
     --runs-root "$native_runs_root" \
     --commit "$method_commit" \
@@ -271,7 +290,7 @@ native_run_json="$(
 native_run_path="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_path"])' <<<"$native_run_json")"
 native_runner_receipt="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["runner_receipt_path"])' <<<"$native_run_json")"
 native_reveal_log="$reveal_root/native/native-untrusted-smoke-reveal.log"
-if "$repo_root/target/debug/bw-blind-reveal" \
+if "${bin_dir}/bw-blind-reveal" \
   --manifest "$pack_root/manifest.json" \
   --policy "$pack_root/policy.toml" \
   --run "$native_run_path" \

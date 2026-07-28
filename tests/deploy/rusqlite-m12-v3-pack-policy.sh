@@ -14,9 +14,13 @@ for program in cargo find grep python3; do
   command -v "$program" >/dev/null 2>&1 || fail "$program is required"
 done
 
-tmp_parent="${repo_root}/target/tmp"
-mkdir -p "$tmp_parent"
-tmp="$(mktemp -d "${tmp_parent}/bw-rusqlite-m12-v3-pack.XXXXXX")"
+tmp_parent="${BW_RUSQLITE_M12_TMP_ROOT:-}"
+if [[ -n "$tmp_parent" ]]; then
+  mkdir -p "$tmp_parent"
+  tmp="$(mktemp -d "${tmp_parent}/bw-rusqlite-m12-v3-pack.XXXXXX")"
+else
+  tmp="$(mktemp -d -t bw-rusqlite-m12-v3-pack.XXXXXX)"
+fi
 cleanup() {
   rm -R "$tmp"
 }

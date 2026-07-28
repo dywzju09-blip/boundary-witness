@@ -308,6 +308,7 @@ trap cleanup EXIT
 command -v cargo >/dev/null 2>&1 || fail "cargo is required"
 command -v git >/dev/null 2>&1 || fail "git is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+command -v rg >/dev/null 2>&1 || fail "rg is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 command -v zstd >/dev/null 2>&1 || fail "zstd is required"
 
@@ -363,12 +364,16 @@ grep -Fq 'dirty git worktree' "${tmp_root}/dirty.err" \
 rm -f "$dirty_sentinel"
 
 git -C "$repo_root" worktree add --detach "$clean_worktree" HEAD >/dev/null
-git -C "$clean_worktree" config user.email "bw-test@example.invalid"
-git -C "$clean_worktree" config user.name "BoundaryWitness Test"
 cp "$create_tool" "$verify_tool" "$install_tool" "${clean_worktree}/tools/blind/"
 git -C "$clean_worktree" add tools/blind
 if ! git -C "$clean_worktree" diff --cached --quiet; then
-  git -C "$clean_worktree" commit -q -m "test fixture: current blind archive tools"
+  # A linked worktree shares .git/config with the main repository, so setting the
+  # fixture identity with `git config` would overwrite the caller's real identity.
+  # Pass it per-invocation instead.
+  git -C "$clean_worktree" \
+    -c user.email="bw-test@example.invalid" \
+    -c user.name="BoundaryWitness Test" \
+    commit -q -m "test fixture: current blind archive tools"
 fi
 clean_method_commit="$(git -C "$clean_worktree" rev-parse --verify 'HEAD^{commit}')"
 mkdir -p "${clean_worktree}/target/tmp/blind-pack-policy"

@@ -5,7 +5,8 @@ export LC_ALL=C
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 sync_tool="${repo_root}/tools/deploy/sync-results.sh"
-verify_bin="${repo_root}/target/debug/bw-verify-run"
+cargo_target_dir="${CARGO_TARGET_DIR:-${repo_root}/target}"
+verify_bin="${cargo_target_dir}/debug/bw-verify-run"
 
 fail() {
   printf 'result-sync-policy: %s\n' "$*" >&2

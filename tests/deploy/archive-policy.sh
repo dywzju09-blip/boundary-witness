@@ -13,6 +13,16 @@ fail() {
   exit 1
 }
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    fail "sha256sum or shasum is required"
+  fi
+}
+
 assert_exists() {
   [[ -e "$1" ]] || fail "expected path to exist: $1"
 }
@@ -223,5 +233,51 @@ assert_exists "${installed}/source/Cargo.toml"
 assert_exists "${installed}/deployment.json"
 
 "$install_tool" --archive "$archive" --sha256 "$sha_file" --manifest "$manifest" --root "$install_root" >"${tmp}/install-again.out" 2>"${tmp}/install-again.err"
+
+# Deployment archives are run-identity inputs, so the same commit must always
+# produce the same archive_sha256. Re-create each profile and compare digests.
+for repeat_profile in full-experiment staging-builder; do
+  repeat_dist="${tmp}/dist-repeat/${repeat_profile}"
+  mkdir -p "$repeat_dist"
+  "$create_tool" --profile "$repeat_profile" --repo "$fixture_repo" --out "$repeat_dist" \
+    >"${tmp}/create-repeat-${repeat_profile}.out" 2>"${tmp}/create-repeat-${repeat_profile}.err"
+  case "$repeat_profile" in
+    full-experiment) baseline="$archive" ;;
+    staging-builder) baseline="$staging_archive" ;;
+  esac
+  [[ "$(sha256_file "${repeat_dist}/source.tar.zst")" == "$(sha256_file "$baseline")" ]] \
+    || fail "${repeat_profile} archive creation was not deterministic"
+done
+
+# The fixture repository above is synthetic. Exercise the tools against the real
+# repository too, so deployment policy drift is caught on the tree that actually
+# ships (for example a top-level directory missing from the allowlist).
+if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
+  printf 'archive-policy: skipping real-repository round (dirty worktree)\n' >&2
+else
+  real_dist="${tmp}/dist-real"
+  for real_profile in full-experiment staging-builder; do
+    real_out="${real_dist}/${real_profile}"
+    mkdir -p "$real_out"
+    "$create_tool" --profile "$real_profile" --repo "$repo_root" --out "$real_out" \
+      >"${tmp}/create-real-${real_profile}.out" 2>"${tmp}/create-real-${real_profile}.err" \
+      || fail "real-repository ${real_profile} archive creation failed"
+    "$verify_tool" --archive "${real_out}/source.tar.zst" --sha256 "${real_out}/source.sha256" \
+      --manifest "${real_out}/deployment.json" \
+      >"${tmp}/verify-real-${real_profile}.out" 2>"${tmp}/verify-real-${real_profile}.err" \
+      || fail "real-repository ${real_profile} archive verification failed"
+  done
+
+  real_listing="${tmp}/archive-real.list"
+  zstd -dc "${real_dist}/full-experiment/source.tar.zst" | tar -tf - > "$real_listing"
+  # schemas/ is read from disk at runtime by bw-model schema tests, so it must ship.
+  grep -Eq '^boundary-witness/schemas/' "$real_listing" \
+    || fail "real-repository archive is missing schemas/"
+  grep -Eq '^boundary-witness/Cargo.toml$' "$real_listing" \
+    || fail "real-repository archive is missing Cargo.toml"
+  assert_not_in_archive "$real_listing" '^boundary-witness/docs/'
+  assert_not_in_archive "$real_listing" '^boundary-witness/target/'
+
+fi
 
 printf 'archive-policy: ok\n'

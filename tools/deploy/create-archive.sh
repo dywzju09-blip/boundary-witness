@@ -149,8 +149,48 @@ for path in root.rglob("*"):
         raise SystemExit(f"blind-runtime archive path contains forbidden token: {relative}")
 PY
 fi
-COPYFILE_DISABLE=1 tar -C "$export_dir" -cf - boundary-witness \
-  | zstd -T0 -19 -q -c > "$archive_tmp"
+tar_tmp="${tmp_dir}/source.tar"
+python3 - "$export_dir" "$tar_tmp" <<'PY'
+import pathlib
+import stat
+import sys
+import tarfile
+
+root = pathlib.Path(sys.argv[1])
+tar_path = sys.argv[2]
+paths = sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix())
+
+with tarfile.open(tar_path, "w", format=tarfile.GNU_FORMAT) as archive:
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        source_stat = path.lstat()
+        if stat.S_ISDIR(source_stat.st_mode):
+            info = tarfile.TarInfo(relative + "/")
+            info.type = tarfile.DIRTYPE
+            info.mode = 0o755
+            info.size = 0
+            file_object = None
+        elif stat.S_ISREG(source_stat.st_mode):
+            info = tarfile.TarInfo(relative)
+            info.type = tarfile.REGTYPE
+            info.mode = 0o755 if source_stat.st_mode & 0o111 else 0o644
+            info.size = source_stat.st_size
+            file_object = path.open("rb")
+        else:
+            raise SystemExit(f"unsupported deployment archive path: {relative}")
+        info.uid = 0
+        info.gid = 0
+        info.uname = ""
+        info.gname = ""
+        info.mtime = 0
+        try:
+            archive.addfile(info, file_object)
+        finally:
+            if file_object is not None:
+                file_object.close()
+PY
+
+zstd -q -19 -f "$tar_tmp" -o "$archive_tmp"
 
 archive_sha="$(sha256_file "$archive_tmp")"
 printf '%s  source.tar.zst\n' "$archive_sha" > "$sha_tmp"
