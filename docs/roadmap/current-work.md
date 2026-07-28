@@ -46,11 +46,15 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | `Planned` |
+| 状态 | `Planned`，unknown ordering 分项已实现 |
 | 依赖 | release proof、MIR CFG/post-dominance、runtime/oracle 对照 |
 | 代码入口 | `compiler/bw-rustc/src/rustc_api/mir.rs`、`crates/bw-model/src/lifecycle_v326.rs`、`crates/bw-oracle/src/` |
 | 测试入口 | `compiler/bw-rustc/tests/mir_sites_golden.rs`、`crates/bw-model/tests/lifecycle_v326.rs`、`crates/bw-oracle/tests/` |
 | 完成谓词 | release-before-use、unregister-before-drop、conditional release gap、unknown ordering 和 negative controls 均被分开报告 |
+
+已完成：`CallbackReleaseUseOrdering::UnknownOrdering` 记录 MIR 无法为 release 与 callback use 定序的情况（二者同处循环体而互相可达，或位于互斥分支而互不可达）。此前该情况被静默丢弃，下游无法与"没有 callback use"区分。证明层判定同时收紧：`unknown_ordering` 不点亮 `lifecycle_ordering` 或 `complete_risk_chain`。
+
+未完成：`unregister-before-drop` 与 conditional release gap 仍未分开报告。conditional release 不经过 ordering 推断——`release_postdominates_registration` 已在 `ReleasePathProofObservation` 处拒绝它，因此该 gap 需要在 release-proof 层新增事实种类，不能靠扩展 ordering 枚举解决。
 
 ## 6. 完成 public regression 后再判断 V3.3
 
