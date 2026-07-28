@@ -26,7 +26,23 @@ Public regression 使用已揭示、可公开审计的数据检查当前 core-ef
 
 当前仓库有可执行的逐阶段 CLI：`build-precheck`、`index-boundaries`、`emit-candidates`、`extract-static-facts`、`extract-lifecycle-evidence`、`materialize-lifecycle-contracts`、`audit-lifecycle-contracts`、`build-lifecycle-graph-v3`、`rank-lifecycle-v2`、`compare-anonymous-pairs`、`reveal-static-ranking`、`verify-run`。参数以 [CLI reference](../../reference/cli.md) 的已核对 `--help` 为准。
 
-仓库**没有**把这些步骤、freeze、checksum、负对照 gate 和回归判定串成一次 formal run 的 `tools/experiment/` 入口。因此完整 public regression 命令为 **Planned/Blocked**；本 runbook 不把一串人工命令伪装成已验收 orchestrator。现有 artifact 的单项检查可使用：
+[`tools/experiment/run-scan.sh`](../../../tools/experiment/run-scan.sh) 把上述阶段串成一次多 crate 扫描，写出一个 finalized run 目录，并在 `scan-summary.json` 中记录逐阶段状态与 run identity（`code_commit`、`toolchain`、`contract_hash`、`corpus_manifest_hash`、`worktree_clean`、`cargo_locked`）。
+
+```bash
+python3 tools/experiment/materialize_corpus.py \
+  --manifest "${BW_CORPUS_SELECTION:?}" \
+  --corpus-root "${BW_CORPUS_ROOT:?}" \
+  --output "${BW_CORPUS_MANIFEST:?}"
+
+tools/experiment/run-scan.sh \
+  --manifest "${BW_CORPUS_MANIFEST:?}" \
+  --rustc-wrapper "${BW_RUSTC_WRAPPER:?}" \
+  --run-id "${BW_RUN_ID:?}"
+```
+
+扫描器只读磁盘上已有的源码：`build-precheck` 把 `source_ref` 当文件路径解析，对 `crates_io` 与 `git_archive` 记录直接返回 `source_not_materialized`。`materialize_corpus.py` 负责下载解压并产出 `local_archive` 型 manifest，同时把归档 SHA-256 写入 `intake_notes`。
+
+**该入口仍不构成完整 public regression gate。** 它执行阶段链与失败分类，但**不**执行 freeze、负对照 gate 和回归判定；`--cargo-locked` 默认关闭（发布归档不带 library `Cargo.lock`），因此依赖解析结果未被 corpus manifest hash 固定，只有同一模式下的 run 才可比较。gate 判定与 freeze 仍为 **Planned/Blocked**。现有 artifact 的单项检查可使用：
 
 ```bash
 cargo run -p bw-cli --bin bw --locked -- \
