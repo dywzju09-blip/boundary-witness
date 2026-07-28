@@ -368,3 +368,44 @@ fn unknown_callback_release_use_ordering_roundtrips_with_its_own_token() {
         "an unproven ordering is still an authoritative binding record; only its ordering is unproven"
     );
 }
+
+#[test]
+fn call_boundary_object_binding_gap_roundtrips_with_its_own_token() {
+    let fact = StaticFactEnvelope {
+        schema_version: STATIC_SCHEMA_V02.to_owned(),
+        record_id: RecordId("fact:object-binding-gap-call-boundary".to_owned()),
+        producer: "bw-rustc@test-commit".to_owned(),
+        build_id: BuildId("build:test".to_owned()),
+        artifact: Some(StaticArtifactIdentity {
+            crate_id: "crate:alpha".to_owned(),
+            package_name: "alpha".to_owned(),
+            package_version: "1.2.3".to_owned(),
+            target: "lib".to_owned(),
+        }),
+        source_ref: Some(StaticSourceRef {
+            path: "src/register.rs".to_owned(),
+            line_start: 12,
+            line_end: 12,
+            symbol_path: Some("alpha::register_through_helper".to_owned()),
+        }),
+        payload: StaticFact::ObjectBindingGap(ObjectBindingGapFact {
+            site_id: SiteId("site:object-binding-gap-call-boundary".to_owned()),
+            semantic_site_key: SemanticSiteKey("semantic:call-boundary".to_owned()),
+            api_id: "alpha::register_through_helper".to_owned(),
+            gap_kind: ObjectBindingGapKind::CallBoundary,
+            field_path: None,
+            container_type_name: None,
+            adapter: Some("api:alpha:register".to_owned()),
+        }),
+    };
+
+    let json = serde_json::to_string(&fact).expect("call boundary gap should serialize");
+    assert!(
+        json.contains("\"gap_kind\":\"call_boundary\""),
+        "the call boundary gap needs its own token so coverage gaps stay countable: {json}"
+    );
+
+    let decoded = StaticFactEnvelope::from_json_str(&json)
+        .expect("call boundary gap should deserialize through schema gate");
+    assert_eq!(decoded, fact);
+}

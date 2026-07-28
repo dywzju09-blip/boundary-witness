@@ -5542,6 +5542,7 @@ fn object_binding_gap_reason(token: &str) -> Option<&'static str> {
         "key_contract" => Some("key_contract_binding_missing"),
         "reassignment_barrier" => Some("object_reassignment_barrier"),
         "mutation_barrier" => Some("storage_mutation_barrier"),
+        "call_boundary" => Some("call_boundary_binding_missing"),
         _ => None,
     }
 }
@@ -6136,6 +6137,7 @@ fn object_binding_gap_kind_token(kind: ObjectBindingGapKind) -> &'static str {
         ObjectBindingGapKind::KeyContract => "key_contract",
         ObjectBindingGapKind::ReassignmentBarrier => "reassignment_barrier",
         ObjectBindingGapKind::MutationBarrier => "mutation_barrier",
+        ObjectBindingGapKind::CallBoundary => "call_boundary",
     }
 }
 

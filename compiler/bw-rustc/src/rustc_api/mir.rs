@@ -2273,6 +2273,16 @@ impl<'tcx> MirSiteVisitor<'_, 'tcx> {
             .user_data_arg_index
             .and_then(|index| self.raw_pointer_reference_from_args(args, &[index]));
         if callback.is_none() || user_data.is_none() {
+            // callee 已被证明是注册 helper 且参数下标已知，但调用者一侧的实参解析不回被
+            // 跟踪的对象。此前这里直接 return，缺口不进入事实流，下游无法区分"绑定丢了"
+            // 与"这里没有注册"。记录为 call boundary 缺证，使覆盖缺口可度量。
+            self.record_object_binding_gap_at_callsite(
+                ObjectBindingGapKind::CallBoundary,
+                Some(summary.api_id.clone()),
+                span,
+                location,
+                "registration_summary_user_data",
+            );
             return;
         }
         if let Ok(observation) = self.registration_observation(

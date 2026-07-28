@@ -1465,6 +1465,17 @@ pub fn ffi_callback_user_data_conditional_helper_registration_site(install: bool
     let _value = unsafe { Box::from_raw(user_data) };
 }
 
+// The helper is a recognized registration helper and its user_data argument index is
+// known, but the pointer handed to it originates outside this crate body, so the caller
+// side cannot resolve it back to a tracked object. That is a call-boundary binding gap,
+// not an absence of registration, and the fixture exists to keep it visible in the fact
+// stream rather than silently dropped.
+pub fn ffi_callback_user_data_untracked_pointer_registration_site(
+    external: *mut std::ffi::c_void,
+) {
+    install_update_hook_helper(Some(retained_userdata_roundtrip_callback), external);
+}
+
 pub fn ffi_callback_user_data_ambiguous_registration_site() {
     let first = Box::into_raw(Box::new(CallbackUserData { finished: None }));
     let second = Box::into_raw(Box::new(CallbackUserData { finished: None }));

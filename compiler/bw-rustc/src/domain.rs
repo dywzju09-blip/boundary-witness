@@ -1703,6 +1703,7 @@ fn object_binding_gap_kind_token(kind: ObjectBindingGapKind) -> &'static str {
         ObjectBindingGapKind::KeyContract => "key_contract",
         ObjectBindingGapKind::ReassignmentBarrier => "reassignment_barrier",
         ObjectBindingGapKind::MutationBarrier => "mutation_barrier",
+        ObjectBindingGapKind::CallBoundary => "call_boundary",
     }
 }
 

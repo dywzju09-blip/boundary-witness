@@ -977,6 +977,28 @@ fn callback_site_fixture_emits_mir_site_facts() {
         ),
         "an unorderable release/use pair must never be reported as a release-before-use proof"
     );
+    assert_object_binding_gap_for_symbol(
+        &facts,
+        "ffi_callback_user_data_untracked_pointer_registration_site",
+        ObjectBindingGapKind::CallBoundary,
+        "api:rusqlite:update_hook:register",
+        "a recognized registration helper whose caller-side user_data cannot be resolved must \
+         record a call-boundary gap instead of dropping the call silently",
+    );
+    assert!(
+        !facts.iter().any(|fact| matches!(
+            fact,
+            StaticFactEnvelope {
+                source_ref: Some(source_ref),
+                payload: StaticFact::RegistrationSite(_),
+                ..
+            } if source_ref.symbol_path.as_deref().is_some_and(|path| {
+                path.ends_with("ffi_callback_user_data_untracked_pointer_registration_site")
+            })
+        )),
+        "an unresolved user_data must not be promoted into a registration site; the gap replaces \
+         the fact, it does not add to it"
+    );
     let helper_after_release_user_data_site_ids = registration_user_data_site_ids(
         &facts,
         "ffi_callback_user_data_helper_after_release_use_registration_site",

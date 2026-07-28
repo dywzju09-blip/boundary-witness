@@ -336,6 +336,10 @@ pub enum ObjectBindingGapKind {
     KeyContract,
     ReassignmentBarrier,
     MutationBarrier,
+    /// 调用边界上对象绑定丢失：callee 已被证明是注册 helper 且 userdata 参数下标已知，
+    /// 但调用者一侧该实参无法解析回被跟踪的对象。此前这类情况被静默丢弃，缺口在事实流
+    /// 里不可见，扫描结果无法区分"没有绑定"与"没有注册"。
+    CallBoundary,
 }
 
 /// 编译器明确拒绝把某处静态观察升级为同对象绑定时的诊断事实。

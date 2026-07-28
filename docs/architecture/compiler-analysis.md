@@ -45,6 +45,8 @@ collector 产生 `ReturnedBorrowRelationFact`、`PersistedReturnedBorrowFact` �
 
 field、aggregate、place alias、collection/storage 的覆盖或 mutation 会产生 `ObjectBindingGapFact`，kind 为 `mutation_barrier` 或 `reassignment_barrier`。graph 按 binding key 阻断受影响链；barrier 不应把无关 candidate 或整个 crate 一并降级。
 
+调用边界上的绑定丢失记为 `call_boundary`：callee 已被证明是注册 helper 且 userdata 参数下标已知，但调用者一侧该实参解析不回被跟踪对象。该缺口的 `adapter` 记录涉及的注册 API，因此可以按注册 API 统计缺口频次，用来决定优先扩展哪个 callee 识别器。跨函数识别器本身仍是按形状手写的，未匹配的形状不产生对象链——记录缺口的目的是让这类覆盖缺失在事实流中可数，而不是把它当成"没有注册"。
+
 ### 跨函数 summary
 
 当前存在有限 same-crate summary：registration passthrough、returned-borrow collection entry/value/use/persist/mutation、wrapper field、部分 OpenSSL ex_data 与 callback storage/release 形状。summary 必须保持参数 projection、storage key 和 object lineage；未知 helper 不以名称猜测。
