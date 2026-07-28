@@ -1307,6 +1307,9 @@ pub struct V326WitnessTarget {
     /// 静态侧观察到的注册位置，供 receipt 回指与人工复核。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration_source_ref: Option<V326SourceRef>,
+    /// 静态侧观察到的生命周期形状，供 harness 按实际形状生成而非套固定剧本。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_shape: Option<V326WitnessObservedShape>,
 }
 
 /// 声明某个注册 API 的 crate，及其在被扫 crate 中实际解析到的版本。
@@ -1315,6 +1318,31 @@ pub struct V326WitnessTarget {
 pub struct V326WitnessApiCrate {
     pub name: String,
     pub version: String,
+}
+
+/// 静态侧对某个候选实际观察到的生命周期形状。
+///
+/// 这是 harness 生成的输入。没有它，生成器只能套一个"必然出问题"的固定剧本，跑出来的
+/// 违规是自己安排的剧情，不构成关于被扫 crate 的任何结论。有了它，harness 才能复现
+/// **被观察到的**序列；哪些环节没被证明，也一并带上，让结论的适用范围说得清楚。
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct V326WitnessObservedShape {
+    /// 候选的模式家族，决定 owner 与 callback 的持有关系。
+    pub pattern_family: V32PatternFamily,
+    /// 是否观察到 owner 在 callback 仍注册期间被释放。
+    ///
+    /// 固定模板无条件 `drop(owner)`，等于把结论写死在剧本里。这里为 false 时 harness
+    /// 不得制造这次释放——否则它验证的是模板，不是候选。
+    pub release_before_callback_use: bool,
+    /// 是否观察到 callback 在 owner 释放后仍使用该对象。
+    pub callback_use_after_release: bool,
+    /// 静态侧未能证明的环节，原样取自 lifecycle graph 的 `incomplete_reasons`。
+    ///
+    /// harness 无法凭空补上这些证明，所以它们必须跟着结论走：一次"确认"到底覆盖了
+    /// 什么，取决于这里还剩下什么没证明。
+    #[serde(default)]
+    pub unproven: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

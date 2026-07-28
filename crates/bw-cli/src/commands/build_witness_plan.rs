@@ -229,7 +229,32 @@ fn witness_target_for_candidate(
         api_declaring_crates,
         resolved_dependencies,
         registration_source_ref,
+        Some(observed_shape_for_candidate(candidate, graph)),
     )
+}
+
+/// 把静态侧观察到的形状收拢成 harness 的生成输入。
+///
+/// 两个顺序位来自 chain summary 里的分层证明，而不是模式家族的默认假设：
+/// `release_ordering` 证明 owner 在 callback 仍注册时被释放，`use_ordering` 证明
+/// callback 在那之后仍使用该对象。没有证明就是 false —— harness 不得替静态侧补证。
+fn observed_shape_for_candidate(
+    candidate: &V326RankedCandidateRecord,
+    graph: &V326LifecycleGraphV3Record,
+) -> bw_model::V326WitnessObservedShape {
+    let summary = &candidate.chain_summary;
+    let mut unproven = graph.incomplete_reasons.clone();
+    unproven.extend(summary.chain_incomplete_reasons.iter().cloned());
+    unproven.sort();
+    unproven.dedup();
+    bw_model::V326WitnessObservedShape {
+        pattern_family: candidate.pattern_family,
+        release_before_callback_use: summary.release_ordering_chain_count > 0
+            || summary.complete_risk_chain_count > 0,
+        callback_use_after_release: summary.use_ordering_chain_count > 0
+            || summary.complete_risk_chain_count > 0,
+        unproven,
+    }
 }
 
 /// [`witness_target_for_candidate`] 的纯逻辑，便于在不构造完整 ranked/graph 记录的
@@ -241,6 +266,7 @@ fn witness_target_from_parts(
     api_declaring_crates: &BTreeMap<String, BTreeSet<String>>,
     resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
     registration_source_ref: Option<bw_model::V326SourceRef>,
+    observed_shape: Option<bw_model::V326WitnessObservedShape>,
 ) -> Option<bw_model::V326WitnessTarget> {
     let api_id = registration_apis.get(candidate_id)?;
     if api_id.is_empty() {
@@ -261,6 +287,7 @@ fn witness_target_from_parts(
         crate_version,
         api_crate,
         registration_source_ref,
+        observed_shape,
     })
 }
 
@@ -994,6 +1021,7 @@ mod witness_target_tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             None,
+            None,
         )
         .expect("a single known registration API must bind the plan");
         assert_eq!(target.api_id, "api:rusqlite:update_hook:register");
@@ -1010,6 +1038,7 @@ mod witness_target_tests {
                 &BTreeMap::new(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
+                None,
                 None
             )
             .is_none()
@@ -1026,6 +1055,7 @@ mod witness_target_tests {
                 &apis(&[("candidate:a", "")]),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
+                None,
                 None
             )
             .is_none(),
@@ -1042,6 +1072,7 @@ mod witness_target_tests {
                 &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
+                None,
                 None
             )
             .is_none(),
@@ -1087,6 +1118,7 @@ mod witness_target_tests {
             &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
             &resolved(&[("crate:some_app:0.1.0", &[("rusqlite", "0.26.1")])]),
             None,
+            None,
         )
         .expect("the plan must still bind");
 
@@ -1110,6 +1142,7 @@ mod witness_target_tests {
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
             &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
             &BTreeMap::new(),
+            None,
             None,
         )
         .expect("the plan must still bind");
@@ -1136,6 +1169,7 @@ mod witness_target_tests {
                 &[("openssl", "0.10.66"), ("openssl_sys", "0.9.103")],
             )]),
             None,
+            None,
         )
         .expect("an ambiguous provider must not unbind the API itself");
 
@@ -1153,6 +1187,7 @@ mod witness_target_tests {
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
             &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
             &BTreeMap::new(),
+            None,
             None,
         )
         .expect("the API binding does not depend on dependency resolution");

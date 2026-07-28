@@ -10,7 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bw_model::{V326WitnessPlanRecord, V326WitnessTarget};
+use bw_model::{
+    V32PatternFamily, V326WitnessObservedShape, V326WitnessPlanRecord, V326WitnessTarget,
+};
 use clap::Args;
 use serde::Serialize;
 
@@ -61,8 +63,24 @@ struct GeneratedHarness {
     api_id: String,
     crate_name: String,
     crate_version: String,
+    /// harness 链接的 API 提供方，与被扫 crate 是两回事。
+    api_crate_name: String,
+    api_crate_version: String,
     harness_dir: String,
     main_sha256: String,
+    /// 这个 harness 复现的是哪种形状，以及静态侧还有什么没证明。
+    ///
+    /// 一次动态"确认"的适用范围，取决于它复现了什么、又有什么没被证明。把这些跟结论
+    /// 放在一起，读的人才不会把"复现成功"当成"被扫 crate 有缺陷"。
+    reproduces: HarnessCoverage,
+}
+
+#[derive(Debug, Serialize)]
+struct HarnessCoverage {
+    pattern_family: String,
+    release_before_callback_use: bool,
+    callback_use_after_release: bool,
+    still_unproven: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +97,12 @@ const REASON_UNSUPPORTED_API: &str = "no_harness_template_for_api";
 const REASON_UNSUPPORTED_VERSION: &str = "crate_version_outside_template_support";
 /// plan 绑定了 API，但没能确定是哪个 crate 的哪个版本提供的——无法生成能编译的 harness。
 const REASON_UNRESOLVED_API_CRATE: &str = "api_crate_version_unresolved";
+/// plan 不带静态侧观察到的形状，只能套固定剧本——那样的"确认"没有信息量。
+const REASON_NO_OBSERVED_SHAPE: &str = "no_observed_shape_to_reproduce";
+/// 观察到的模式家族没有对应的生成器。
+const REASON_PATTERN_NOT_REPRODUCIBLE: &str = "pattern_family_not_reproducible";
+/// 静态侧没观察到"owner 在 callback 仍注册时释放"，harness 结构上造不出要见证的序列。
+const REASON_NO_RELEASE_ORDERING: &str = "no_release_ordering_observed";
 
 pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> {
     let plans = read_jsonl::<V326WitnessPlanRecord>(&args.plans, args.max_line_bytes)?;
@@ -128,7 +152,8 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
         "supported_apis": UPDATE_HOOK_APIS,
         "supported_crate_versions": SUPPORTED_RUSQLITE_VERSIONS,
         "notes": [
-            "a generated harness reproduces a lifecycle sequence; it is not a defect conclusion",
+            "a generated harness reproduces the lifecycle sequence the static analysis observed for that candidate",
+            "reproducing a sequence is not a defect conclusion; read `reproduces.still_unproven` for what the run does not cover",
             "refusals are coverage gaps, not errors",
         ],
     });
@@ -189,6 +214,34 @@ fn generate_one(
         ));
     }
 
+    // 没有观察到的形状就只能套固定剧本，那样跑出来的违规是剧本自带的。宁可不生成。
+    let Some(shape) = &target.observed_shape else {
+        return Err(refusal(
+            REASON_NO_OBSERVED_SHAPE,
+            "the plan carries no observed lifecycle shape to reproduce".to_owned(),
+        ));
+    };
+    if shape.pattern_family != V32PatternFamily::RetainedBorrowedCallback {
+        return Err(refusal(
+            REASON_PATTERN_NOT_REPRODUCIBLE,
+            format!(
+                "no generator reproduces the {:?} lifecycle shape",
+                shape.pattern_family
+            ),
+        ));
+    }
+    // 静态侧没证明"owner 在 callback 仍注册时被释放"，harness 就造不出要见证的那个序列。
+    // 硬跑一个结构上不可能违规的 harness，"no findings" 会被读成"验证通过"——那是假阴性
+    // 的最坏形式：拒绝生成才是诚实的。
+    if !shape.release_before_callback_use {
+        return Err(refusal(
+            REASON_NO_RELEASE_ORDERING,
+            "the candidate was never observed releasing the owner while the callback stayed \
+             registered, so a harness could not exhibit the sequence it is meant to witness"
+                .to_owned(),
+        ));
+    }
+
     let harness_name = sanitize_crate_name(&plan.plan_id);
     let harness_dir = harness_root.join(&harness_name);
     let source_dir = harness_dir.join("src");
@@ -199,7 +252,7 @@ fn generate_one(
         )
     })?;
 
-    let main_source = render_update_hook_main(plan, target);
+    let main_source = render_update_hook_main(plan, target, shape);
     let cargo_toml = render_cargo_toml(&harness_name, repo_root, target);
     fs::write(source_dir.join("main.rs"), &main_source).map_err(|error| {
         refusal(
@@ -237,8 +290,16 @@ fn generate_one(
         api_id: target.api_id.clone(),
         crate_name: target.crate_name.clone(),
         crate_version: target.crate_version.clone(),
+        api_crate_name: api_crate.name.clone(),
+        api_crate_version: api_crate.version.clone(),
         harness_dir: harness_dir.display().to_string(),
         main_sha256: sha256_hex(main_source.as_bytes()),
+        reproduces: HarnessCoverage {
+            pattern_family: format!("{:?}", shape.pattern_family),
+            release_before_callback_use: shape.release_before_callback_use,
+            callback_use_after_release: shape.callback_use_after_release,
+            still_unproven: shape.unproven.clone(),
+        },
     })
 }
 
@@ -295,25 +356,49 @@ rusqlite = {{ path = "{root}/benchmarks/historical-cves/rusqlite/vendor/rusqlite
     )
 }
 
-/// 生成 update_hook 生命周期 harness。
+/// 按**静态侧观察到的形状**生成 update_hook 生命周期 harness。
 ///
-/// 序列刻意与 plan 的 action 顺序一致：注册 → 绑定对象 → checkpoint → drop owner →
-/// 触发 callback → 结束。harness 只在本地受控 fixture 上重放该序列，产出 runtime
-/// trace 供 oracle 判定；它本身不判定任何结论。
-fn render_update_hook_main(plan: &V326WitnessPlanRecord, target: &V326WitnessTarget) -> String {
+/// 序列不是写死的剧本：`drop(owner)` 只有在候选确实被观察到"owner 在 callback 仍注册
+/// 期间释放"时才生成，callback 里对该对象的使用同理。固定剧本无条件制造这两步，跑出
+/// 的违规是剧本自带的，与被扫 crate 无关。
+///
+/// harness 只重放序列并产出 runtime trace，判定由 oracle 做；重放成功本身不是结论。
+fn render_update_hook_main(
+    plan: &V326WitnessPlanRecord,
+    target: &V326WitnessTarget,
+    shape: &V326WitnessObservedShape,
+) -> String {
     let plan_id = &plan.plan_id;
     let candidate_id = &plan.candidate_id;
     let api_id = &target.api_id;
+    let pattern_family = format!("{:?}", shape.pattern_family);
+    // callback 是否触碰该对象，取决于静态侧是否观察到释放后仍被使用。
+    let callback_object_use = if shape.callback_use_after_release {
+        r#"callback_runtime.emit_deferred(RuntimeEvent::ObjectUse(ObjectUseEvent {
+                instance_id: callback_counter_id.clone(),
+                use_site_id: callback_counter_site.clone(),
+                use_kind: ObjectUseKind::Read,
+            }));
+            callback_counter.record(rowid);"#
+    } else {
+        r#"// 静态侧未观察到"释放后仍使用"，harness 不得替它制造这一步。
+            let _ = (&callback_counter_id, &callback_counter_site, &callback_counter, rowid);"#
+    };
     format!(
         r#"// Generated by `bw generate-witness-harness`. Do not edit by hand.
 //
 // plan:      {plan_id}
 // candidate: {candidate_id}
 // api:       {api_id}
+// shape:     {pattern_family}
 //
-// The harness replays a controlled callback-retention lifecycle and emits a runtime
-// trace. It asserts nothing: the oracle decides whether the observed sequence is a
-// contract violation. Reproducing the sequence is not a defect conclusion.
+// The sequence below is derived from what the static analysis observed for this
+// candidate, not from a fixed script: the owner is dropped here only because the
+// candidate was observed to release it while the callback was still registered.
+//
+// The harness replays that sequence and emits a runtime trace. It asserts nothing:
+// the oracle decides whether the sequence violates the contract. Reproducing a
+// sequence is not a defect conclusion about the scanned crate.
 use std::sync::Arc;
 
 use bw_model::{{CheckpointKind, ObjectUseEvent, ObjectUseKind, RuntimeEvent, SiteId}};
@@ -350,17 +435,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         move |action: Action, database: &str, table: &str, rowid: i64| {{
             let _ = (action, database, table);
             let _ = callback_token.invoke(site("site:{plan_slug}:invoke"));
-            callback_runtime.emit_deferred(RuntimeEvent::ObjectUse(ObjectUseEvent {{
-                instance_id: callback_counter_id.clone(),
-                use_site_id: callback_counter_site.clone(),
-                use_kind: ObjectUseKind::Read,
-            }}));
-            callback_counter.record(rowid);
+            {callback_object_use}
         }},
     ));
 
-    // Drop the Rust owner while the foreign side still holds the callback: this is the
-    // lifecycle ordering the static candidate claimed was possible.
+    // 静态侧观察到 owner 在 callback 仍被外部持有时释放，这里复现那一步。
     drop(counter);
     runtime.emit_checkpoint(CheckpointKind::LaterCallbackPhase)?;
     connection.execute("INSERT INTO item DEFAULT VALUES", [])?;
@@ -377,6 +456,8 @@ fn site(value: &'static str) -> SiteId {{
         plan_id = plan_id,
         candidate_id = candidate_id,
         api_id = api_id,
+        pattern_family = pattern_family,
+        callback_object_use = callback_object_use,
         plan_slug = sanitize_site_slug(plan_id),
     )
 }
@@ -449,6 +530,20 @@ mod tests {
                 version: version.to_owned(),
             }),
             registration_source_ref: None,
+            observed_shape: Some(shape(true, true)),
+        }
+    }
+
+    /// 静态侧观察到的形状。两个顺序位直接决定生成器造不造那一步。
+    fn shape(
+        release_before_callback_use: bool,
+        callback_use_after_release: bool,
+    ) -> V326WitnessObservedShape {
+        V326WitnessObservedShape {
+            pattern_family: V32PatternFamily::RetainedBorrowedCallback,
+            release_before_callback_use,
+            callback_use_after_release,
+            unproven: vec!["release_order_proof_missing".to_owned()],
         }
     }
 
@@ -536,14 +631,87 @@ mod tests {
         assert_eq!(record.main_sha256.len(), 64);
     }
 
+    /// 静态侧没观察到释放顺序时，生成器必须拒绝而不是产出一个结构上不可能违规的
+    /// harness——那种 harness 跑完的 "no findings" 会被读成"验证通过"。
+    #[test]
+    fn refuses_when_no_release_ordering_was_observed() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut target = target("api:rusqlite:update_hook:register", "0.26.1");
+        target.observed_shape = Some(shape(false, false));
+        let plan = plan("witness-plan:candidate:beta", Some(target));
+
+        let refusal = generate_one(
+            temp.path(),
+            temp.path(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect_err("a harness that cannot exhibit the sequence must not be generated");
+
+        assert_eq!(refusal.reason, REASON_NO_RELEASE_ORDERING);
+        assert!(
+            !temp
+                .path()
+                .join(sanitize_crate_name(&plan.plan_id))
+                .exists(),
+            "a refused plan must leave no half-written harness behind"
+        );
+    }
+
+    #[test]
+    fn refuses_a_plan_without_an_observed_shape() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut target = target("api:rusqlite:update_hook:register", "0.26.1");
+        target.observed_shape = None;
+        let plan = plan("witness-plan:candidate:gamma", Some(target));
+
+        let refusal = generate_one(
+            temp.path(),
+            temp.path(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect_err("without an observed shape only a fixed script is possible");
+
+        assert_eq!(refusal.reason, REASON_NO_OBSERVED_SHAPE);
+    }
+
+    /// callback 是否触碰对象来自观察，不是模板固定的。
+    #[test]
+    fn callback_touches_the_object_only_when_the_use_was_observed() {
+        let plan_with_use = plan(
+            "witness-plan:candidate:delta",
+            Some(target("api:rusqlite:update_hook:register", "0.26.1")),
+        );
+        let target_with_use = plan_with_use.target.as_ref().unwrap();
+        let with_use = render_update_hook_main(
+            &plan_with_use,
+            target_with_use,
+            target_with_use.observed_shape.as_ref().unwrap(),
+        );
+        assert!(
+            with_use.contains("RuntimeEvent::ObjectUse"),
+            "an observed use-after-release must be reproduced"
+        );
+
+        let without_use =
+            render_update_hook_main(&plan_with_use, target_with_use, &shape(true, false));
+        assert!(
+            !without_use.contains("RuntimeEvent::ObjectUse"),
+            "the harness must not invent a use the static analysis never observed"
+        );
+    }
+
     #[test]
     fn generated_source_is_byte_identical_for_the_same_plan() {
         let plan = plan(
             "witness-plan:candidate:alpha",
             Some(target("api:rusqlite:update_hook:register", "0.26.1")),
         );
-        let first = render_update_hook_main(&plan, plan.target.as_ref().unwrap());
-        let second = render_update_hook_main(&plan, plan.target.as_ref().unwrap());
+        let target = plan.target.as_ref().unwrap();
+        let observed = target.observed_shape.as_ref().unwrap();
+        let first = render_update_hook_main(&plan, target, observed);
+        let second = render_update_hook_main(&plan, target, observed);
         assert_eq!(
             first, second,
             "harness generation must be deterministic so its sha256 binds a run to its source"
