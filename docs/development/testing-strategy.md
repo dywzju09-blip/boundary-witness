@@ -18,7 +18,7 @@ cargo test -p bw-fuzz-observer --locked
 涉及 compiler wrapper 时增加：
 
 ```bash
-cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
+(cd compiler/bw-rustc && cargo test --locked)
 ```
 
 涉及 Schema、Contract、CLI 输出或文档时，还要验证对应 fixture、`bw validate`/`--help` 和文档链接。

@@ -32,7 +32,7 @@
 cargo fmt --all --check
 cargo test -p bw-model --locked
 cargo test -p bw-cli --locked
-cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
+(cd compiler/bw-rustc && cargo test --locked)
 ```
 
 `cargo test -p bw-experiment --locked` 只证明公开 fixture 上的组件测试；不要把它写成 D0/D1/D2 formal、public regression 或 V3.3 gate 通过。

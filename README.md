@@ -82,7 +82,7 @@ cargo run -p bw-cli --bin bw --locked -- --help
 compiler wrapper 使用独立工具链：
 
 ```bash
-cargo check --manifest-path compiler/bw-rustc/Cargo.toml --locked
+(cd compiler/bw-rustc && cargo check --locked)
 ```
 
 安装细节见 [setup](docs/development/setup.md)，CLI 见 [CLI reference](docs/reference/cli.md)。

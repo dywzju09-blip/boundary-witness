@@ -34,7 +34,7 @@ BoundaryWitness 接受围绕 Rust-C 生命周期边界分析、Schema/Contract�
 cargo fmt --all --check
 cargo test -p bw-model --locked
 cargo test -p bw-cli --locked
-cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
+(cd compiler/bw-rustc && cargo test --locked)
 ```
 
 不要删除测试、跳过失败测试、放宽 validator 或把 blocked gate 改写成通过。

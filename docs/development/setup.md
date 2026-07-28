@@ -14,6 +14,8 @@ rustc --version
 
 `compiler/bw-rustc/` 使用独立 [`rust-toolchain.toml`](../../compiler/bw-rustc/rust-toolchain.toml) 与独立 [`Cargo.lock`](../../compiler/bw-rustc/Cargo.lock)，因为它依赖 `rustc_private`/MIR 内部接口。不要把 compiler wrapper 的锁文件与根 workspace 锁文件合并。
 
+rustup 按**当前工作目录**选择工具链，`--manifest-path` 不会切换工具链。在仓库根目录执行 `cargo ... --manifest-path compiler/bw-rustc/Cargo.toml` 会用根目录的 stable 工具链编译 compiler wrapper，因而报 `E0463: can't find crate for rustc_span`。compiler wrapper 的命令必须在 `compiler/bw-rustc/` 目录下执行。
+
 ## 获取依赖
 
 根 workspace 使用 [`Cargo.lock`](../../Cargo.lock) 冻结依赖。常规检查入口：
@@ -27,8 +29,8 @@ cargo test -p bw-cli --locked
 compiler wrapper 单独检查：
 
 ```bash
-cargo check --manifest-path compiler/bw-rustc/Cargo.toml --locked
-cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
+(cd compiler/bw-rustc && cargo check --locked)
+(cd compiler/bw-rustc && cargo test --locked)
 ```
 
 ## 本地数据边界
