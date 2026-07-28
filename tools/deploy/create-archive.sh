@@ -143,9 +143,24 @@ def contains_forbidden_token(value: str, token: str) -> bool:
         return bool(re.search(r"(?<![0-9a-z])poc(?![0-9a-z])", value))
     return token in value
 
+def scanned_path(relative: str) -> str:
+    """Return the part of a path that is scanned for forbidden tokens.
+
+    A JSON Schema declares the *shape* of a record and never carries sample
+    identities, labels or expected results, so its file name is exempt (for
+    example schemas/v3-2-5/private-ground-truth.schema.json). Only the file name
+    is exempt: the directories leading to it are still scanned, so a genuine
+    answer directory such as experiments/ground-truth/x.schema.json is rejected.
+    """
+    head, separator, tail = relative.rpartition("/")
+    if tail.endswith(".schema.json"):
+        return head + separator
+    return relative
+
 for path in root.rglob("*"):
     relative = path.relative_to(root).as_posix().lower()
-    if any(contains_forbidden_token(relative, token) for token in forbidden):
+    scanned = scanned_path(relative)
+    if any(contains_forbidden_token(scanned, token) for token in forbidden):
         raise SystemExit(f"blind-runtime archive path contains forbidden token: {relative}")
 PY
 fi
@@ -224,7 +239,6 @@ allowed_top_level = [
     "compiler",
     "contracts",
     "crates",
-    "docs",
     "experiments",
     "fixtures",
     "infra",

@@ -256,7 +256,7 @@ if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   printf 'archive-policy: skipping real-repository round (dirty worktree)\n' >&2
 else
   real_dist="${tmp}/dist-real"
-  for real_profile in full-experiment staging-builder; do
+  for real_profile in full-experiment staging-builder blind-runtime; do
     real_out="${real_dist}/${real_profile}"
     mkdir -p "$real_out"
     "$create_tool" --profile "$real_profile" --repo "$repo_root" --out "$real_out" \
@@ -278,6 +278,15 @@ else
   assert_not_in_archive "$real_listing" '^boundary-witness/docs/'
   assert_not_in_archive "$real_listing" '^boundary-witness/target/'
 
+  # The blind-runtime token scan exempts JSON Schema file names, because a schema
+  # declares record shape and never carries labels. Confirm the exemption still
+  # lets a real schema through while the answer directories stay excluded.
+  real_blind_listing="${tmp}/archive-real-blind.list"
+  zstd -dc "${real_dist}/blind-runtime/source.tar.zst" | tar -tf - > "$real_blind_listing"
+  grep -Eq '^boundary-witness/schemas/v3-2-5/private-ground-truth\.schema\.json$' "$real_blind_listing" \
+    || fail "blind-runtime archive dropped an exempt JSON Schema"
+  assert_not_in_archive "$real_blind_listing" '^boundary-witness/experiments/ground-truth/'
+  assert_not_in_archive "$real_blind_listing" '^boundary-witness/benchmarks/historical-cves/'
 fi
 
 printf 'archive-policy: ok\n'

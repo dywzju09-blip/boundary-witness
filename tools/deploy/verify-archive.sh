@@ -112,7 +112,6 @@ allowed_top_level = [
     "compiler",
     "contracts",
     "crates",
-    "docs",
     "experiments",
     "fixtures",
     "infra",
@@ -126,6 +125,7 @@ blocked_top_level = {
     ".superpowers",
     ".worktrees",
     "dist",
+    "docs",
     "runs",
     "scratch",
     "target",
@@ -194,6 +194,19 @@ def contains_forbidden_token(value: str, token: str) -> bool:
         return bool(re.search(r"(?<![0-9a-z])poc(?![0-9a-z])", value))
     return token in value
 
+def scanned_path(relative: str) -> str:
+    """Return the part of a path that is scanned for forbidden tokens.
+
+    Mirrors create-archive.sh: a JSON Schema declares the *shape* of a record and
+    never carries sample identities, labels or expected results, so its file name
+    is exempt. Only the file name is exempt; the directories leading to it are
+    still scanned.
+    """
+    head, separator, tail = relative.rpartition("/")
+    if tail.endswith(".schema.json"):
+        return head + separator
+    return relative
+
 with tarfile.open(tar_path, "r:") as tf:
     for member in tf.getmembers():
         name = member.name
@@ -225,8 +238,6 @@ with tarfile.open(tar_path, "r:") as tf:
             seen_cargo_toml = True
         rel_lower = rel.lower()
         if profile in {"staging-builder", "blind-runtime"}:
-            if rel_lower == "docs" or rel_lower.startswith("docs/"):
-                die(f"{profile} archive contains docs path: {rel}")
             if rel_lower == "experiments/ground-truth" or rel_lower.startswith("experiments/ground-truth/"):
                 die(f"{profile} archive contains ground truth path: {rel}")
         if profile == "blind-runtime":
@@ -236,7 +247,8 @@ with tarfile.open(tar_path, "r:") as tf:
                 die(f"blind-runtime archive contains schema path: {rel}")
             if rel_lower == "fixtures" or rel_lower.startswith("fixtures/"):
                 die(f"blind-runtime archive contains fixture path: {rel}")
-            if any(contains_forbidden_token(rel_lower, token) for token in blind_forbidden_tokens):
+            scanned = scanned_path(rel_lower)
+            if any(contains_forbidden_token(scanned, token) for token in blind_forbidden_tokens):
                 die(f"blind-runtime archive path contains forbidden token: {rel}")
 
         if member.ischr() or member.isblk() or member.isfifo():

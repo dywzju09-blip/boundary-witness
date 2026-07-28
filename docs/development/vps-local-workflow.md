@@ -18,6 +18,28 @@ cargo test -p bw-model --locked
 
 涉及容器或部署时运行 `tests/containers/`、`tests/deploy/` 下的 smoke 脚本。失败必须按 [error taxonomy](../reference/error-taxonomy.md) 分类。
 
+## 部署归档 profile
+
+[`tools/deploy/create-archive.sh`](../../tools/deploy/create-archive.sh) 只打包当前 commit 的已跟踪文件，并由 [`verify-archive.sh`](../../tools/deploy/verify-archive.sh) 按同一份策略校验。三个 profile 的差异如下。
+
+| profile | 用途 | 额外排除 |
+| --- | --- | --- |
+| `full-experiment` | 本地或受控环境执行大规模验证 | 无 |
+| `staging-builder` | 远端构建与小规模 smoke | `experiments/ground-truth/` |
+| `blind-runtime` | sealed holdout runner | `experiments/ground-truth/`、`benchmarks/historical-cves/`、`experiments/schemas/`、`fixtures/`，并执行 forbidden token 扫描 |
+
+所有 profile 一律不打包 `docs/`、`experiments/artifacts/`、`target/`、`runs/` 和 `scratch/`。运行实验的机器不放文档：文档只保留在 Git 仓库与 GitHub 上，失败分类等参考内容在提交结果时对照仓库查阅，不随归档下发。
+
+`schemas/` 会随 `full-experiment` 与 `staging-builder` 下发，因为 `bw-model` 的 Schema 测试在运行时按相对路径读取该目录。
+
+### blind-runtime forbidden token 扫描
+
+`blind-runtime` 归档禁止出现可能泄漏样本身份或答案的路径 token，包括 `vulnerable`、`fixed`、`ground-truth`、`ground_truth`、`cve-`、`ghsa-`、`advisory`、`poc`、`proof-of-concept`、`expected-result` 和 `expected_result`。
+
+**例外：JSON Schema 文件名不参与该扫描。** JSON Schema 只声明记录的字段结构，不含样本身份、标签、逐样本 detail 或预期结果，因此 `schemas/v3-2-5/private-ground-truth.schema.json` 这类文件允许下发。
+
+该例外只豁免**文件名本身**，不豁免所在目录：`experiments/ground-truth/x.schema.json` 仍会被拒绝，因为目录名仍参与扫描。扫描规则在 `create-archive.sh` 与 `verify-archive.sh` 中各实现一次且必须保持一致；[`tests/deploy/archive-policy.sh`](../../tests/deploy/archive-policy.sh) 会用真实仓库同时验证例外生效与答案目录仍被排除。
+
 ## VPS 推 PR
 
 VPS 可推送代码、文档、Schema、Contract、小 fixtures 和测试修改。不得推送：
