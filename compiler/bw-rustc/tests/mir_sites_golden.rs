@@ -950,6 +950,33 @@ fn callback_site_fixture_emits_mir_site_facts() {
         ),
         "callback use before release must not be treated as release-before-use proof"
     );
+    let loop_order_user_data_site_ids = registration_user_data_site_ids(
+        &facts,
+        "ffi_callback_user_data_loop_order_registration_site",
+        "api:rusqlite:update_hook:register",
+    );
+    assert!(
+        !loop_order_user_data_site_ids.is_empty(),
+        "loop-order callback-use fixture must classify the registering FFI call"
+    );
+    assert!(
+        has_callback_release_use_order_for_symbol_objects(
+            &facts,
+            "ffi_callback_user_data_loop_order_registration_site",
+            &loop_order_user_data_site_ids,
+            bw_model::CallbackReleaseUseOrdering::UnknownOrdering,
+        ),
+        "a release and a callback use in one loop body cannot be ordered and must be recorded as unknown rather than dropped"
+    );
+    assert!(
+        !has_callback_release_use_order_for_symbol_objects(
+            &facts,
+            "ffi_callback_user_data_loop_order_registration_site",
+            &loop_order_user_data_site_ids,
+            bw_model::CallbackReleaseUseOrdering::ReleaseBeforeCallbackUse,
+        ),
+        "an unorderable release/use pair must never be reported as a release-before-use proof"
+    );
     let helper_after_release_user_data_site_ids = registration_user_data_site_ids(
         &facts,
         "ffi_callback_user_data_helper_after_release_use_registration_site",

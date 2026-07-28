@@ -4822,17 +4822,38 @@ fn object_chain_missing_layers(
     missing.into_iter().collect()
 }
 
+/// 顺序已被证明的 callback release/use 事实 object id。
+///
+/// `CallbackReleaseUseOrdering` 还包含 `unknown_ordering`，它记录的是"CFG 无法为
+/// release 与 callback use 定序"，属于缺证记录而不是顺序证明。缺证记录不得点亮
+/// `lifecycle_ordering` 或 `complete_risk_chain`，否则未定序的链会被计入 ranking
+/// summary 并因 `chain_layer_priority` 最高权重成为 top-ranked chain。
+const PROVEN_CALLBACK_RELEASE_USE_ORDER_OBJECT_IDS: [&str; 2] = [
+    "callback_release_use_order:release_before_callback_use",
+    "callback_release_use_order:callback_use_before_release",
+];
+
+/// 仅当 `fact_ref` 指向顺序已证明的 callback release/use 事实时为真。
+fn fact_ref_contains_proven_callback_release_use_order(
+    facts: &[V326LifecycleFactRecord],
+    fact_ref: &str,
+) -> bool {
+    facts.iter().any(|fact| {
+        fact.fact_id == fact_ref
+            && fact.fact_kind == V326LifecycleFactKind::CallbackReleaseUseOrder
+            && fact.object_ids.iter().any(|object_id| {
+                PROVEN_CALLBACK_RELEASE_USE_ORDER_OBJECT_IDS.contains(&object_id.as_str())
+            })
+    })
+}
+
 fn object_chain_has_lifecycle_ordering_fact(
     fact_refs: &[String],
     facts: &[V326LifecycleFactRecord],
 ) -> bool {
     fact_refs.iter().any(|fact_ref| {
         fact_ref_contains_kind(facts, fact_ref, V326LifecycleFactKind::ReleasePathProof)
-            || fact_ref_contains_kind(
-                facts,
-                fact_ref,
-                V326LifecycleFactKind::CallbackReleaseUseOrder,
-            )
+            || fact_ref_contains_proven_callback_release_use_order(facts, fact_ref)
             || fact_ref_contains_kind(
                 facts,
                 fact_ref,
@@ -4846,15 +4867,12 @@ fn object_chain_has_complete_risk_fact(
     facts: &[V326LifecycleFactRecord],
 ) -> bool {
     fact_refs.iter().any(|fact_ref| {
-        fact_ref_contains_kind(
-            facts,
-            fact_ref,
-            V326LifecycleFactKind::CallbackReleaseUseOrder,
-        ) || fact_ref_contains_kind(
-            facts,
-            fact_ref,
-            V326LifecycleFactKind::ReturnedBorrowInvalidationOrder,
-        )
+        fact_ref_contains_proven_callback_release_use_order(facts, fact_ref)
+            || fact_ref_contains_kind(
+                facts,
+                fact_ref,
+                V326LifecycleFactKind::ReturnedBorrowInvalidationOrder,
+            )
     })
 }
 
@@ -5966,6 +5984,7 @@ fn callback_release_use_ordering_token(
         crate::CallbackReleaseUseOrdering::CallbackUseBeforeRelease => {
             "callback_use_before_release"
         }
+        crate::CallbackReleaseUseOrdering::UnknownOrdering => "unknown_ordering",
     }
 }
 

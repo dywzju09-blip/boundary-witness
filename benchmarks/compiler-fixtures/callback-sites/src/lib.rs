@@ -146,6 +146,14 @@ pub extern "C" fn retained_userdata_after_release_callback(user_data: *mut std::
     std::mem::forget(data);
 }
 
+pub extern "C" fn retained_userdata_loop_order_callback(user_data: *mut std::ffi::c_void) {
+    let data: Box<CallbackUserData> = unsafe { std::mem::transmute(user_data) };
+    if let Some(finished) = data.finished {
+        finished();
+    }
+    std::mem::forget(data);
+}
+
 pub extern "C" fn retained_userdata_before_release_callback(user_data: *mut std::ffi::c_void) {
     let data: Box<CallbackUserData> = unsafe { std::mem::transmute(user_data) };
     if let Some(finished) = data.finished {
@@ -1251,6 +1259,30 @@ pub fn ffi_callback_user_data_before_release_use_registration_site() {
     );
     retained_userdata_before_release_callback(user_data as *mut std::ffi::c_void);
     let _value = unsafe { Box::from_raw(user_data) };
+}
+
+// The release endpoint and the callback use sit in the same loop body, so the two
+// MIR blocks reach each other and no order can be proven between them. The fixture
+// models that control-flow shape only: the reconstructed Box is forgotten rather
+// than dropped, so nothing is released twice, and no defect conclusion is expressed.
+// This crate is only `cargo check`ed by the golden test; it is never executed.
+pub fn ffi_callback_user_data_loop_order_registration_site(iterations: u32) {
+    let user_data = Box::into_raw(Box::new(CallbackUserData { finished: None }));
+    let _previous = libsqlite3_sys::bindings::sqlite3_update_hook(
+        std::ptr::null_mut(),
+        Some(retained_userdata_loop_order_callback),
+        user_data as *mut std::ffi::c_void,
+    );
+    let mut remaining = iterations;
+    loop {
+        retained_userdata_loop_order_callback(user_data as *mut std::ffi::c_void);
+        let value = unsafe { Box::from_raw(user_data) };
+        std::mem::forget(value);
+        if remaining == 0 {
+            break;
+        }
+        remaining -= 1;
+    }
 }
 
 #[inline(never)]

@@ -320,3 +320,51 @@ fn direct_deserialization_cannot_bypass_schema_check() {
         .expect_err("serde must reject an unknown schema");
     assert!(error.to_string().contains("bw.static/9.0"));
 }
+
+#[test]
+fn unknown_callback_release_use_ordering_roundtrips_with_its_own_token() {
+    let fact = StaticFactEnvelope {
+        schema_version: STATIC_SCHEMA_V02.to_owned(),
+        record_id: RecordId("fact:callback-release-use-order-unknown".to_owned()),
+        producer: "bw-rustc@test-commit".to_owned(),
+        build_id: BuildId("build:test".to_owned()),
+        artifact: Some(StaticArtifactIdentity {
+            crate_id: "crate:alpha".to_owned(),
+            package_name: "alpha".to_owned(),
+            package_version: "1.2.3".to_owned(),
+            target: "lib".to_owned(),
+        }),
+        source_ref: Some(StaticSourceRef {
+            path: "src/callback.rs".to_owned(),
+            line_start: 51,
+            line_end: 51,
+            symbol_path: Some("alpha::looping_callback".to_owned()),
+        }),
+        payload: StaticFact::CallbackReleaseUseOrder(CallbackReleaseUseOrderFact {
+            site_id: SiteId("site:callback-release-use-order-unknown".to_owned()),
+            semantic_site_key: SemanticSiteKey(
+                "semantic:callback-release-use-order-unknown".to_owned(),
+            ),
+            registration_site_id: SiteId("site:register".to_owned()),
+            release_site_id: SiteId("site:release".to_owned()),
+            use_site_id: SiteId("site:callback-use".to_owned()),
+            object_site_id: SiteId("site:userdata".to_owned()),
+            api_id: "api:alpha:register".to_owned(),
+            ordering: CallbackReleaseUseOrdering::UnknownOrdering,
+        }),
+    };
+
+    let json = serde_json::to_string(&fact).expect("unknown ordering should serialize");
+    assert!(
+        json.contains("\"ordering\":\"unknown_ordering\""),
+        "unknown ordering must serialize under its own token, not silently alias a proven one: {json}"
+    );
+
+    let decoded = StaticFactEnvelope::from_json_str(&json)
+        .expect("unknown ordering should deserialize through schema gate");
+    assert_eq!(decoded, fact);
+    assert!(
+        decoded.is_authoritative_lifecycle_binding(),
+        "an unproven ordering is still an authoritative binding record; only its ordering is unproven"
+    );
+}

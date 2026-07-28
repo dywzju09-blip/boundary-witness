@@ -8836,3 +8836,141 @@ fn static_fact_envelope_for_test(
         payload,
     }
 }
+
+/// 构造一份完整的 callback register/release/use 事实集，`ordering` 决定顺序结论。
+fn callback_release_use_graph_for_ordering(
+    ordering: bw_model::CallbackReleaseUseOrdering,
+) -> bw_model::V326LifecycleGraphV3Record {
+    let mut candidate = sample_candidate(
+        "candidate:callback-release-use-layers:001",
+        "crate:callback-release-use-layers",
+    );
+    candidate.api_path = Some("api:fixture:register".to_owned());
+    candidate.evidence_refs[0].path = "src/lib.rs".to_owned();
+    candidate.evidence_refs[0].line_start = Some(1);
+    candidate.evidence_refs[0].line_end = Some(1);
+    let mut facts = authoritative_user_data_release_facts_with_sites(
+        &candidate,
+        "callback-release-use-layers",
+        bw_model::SiteId("site:callback-release-use-layers:registered-user-data".to_owned()),
+        bw_model::SiteId("site:callback-release-use-layers:register".to_owned()),
+        bw_model::SiteId("site:callback-release-use-layers:from-raw".to_owned()),
+    );
+    let (_static_facts, object_flow_facts) =
+        object_flow_static_lifecycle_facts_with_api_and_field_paths(
+            &candidate,
+            "callback-release-use-layers",
+            "api:fixture:register",
+            vec![
+                (
+                    "field-store",
+                    bw_model::ObjectFlowKind::FieldStore,
+                    bw_model::ObjectFlowObjectKind::UserData,
+                    "site:callback-release-use-layers:registered-user-data",
+                    bw_model::ObjectFlowObjectKind::OpaqueHandle,
+                    "site:callback-release-use-layers:registered-handle",
+                    Some("callback_user_data:api:fixture:register:slot"),
+                    None,
+                ),
+                (
+                    "field-load",
+                    bw_model::ObjectFlowKind::FieldLoad,
+                    bw_model::ObjectFlowObjectKind::OpaqueHandle,
+                    "site:callback-release-use-layers:registered-handle",
+                    bw_model::ObjectFlowObjectKind::UserData,
+                    "site:callback-release-use-layers:user-data",
+                    Some("callback_user_data:api:fixture:register:slot"),
+                    None,
+                ),
+            ],
+        );
+    facts.extend(object_flow_facts);
+    candidate.evidence_refs[0].path = "src/stream.rs".to_owned();
+    candidate.evidence_refs[0].line_start = Some(42);
+    candidate.evidence_refs[0].line_end = Some(42);
+    facts.extend(callback_user_data_reconstruction_facts(
+        &candidate,
+        "callback-release-use-layers",
+        bw_model::CallbackUserDataReconstructionKind::OwnerFromTransmute,
+    ));
+    facts.push(callback_release_use_order_fact(
+        &candidate,
+        "callback-release-use-layers",
+        bw_model::SiteId("site:callback-release-use-layers:register".to_owned()),
+        bw_model::SiteId("site:callback-release-use-layers:from-raw".to_owned()),
+        bw_model::SiteId("site:callback-release-use-layers:callback-userdata".to_owned()),
+        bw_model::SiteId("site:callback-release-use-layers:registered-user-data".to_owned()),
+        ordering,
+    ));
+
+    bw_model::build_v3_2_6_lifecycle_graph_v3(&candidate, &[], &facts, &[])
+}
+
+fn graph_has_layer(
+    graph: &bw_model::V326LifecycleGraphV3Record,
+    layer: bw_model::V326ObjectChainLayer,
+) -> bool {
+    graph
+        .object_chains
+        .iter()
+        .any(|chain| chain.verified_layers.contains(&layer))
+}
+
+#[test]
+fn proven_callback_release_use_ordering_lights_ordering_and_complete_risk_layers() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::ReleaseBeforeCallbackUse,
+    );
+
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::LifecycleOrdering),
+        "a proven release-before-use ordering must light the lifecycle ordering layer"
+    );
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::CompleteRiskChain),
+        "a proven release-before-use ordering must light the complete risk chain layer"
+    );
+}
+
+#[test]
+fn proven_callback_use_before_release_ordering_still_lights_layers() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::CallbackUseBeforeRelease,
+    );
+
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::LifecycleOrdering),
+        "use-before-release is still a proven ordering and must keep lighting the ordering layer"
+    );
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::CompleteRiskChain),
+        "use-before-release is still a proven ordering and must keep lighting the risk chain layer"
+    );
+}
+
+#[test]
+fn unknown_callback_release_use_ordering_does_not_light_ordering_or_risk_layers() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::UnknownOrdering,
+    );
+
+    // `LifecycleOrdering` 仍会亮起，但它来自事实集中独立的 release path proof，
+    // 与 callback release/use 顺序无关。complete risk chain 只能由顺序事实点亮，
+    // 因此它才是未证明顺序的假阳性入口。
+    assert!(
+        !graph_has_layer(&graph, bw_model::V326ObjectChainLayer::CompleteRiskChain),
+        "an unproven ordering must never be promoted to a complete risk chain"
+    );
+}
+
+#[test]
+fn unknown_callback_release_use_ordering_is_not_a_release_use_chain() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::UnknownOrdering,
+    );
+
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::IdentityTransport),
+        "the object binding is still proven, so identity transport stays verified"
+    );
+}

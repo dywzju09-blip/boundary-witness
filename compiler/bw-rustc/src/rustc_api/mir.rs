@@ -18764,7 +18764,11 @@ fn infer_callback_release_use_orders(
             ) {
                 CallbackReleaseUseOrdering::CallbackUseBeforeRelease
             } else {
-                continue;
+                // CFG 无法为 release 与 callback use 定序：两个位置互相可达（同处循环）
+                // 或互不可达（位于互斥分支）。此前这里直接 continue，观测被静默丢弃，
+                // 使"顺序无法证明"和"根本没有 callback use"在下游无法区分。改为记录
+                // 缺证事实；消费方按 unknown_ordering token 拒绝点亮证明层。
+                CallbackReleaseUseOrdering::UnknownOrdering
             };
             orders.push(CallbackReleaseUseOrderObservation {
                 owner_def_path: invocation.owner_def_path.clone(),

@@ -148,12 +148,22 @@ pub struct ReleasePathProofFact {
     pub object_site_id: SiteId,
 }
 
-/// callback userdata release 与后续 callback use 之间的可回查顺序证明。
+/// callback userdata release 与后续 callback use 之间的可回查顺序结论。
+///
+/// 前两个变体是顺序证明。`UnknownOrdering` 不是证明而是缺证记录：register、release
+/// 与 callback use 都已绑定到同一对象，但 MIR CFG 无法为 release 与 use 定序（两者
+/// 互相可达的循环，或位于互不可达的分支）。该情况此前被静默丢弃，既不产生事实也不
+/// 产生缺证记录，因而无法与"根本没有 use"区分。
+///
+/// 消费方必须把 `UnknownOrdering` 当作缺证：它不得点亮 `lifecycle_ordering` 或
+/// `complete_risk_chain` 证明层，见 `lifecycle_v326` 的
+/// `PROVEN_CALLBACK_RELEASE_USE_ORDER_OBJECT_IDS`。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallbackReleaseUseOrdering {
     ReleaseBeforeCallbackUse,
     CallbackUseBeforeRelease,
+    UnknownOrdering,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

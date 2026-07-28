@@ -69,6 +69,8 @@
 {"api_id":"api:rusqlite:update_hook:register","kind":"callback_release_use_order","ordering":"release_before_callback_use"}
 {"api_id":"api:rusqlite:update_hook:register","kind":"callback_release_use_order","ordering":"release_before_callback_use"}
 {"api_id":"api:rusqlite:update_hook:register","kind":"callback_release_use_order","ordering":"release_before_callback_use"}
+{"api_id":"api:rusqlite:update_hook:register","kind":"callback_release_use_order","ordering":"unknown_ordering"}
+{"api_id":"api:rusqlite:update_hook:register","kind":"registration_site","role":"register"}
 {"api_id":"api:rusqlite:update_hook:register","kind":"registration_site","role":"register"}
 {"api_id":"api:rusqlite:update_hook:register","kind":"registration_site","role":"register"}
 {"api_id":"api:rusqlite:update_hook:register","kind":"registration_site","role":"register"}
@@ -207,6 +209,7 @@
 {"drop_kind":"scope_end","kind":"drop_site"}
 {"drop_kind":"scope_end","kind":"drop_site"}
 {"drop_kind":"scope_end","kind":"drop_site"}
+{"drop_kind":"scope_end","kind":"drop_site"}
 {"kind":"callback_user_data_reconstruction","reconstruction_kind":"leak_from_raw"}
 {"kind":"callback_user_data_reconstruction","reconstruction_kind":"owner_from_transmute"}
 {"kind":"callback_user_data_reconstruction","reconstruction_kind":"owner_from_transmute"}
@@ -220,6 +223,7 @@
 {"kind":"callback_user_data_reconstruction","reconstruction_kind":"owner_from_transmute"}
 {"kind":"callback_user_data_reconstruction","reconstruction_kind":"owner_from_transmute"}
 {"kind":"callback_user_data_reconstruction","reconstruction_kind":"owner_from_transmute"}
+{"kind":"callback_user_data_reconstruction","reconstruction_kind":"owner_from_transmute"}
 {"kind":"drop_prevention","prevention_kind":"mem_forget"}
 {"kind":"drop_prevention","prevention_kind":"mem_forget"}
 {"kind":"drop_prevention","prevention_kind":"mem_forget"}
@@ -233,6 +237,9 @@
 {"kind":"drop_prevention","prevention_kind":"mem_forget"}
 {"kind":"drop_prevention","prevention_kind":"mem_forget"}
 {"kind":"drop_prevention","prevention_kind":"mem_forget"}
+{"kind":"drop_prevention","prevention_kind":"mem_forget"}
+{"kind":"drop_prevention","prevention_kind":"mem_forget"}
+{"kind":"release_path_proof"}
 {"kind":"release_path_proof"}
 {"kind":"release_path_proof"}
 {"kind":"release_path_proof"}
