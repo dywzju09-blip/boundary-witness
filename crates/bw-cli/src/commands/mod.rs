@@ -23,6 +23,7 @@ mod diff;
 mod emit_candidates;
 mod extract_lifecycle_evidence;
 mod extract_static_facts;
+mod generate_witness_harness;
 mod index_boundaries;
 mod materialize_lifecycle_contracts;
 mod rank_lifecycle;
@@ -119,6 +120,8 @@ pub enum Command {
     RankLifecycleV2(rank_lifecycle_v2::RankLifecycleV2Args),
     /// 为 V3.2.6 高优先级候选生成本地受控 witness 计划。
     BuildWitnessPlan(build_witness_plan::BuildWitnessPlanArgs),
+    /// 从已绑定的 witness plan 生成本地受控 harness 源码。
+    GenerateWitnessHarness(generate_witness_harness::GenerateWitnessHarnessArgs),
     /// 审计 V3.2.x 本地 lifecycle contract registry 覆盖。
     AuditLifecycleContracts(audit_lifecycle_contracts::AuditLifecycleContractsArgs),
     /// 从版本化 callback retention contract registry materialize 生命周期 contract。
@@ -153,6 +156,7 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::BuildLifecycleGraphV3(args) => build_lifecycle_graph_v3::run(args),
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),
         Command::BuildWitnessPlan(args) => build_witness_plan::run(args),
+        Command::GenerateWitnessHarness(args) => generate_witness_harness::run(args),
         Command::AuditLifecycleContracts(args) => audit_lifecycle_contracts::run(args),
         Command::MaterializeLifecycleContracts(args) => materialize_lifecycle_contracts::run(args),
         Command::CompareAnonymousPairs(args) => compare_anonymous_pairs::run(args),

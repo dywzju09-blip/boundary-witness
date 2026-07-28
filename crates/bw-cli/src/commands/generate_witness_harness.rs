@@ -1,0 +1,509 @@
+//! 从已绑定的 witness plan 生成本地受控 harness 源码。
+//!
+//! 生成器只覆盖它有模板的形状。覆盖不到时必须记录拒绝原因，不得回退到通用模板：
+//! 一个编不过或语义不对的 harness 比没有 harness 更糟，它会把"没能验证"伪装成
+//! "验证过没问题"。拒绝原因写进 generation manifest，使覆盖缺口可计数。
+
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+use bw_model::{V326WitnessPlanRecord, V326WitnessTarget};
+use clap::Args;
+use serde::Serialize;
+
+use crate::{
+    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, write_json_stdout},
+    exit::{CliError, CommandStatus},
+};
+
+/// `rusqlite-lab-shared` 把 rusqlite 钉在 `>=0.26.1, <=0.26.2` 并使用 vendored patch。
+/// 生成的 harness 与该 shared crate 链接，因此只能针对同一区间内的版本。
+const SUPPORTED_RUSQLITE_VERSIONS: [&str; 2] = ["0.26.1", "0.26.2"];
+
+/// 有模板的注册 API。新增条目必须同时新增模板与 fixture。
+const UPDATE_HOOK_APIS: [&str; 3] = [
+    "api:rusqlite:update_hook:register",
+    "api:rusqlite:update_hook:unregister",
+    "api:rusqlite:update_hook:replace",
+];
+
+#[derive(Args)]
+pub struct GenerateWitnessHarnessArgs {
+    #[arg(long)]
+    plans: PathBuf,
+    #[arg(long = "output-dir")]
+    output_dir: PathBuf,
+    /// 仓库根目录，用于生成 harness 的 path 依赖。
+    #[arg(long = "repo-root", default_value = ".")]
+    repo_root: PathBuf,
+    #[arg(long, default_value_t = DEFAULT_MAX_LINE_BYTES)]
+    max_line_bytes: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateOutput {
+    kind: &'static str,
+    run_id: String,
+    generated_count: u64,
+    refused_count: u64,
+    output_dir: String,
+    manifest_path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedHarness {
+    plan_id: String,
+    candidate_id: String,
+    api_id: String,
+    crate_name: String,
+    crate_version: String,
+    harness_dir: String,
+    main_sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RefusedPlan {
+    plan_id: String,
+    candidate_id: String,
+    reason: &'static str,
+    detail: String,
+}
+
+/// 生成器为什么放弃某条 plan。这些原因是可计数的覆盖缺口，不是错误。
+const REASON_NO_TARGET: &str = "plan_has_no_executable_target";
+const REASON_UNSUPPORTED_API: &str = "no_harness_template_for_api";
+const REASON_UNSUPPORTED_VERSION: &str = "crate_version_outside_template_support";
+
+pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> {
+    let plans = read_jsonl::<V326WitnessPlanRecord>(&args.plans, args.max_line_bytes)?;
+    let plans = plans
+        .into_iter()
+        .map(|located| located.value)
+        .collect::<Vec<_>>();
+    let run_id = plans
+        .first()
+        .map(|plan| plan.run_id.clone())
+        .unwrap_or_default();
+
+    let repo_root = args.repo_root.canonicalize().map_err(|error| {
+        CliError::input(
+            "BW-V326-HARNESS-REPO-ROOT",
+            format!("{}: {error}", args.repo_root.display()),
+        )
+    })?;
+
+    let harness_root = args.output_dir.join("harnesses");
+    fs::create_dir_all(&harness_root)?;
+
+    let mut generated = Vec::<GeneratedHarness>::new();
+    let mut refused = Vec::<RefusedPlan>::new();
+
+    for plan in &plans {
+        let Some(target) = plan.target.as_ref() else {
+            refused.push(RefusedPlan {
+                plan_id: plan.plan_id.clone(),
+                candidate_id: plan.candidate_id.clone(),
+                reason: REASON_NO_TARGET,
+                detail: "the plan carries no api_id binding".to_owned(),
+            });
+            continue;
+        };
+        match generate_one(&harness_root, &repo_root, plan, target) {
+            Ok(record) => generated.push(record),
+            Err(refusal) => refused.push(refusal),
+        }
+    }
+
+    let manifest = serde_json::json!({
+        "schema_version": "boundary-witness.witness-harness-manifest/0.1",
+        "run_id": run_id,
+        "generated": generated,
+        "refused": refused,
+        "supported_apis": UPDATE_HOOK_APIS,
+        "supported_crate_versions": SUPPORTED_RUSQLITE_VERSIONS,
+        "notes": [
+            "a generated harness reproduces a lifecycle sequence; it is not a defect conclusion",
+            "refusals are coverage gaps, not errors",
+        ],
+    });
+    let manifest_path = args.output_dir.join("generation-manifest.json");
+    write_json_file(&manifest_path, &manifest)?;
+
+    let output = GenerateOutput {
+        kind: "v3-2-6-witness-harness",
+        run_id,
+        generated_count: generated.len() as u64,
+        refused_count: refused.len() as u64,
+        output_dir: args.output_dir.display().to_string(),
+        manifest_path: manifest_path.display().to_string(),
+    };
+    write_json_stdout(&output)?;
+    Ok(CommandStatus::Success)
+}
+
+fn generate_one(
+    harness_root: &Path,
+    repo_root: &Path,
+    plan: &V326WitnessPlanRecord,
+    target: &V326WitnessTarget,
+) -> Result<GeneratedHarness, RefusedPlan> {
+    let refusal = |reason: &'static str, detail: String| RefusedPlan {
+        plan_id: plan.plan_id.clone(),
+        candidate_id: plan.candidate_id.clone(),
+        reason,
+        detail,
+    };
+
+    if !UPDATE_HOOK_APIS.contains(&target.api_id.as_str()) {
+        return Err(refusal(
+            REASON_UNSUPPORTED_API,
+            format!("no template covers {}", target.api_id),
+        ));
+    }
+    if !SUPPORTED_RUSQLITE_VERSIONS.contains(&target.crate_version.as_str()) {
+        return Err(refusal(
+            REASON_UNSUPPORTED_VERSION,
+            format!(
+                "{} {} is outside the versions the shared harness crate links against",
+                target.crate_name, target.crate_version
+            ),
+        ));
+    }
+
+    let harness_name = sanitize_crate_name(&plan.plan_id);
+    let harness_dir = harness_root.join(&harness_name);
+    let source_dir = harness_dir.join("src");
+    fs::create_dir_all(&source_dir).map_err(|error| {
+        refusal(
+            REASON_UNSUPPORTED_API,
+            format!("{}: {error}", source_dir.display()),
+        )
+    })?;
+
+    let main_source = render_update_hook_main(plan, target);
+    let cargo_toml = render_cargo_toml(&harness_name, repo_root, target);
+    fs::write(source_dir.join("main.rs"), &main_source).map_err(|error| {
+        refusal(
+            REASON_UNSUPPORTED_API,
+            format!("{}: {error}", source_dir.display()),
+        )
+    })?;
+    fs::write(harness_dir.join("Cargo.toml"), cargo_toml).map_err(|error| {
+        refusal(
+            REASON_UNSUPPORTED_API,
+            format!("{}: {error}", harness_dir.display()),
+        )
+    })?;
+
+    Ok(GeneratedHarness {
+        plan_id: plan.plan_id.clone(),
+        candidate_id: plan.candidate_id.clone(),
+        api_id: target.api_id.clone(),
+        crate_name: target.crate_name.clone(),
+        crate_version: target.crate_version.clone(),
+        harness_dir: harness_dir.display().to_string(),
+        main_sha256: sha256_hex(main_source.as_bytes()),
+    })
+}
+
+/// crate 名只允许 `[a-z0-9_]`，plan id 里的 `:`/`-` 需要折叠。
+fn sanitize_crate_name(plan_id: &str) -> String {
+    let mut name = String::with_capacity(plan_id.len() + 8);
+    name.push_str("bw_witness_");
+    for character in plan_id.chars() {
+        if character.is_ascii_alphanumeric() {
+            name.push(character.to_ascii_lowercase());
+        } else {
+            name.push('_');
+        }
+    }
+    name
+}
+
+fn render_cargo_toml(harness_name: &str, repo_root: &Path, target: &V326WitnessTarget) -> String {
+    let root = repo_root.display();
+    format!(
+        r#"# Generated by `bw generate-witness-harness`. Do not edit by hand.
+#
+# The harness links against rusqlite-lab-shared, which pins rusqlite through a
+# vendored patch, so the dependency version is pinned to match rather than taken
+# from the scanned crate directly.
+[package]
+name = "{harness_name}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "{harness_name}"
+path = "src/main.rs"
+
+[dependencies]
+bw-model = {{ path = "{root}/crates/bw-model" }}
+bw-runtime = {{ path = "{root}/crates/bw-runtime" }}
+rusqlite-lab-shared = {{ path = "{root}/benchmarks/historical-cves/rusqlite/shared" }}
+rusqlite = {{ version = "={version}", features = ["bundled", "functions", "hooks"] }}
+
+[patch.crates-io]
+rusqlite = {{ path = "{root}/benchmarks/historical-cves/rusqlite/vendor/rusqlite-0.26.1" }}
+"#,
+        harness_name = harness_name,
+        root = root,
+        version = target.crate_version,
+    )
+}
+
+/// 生成 update_hook 生命周期 harness。
+///
+/// 序列刻意与 plan 的 action 顺序一致：注册 → 绑定对象 → checkpoint → drop owner →
+/// 触发 callback → 结束。harness 只在本地受控 fixture 上重放该序列，产出 runtime
+/// trace 供 oracle 判定；它本身不判定任何结论。
+fn render_update_hook_main(plan: &V326WitnessPlanRecord, target: &V326WitnessTarget) -> String {
+    let plan_id = &plan.plan_id;
+    let candidate_id = &plan.candidate_id;
+    let api_id = &target.api_id;
+    format!(
+        r#"// Generated by `bw generate-witness-harness`. Do not edit by hand.
+//
+// plan:      {plan_id}
+// candidate: {candidate_id}
+// api:       {api_id}
+//
+// The harness replays a controlled callback-retention lifecycle and emits a runtime
+// trace. It asserts nothing: the oracle decides whether the observed sequence is a
+// contract violation. Reproducing the sequence is not a defect conclusion.
+use std::sync::Arc;
+
+use bw_model::{{CheckpointKind, ObjectUseEvent, ObjectUseKind, RuntimeEvent, SiteId}};
+use bw_runtime::Tracked;
+use rusqlite::{{hooks::Action, Connection}};
+use rusqlite_lab_shared::{{
+    runtime::{{benchmark_build_id, benchmark_runtime}},
+    update_hook::UpdateHookConnection,
+    BorrowedCounter,
+}};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {{
+    let runtime = benchmark_runtime("run:{plan_slug}", "trace:{plan_slug}")?;
+    runtime.emit_trace_start(benchmark_build_id("build:{plan_slug}"))?;
+
+    let connection = Connection::open_in_memory()?;
+    connection.execute("CREATE TABLE item(id INTEGER PRIMARY KEY)", [])?;
+
+    let observed = UpdateHookConnection::open(runtime.clone(), site("site:{plan_slug}:connection"))?;
+    let counter_site = site("site:{plan_slug}:object");
+    let counter = Tracked::new(runtime.clone(), counter_site.clone(), BorrowedCounter::new());
+    let token = observed.register(site("site:{plan_slug}:callback"))?;
+    token.bind_object(counter.id(), &counter_site)?;
+    runtime.emit_checkpoint(CheckpointKind::Registered)?;
+
+    let callback_token = Arc::clone(&token);
+    let callback_runtime = runtime.clone();
+    let callback_counter_id = counter.id().clone();
+    let callback_counter_site = counter_site.clone();
+    let callback_counter = counter.get();
+    connection.update_hook(Some(
+        move |action: Action, database: &str, table: &str, rowid: i64| {{
+            let _ = (action, database, table);
+            let _ = callback_token.invoke(site("site:{plan_slug}:invoke"));
+            callback_runtime.emit_deferred(RuntimeEvent::ObjectUse(ObjectUseEvent {{
+                instance_id: callback_counter_id.clone(),
+                use_site_id: callback_counter_site.clone(),
+                use_kind: ObjectUseKind::Read,
+            }}));
+            callback_counter.record(rowid);
+        }},
+    ));
+
+    // Drop the Rust owner while the foreign side still holds the callback: this is the
+    // lifecycle ordering the static candidate claimed was possible.
+    drop(counter);
+    runtime.emit_checkpoint(CheckpointKind::LaterCallbackPhase)?;
+    connection.execute("INSERT INTO item DEFAULT VALUES", [])?;
+    observed.close(site("site:{plan_slug}:connection-drop"))?;
+    runtime.emit_trace_end()?;
+    runtime.finish()?;
+    Ok(())
+}}
+
+fn site(value: &'static str) -> SiteId {{
+    SiteId::from(value)
+}}
+"#,
+        plan_id = plan_id,
+        candidate_id = candidate_id,
+        api_id = api_id,
+        plan_slug = sanitize_site_slug(plan_id),
+    )
+}
+
+/// site id 片段：保留可读性，去掉会破坏字符串字面量的字符。
+fn sanitize_site_slug(plan_id: &str) -> String {
+    plan_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// 与其它命令模块一致的本地 JSON 写出helper。
+fn write_json_file(path: &Path, value: &impl serde::Serialize) -> Result<(), CliError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = File::create(path)?;
+    serde_json::to_writer_pretty(&mut file, value)
+        .map_err(|error| CliError::internal(error.to_string()))?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(plan_id: &str, target: Option<V326WitnessTarget>) -> V326WitnessPlanRecord {
+        V326WitnessPlanRecord {
+            schema_version: bw_model::V3_2_6_WITNESS_PLAN_SCHEMA_V1.to_owned(),
+            run_id: "run:test".to_owned(),
+            plan_id: plan_id.to_owned(),
+            candidate_id: "candidate:test".to_owned(),
+            lifecycle_graph_ref: "graphs-v3/candidate_test.json".to_owned(),
+            target,
+            actions: vec![bw_model::V326WitnessAction {
+                action_id: "action:test:register".to_owned(),
+                action_kind: bw_model::V326WitnessActionKind::RegisterCallback,
+                graph_refs: vec![],
+                notes: vec![],
+            }],
+            runtime_observers: vec![],
+            oracle_assertions: vec![],
+            replay_evidence_refs: vec![],
+            notes: vec![],
+        }
+    }
+
+    fn target(api_id: &str, version: &str) -> V326WitnessTarget {
+        V326WitnessTarget {
+            api_id: api_id.to_owned(),
+            crate_name: "rusqlite".to_owned(),
+            crate_version: version.to_owned(),
+            registration_source_ref: None,
+        }
+    }
+
+    #[test]
+    fn sanitized_crate_name_is_a_valid_rust_identifier() {
+        let name = sanitize_crate_name("witness-plan:candidate:alpha-001");
+        assert!(
+            name.chars().all(|character| character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '_'),
+            "crate name must be usable as a package name: {name}"
+        );
+        assert!(name.starts_with("bw_witness_"));
+    }
+
+    #[test]
+    fn refuses_an_api_without_a_template() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plan = plan(
+            "witness-plan:a",
+            Some(target("api:openssl:set_ex_data", "0.26.1")),
+        );
+        let error = generate_one(
+            temp.path(),
+            temp.path(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect_err("an API with no template must be refused");
+        assert_eq!(error.reason, REASON_UNSUPPORTED_API);
+    }
+
+    #[test]
+    fn refuses_a_crate_version_the_shared_crate_cannot_link() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plan = plan(
+            "witness-plan:a",
+            Some(target("api:rusqlite:update_hook:register", "0.31.0")),
+        );
+        let error = generate_one(
+            temp.path(),
+            temp.path(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect_err("an unlinkable version must be refused rather than generated");
+        assert_eq!(error.reason, REASON_UNSUPPORTED_VERSION);
+    }
+
+    #[test]
+    fn generates_a_harness_for_a_supported_update_hook_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plan = plan(
+            "witness-plan:candidate:alpha",
+            Some(target("api:rusqlite:update_hook:register", "0.26.1")),
+        );
+        let record = generate_one(
+            temp.path(),
+            temp.path(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect("a supported target must generate");
+
+        let harness_dir = PathBuf::from(&record.harness_dir);
+        let main_source =
+            fs::read_to_string(harness_dir.join("src/main.rs")).expect("main.rs should exist");
+        let cargo_toml =
+            fs::read_to_string(harness_dir.join("Cargo.toml")).expect("Cargo.toml should exist");
+
+        assert!(main_source.contains("fn main()"));
+        assert!(
+            main_source.contains("CheckpointKind::Registered")
+                && main_source.contains("CheckpointKind::LaterCallbackPhase"),
+            "the oracle needs both checkpoints to consider a trace comparable"
+        );
+        assert!(
+            main_source.contains("drop(counter)"),
+            "the harness must drop the Rust owner while the callback is still registered"
+        );
+        assert!(
+            cargo_toml.contains("rusqlite = { version = \"=0.26.1\""),
+            "the dependency must be pinned to the linkable version: {cargo_toml}"
+        );
+        assert_eq!(record.main_sha256.len(), 64);
+    }
+
+    #[test]
+    fn generated_source_is_byte_identical_for_the_same_plan() {
+        let plan = plan(
+            "witness-plan:candidate:alpha",
+            Some(target("api:rusqlite:update_hook:register", "0.26.1")),
+        );
+        let first = render_update_hook_main(&plan, plan.target.as_ref().unwrap());
+        let second = render_update_hook_main(&plan, plan.target.as_ref().unwrap());
+        assert_eq!(
+            first, second,
+            "harness generation must be deterministic so its sha256 binds a run to its source"
+        );
+    }
+}
