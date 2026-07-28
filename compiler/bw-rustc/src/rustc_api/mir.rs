@@ -1258,6 +1258,16 @@ impl<'tcx> MirSiteVisitor<'_, 'tcx> {
             .map(|(def_id, _)| def_id)
             .or_else(|| self.fn_def_from_operand(func))
         else {
+            // 间接调用且指针来源追踪不到定义：这次调用背后可能有注册，也可能没有，
+            // 分析分辨不了。此前直接 return，于是它和"看过、确实没注册"在事实流里
+            // 无法区分。记成缺证，让覆盖缺口可计数。
+            self.record_object_binding_gap_at_callsite(
+                ObjectBindingGapKind::UnresolvedCallee,
+                None,
+                span,
+                location,
+                "unresolved_callee",
+            );
             return;
         };
         let callee_def_path = self.tcx.def_path_str(callee_def_id);

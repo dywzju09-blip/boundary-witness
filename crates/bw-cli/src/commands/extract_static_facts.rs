@@ -37,14 +37,16 @@ const PUBLIC_FORBIDDEN_TOKENS: [&str; 9] = [
     "poc",
     "exploit",
 ];
-/// `-Zalways-encode-mir` 是跨 crate 摘要的前提。
+const STATIC_EXTRACTION_COMPAT_RUSTFLAGS: &str =
+    "-A useless_deprecated -A dangerous_implicit_autorefs -A bindings_with_variant_name";
+
+/// 跨 crate 摘要的前提。
 ///
 /// rustc 默认只为泛型和 `#[inline]` 函数把 MIR 编码进 rlib，普通的 `pub fn` 不编码。
 /// 而注册往往包在依赖 crate 的一层薄封装里（`fn install(cb, data) { conn.update_hook(..) }`），
-/// 拿不到那层的函数体就看不穿它，整条注册链在这里断掉。分析要看穿依赖，就得让依赖
-/// 带上 MIR。代价是 rlib 变大、构建变慢，只在静态抽取这一步施加。
-const STATIC_EXTRACTION_COMPAT_RUSTFLAGS: &str = "-A useless_deprecated \
-     -A dangerous_implicit_autorefs -A bindings_with_variant_name -Zalways-encode-mir";
+/// 拿不到那层的函数体就看不穿它，整条注册链在这里断掉。代价是 rlib 变大、构建变慢，
+/// 只在静态抽取这一步施加，且只在 nightly 上——见 [`cross_crate_mir_available`]。
+const CROSS_CRATE_MIR_RUSTFLAG: &str = "-Zalways-encode-mir";
 
 #[derive(Args)]
 pub struct ExtractStaticFactsArgs {
@@ -262,6 +264,7 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
     fs::create_dir_all(args.output_dir.join("rustc-configs"))?;
     let rustc_private_lib_dirs = rustc_private_library_dirs(&args);
     preflight_rustc_wrapper(&args, &rustc_private_lib_dirs)?;
+    let cross_crate_mir = cross_crate_mir_available(&args);
 
     let manifest_dir = args.manifest.parent().unwrap_or_else(|| Path::new("."));
     let mut status_records = Vec::<StaticExtractionStatusRecord>::new();
@@ -277,6 +280,7 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
             &mut expected_packages,
             &mut resolved_dependencies,
             &rustc_private_lib_dirs,
+            cross_crate_mir,
         )?;
         status_records.push(status);
     }
@@ -326,9 +330,17 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
         "skipped_count": skipped_count,
         "failed_count": failed_count,
         "fact_count": static_facts.len(),
+        // 跨 crate MIR 的有无直接决定覆盖面，必须留在产物里：没有它时分析照跑，
+        // 但看不穿依赖里的注册封装，"没扫到"里混着"没看见"。两种运行不可比较。
+        "cross_crate_mir": cross_crate_mir,
         "notes": [
             "static facts are compiler observations, not vulnerability conclusions",
-            "candidate risk decisions must be derived in later lifecycle stages"
+            "candidate risk decisions must be derived in later lifecycle stages",
+            if cross_crate_mir {
+                "dependencies were compiled with MIR, so registrations wrapped in a dependency are visible"
+            } else {
+                "dependencies carry no MIR on this toolchain: registrations wrapped in a dependency are invisible to this run"
+            }
         ],
     });
     write_json_file(&stats_path, &stats)?;
@@ -375,6 +387,7 @@ fn extract_one(
     expected_packages: &mut BTreeSet<CoveragePackage>,
     resolved_dependencies: &mut Vec<ResolvedDependenciesRecord>,
     rustc_private_lib_dirs: &[PathBuf],
+    cross_crate_mir: bool,
 ) -> Result<StaticExtractionStatusRecord, CliError> {
     let log_ref = format!("static-facts/{}.log", sanitize_file_stem(&record.crate_id));
     let log_path = args.logs_root.join(&log_ref);
@@ -596,7 +609,7 @@ fn extract_one(
             .env("PYTHON", python)
             .env("npm_config_python", python);
     }
-    apply_static_extraction_rustflags(&mut check_command);
+    apply_static_extraction_rustflags(&mut check_command, cross_crate_mir);
     apply_dynamic_library_path_env(&mut check_command, rustc_private_lib_dirs);
     if args.locked {
         check_command.arg("--locked");
@@ -1062,17 +1075,48 @@ fn apply_dynamic_library_path_env(command: &mut Command, extra_dirs: &[PathBuf])
     }
 }
 
-fn apply_static_extraction_rustflags(command: &mut Command) {
+fn apply_static_extraction_rustflags(command: &mut Command, cross_crate_mir: bool) {
+    let mut flags = STATIC_EXTRACTION_COMPAT_RUSTFLAGS.to_owned();
+    if cross_crate_mir {
+        flags.push(' ');
+        flags.push_str(CROSS_CRATE_MIR_RUSTFLAG);
+    }
     let existing = env::var("RUSTFLAGS").unwrap_or_default();
     let trimmed = existing.trim();
     let rustflags = if trimmed.is_empty() {
-        STATIC_EXTRACTION_COMPAT_RUSTFLAGS.to_owned()
-    } else if trimmed.contains(STATIC_EXTRACTION_COMPAT_RUSTFLAGS) {
+        flags
+    } else if trimmed.contains(&flags) {
         trimmed.to_owned()
     } else {
-        format!("{trimmed} {STATIC_EXTRACTION_COMPAT_RUSTFLAGS}")
+        format!("{trimmed} {flags}")
     };
     command.env("RUSTFLAGS", rustflags);
+}
+
+/// 本次抽取能否让依赖带上 MIR。
+///
+/// `-Zalways-encode-mir` 只有 nightly 接受，而它决定了分析能不能看穿依赖里的注册
+/// 封装。wrapper 本身链接 `rustc_private`，真实流水线永远跑 nightly；但这个命令也
+/// 可能被 stable 调起，那时硬塞 `-Z` 会让每个 crate 直接编译失败。
+///
+/// 探测而非假设，且探测结果写进产物：拿不到跨 crate MIR 时分析照跑，只是覆盖面变窄，
+/// 这必须是记录在案的限制，而不是悄悄退化成"没扫到问题"。
+fn cross_crate_mir_available(args: &ExtractStaticFactsArgs) -> bool {
+    let rustc = args
+        .rustc
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())));
+    Command::new(rustc)
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| version_output_is_nightly(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// `rustc --version` 是否报告 nightly（含 dev 构建）。
+fn version_output_is_nightly(version_output: &str) -> bool {
+    version_output.contains("nightly") || version_output.contains("-dev")
 }
 
 fn select_manifest_package<'a>(
@@ -1400,4 +1444,67 @@ fn sanitize_file_stem(value: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod cross_crate_mir_tests {
+    use super::{
+        CROSS_CRATE_MIR_RUSTFLAG, STATIC_EXTRACTION_COMPAT_RUSTFLAGS,
+        apply_static_extraction_rustflags, version_output_is_nightly,
+    };
+    use std::process::Command;
+
+    fn rustflags_of(command: &Command) -> String {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == "RUSTFLAGS")
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+            .expect("the stage must always set RUSTFLAGS")
+    }
+
+    #[test]
+    fn cross_crate_mir_flag_is_emitted_only_when_enabled() {
+        let mut enabled = Command::new("cargo");
+        apply_static_extraction_rustflags(&mut enabled, true);
+        assert!(
+            rustflags_of(&enabled).contains(CROSS_CRATE_MIR_RUSTFLAG),
+            "without the flag the analysis cannot see through a dependency's registration wrapper"
+        );
+
+        let mut disabled = Command::new("cargo");
+        apply_static_extraction_rustflags(&mut disabled, false);
+        assert!(
+            !rustflags_of(&disabled).contains(CROSS_CRATE_MIR_RUSTFLAG),
+            "-Z is nightly-only: emitting it on stable fails every crate outright"
+        );
+    }
+
+    #[test]
+    fn compatibility_flags_survive_either_way() {
+        for cross_crate_mir in [true, false] {
+            let mut command = Command::new("cargo");
+            apply_static_extraction_rustflags(&mut command, cross_crate_mir);
+            let flags = rustflags_of(&command);
+            for expected in STATIC_EXTRACTION_COMPAT_RUSTFLAGS.split_whitespace() {
+                assert!(
+                    flags.contains(expected),
+                    "{expected} must survive with cross_crate_mir={cross_crate_mir}: {flags}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nightly_is_detected_from_the_version_line() {
+        assert!(version_output_is_nightly(
+            "rustc 1.99.0-nightly (abcdef012 2026-07-08)"
+        ));
+        assert!(version_output_is_nightly("rustc 1.99.0-dev"));
+        assert!(
+            !version_output_is_nightly("rustc 1.97.0 (2d8144b78 2026-07-07)"),
+            "a stable toolchain must not be offered the -Z flag"
+        );
+        assert!(!version_output_is_nightly("rustc 1.97.0-beta.3"));
+    }
 }

@@ -122,6 +122,32 @@ fn registration_in_a_crate_that_only_depends_on_the_api_is_recognised() {
         owners.contains("registers_through_a_dependency_helper"),
         "a registration wrapped in a dependency's helper must be seen through; got {registrations:?}"
     );
+
+    // 追不到 callee 的调用必须留下缺证记录：没有它，"看过且没有注册"与"根本没看见"
+    // 在事实流里无法区分，阴性结论就没有依据。
+    let unresolved = facts
+        .iter()
+        .filter_map(|envelope| match &envelope.payload {
+            StaticFact::ObjectBindingGap(fact)
+                if fact.gap_kind == bw_model::ObjectBindingGapKind::UnresolvedCallee =>
+            {
+                Some(
+                    envelope
+                        .source_ref
+                        .as_ref()
+                        .and_then(|source_ref| source_ref.symbol_path.clone())
+                        .unwrap_or_default(),
+                )
+            }
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    assert!(
+        unresolved
+            .iter()
+            .any(|symbol| symbol.contains("calls_through_an_unresolvable_pointer")),
+        "an indirect call whose callee cannot be resolved must be recorded as a gap; got {unresolved:?}"
+    );
 }
 
 fn repo_root() -> std::path::PathBuf {

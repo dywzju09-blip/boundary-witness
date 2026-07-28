@@ -51,6 +51,14 @@ unsafe extern "C" fn on_update(user_data: *mut std::ffi::c_void) {
     counter.record(1);
 }
 
+/// 间接调用，且函数指针来自运行期索引：分析追不到 callee 是谁。
+///
+/// 这背后可能藏着一次注册，也可能什么都没有——分析分辨不了。它必须留下缺证记录，
+/// 否则"看过、确实没注册"与"根本没看见"在事实流里长得一模一样，阴性结论就是假的。
+pub fn calls_through_an_unresolvable_pointer(table: &[fn()], index: usize) {
+    table[index]();
+}
+
 /// callback 捕获的对象，让注册点有个可追踪的 user data，而不是空闭包。
 #[derive(Clone, Copy)]
 struct Counter {
