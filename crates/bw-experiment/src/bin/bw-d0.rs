@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, env, error::Error, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    env,
+    error::Error,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use bw_experiment::{
     D0CaseMatrix, D0GroundTruth, D0RunMode, D0RunOptions, RunMetadata, ToolchainVersions, run_d0,
@@ -33,10 +39,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("run") => {
             let cli = RunCli::parse(args)?;
             let matrix = D0CaseMatrix::from_path(&cli.matrix)?;
+            let runs_root = cli.resolve_runs_root();
             let report = run_d0(D0RunOptions {
                 matrix,
                 repo_root: cli.repo_root,
-                runs_root: cli.runs_root,
+                runs_root,
                 contract: cli.contract,
                 mode: cli.mode,
                 metadata: RunMetadata {
@@ -76,7 +83,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 struct RunCli {
     matrix: PathBuf,
     repo_root: PathBuf,
-    runs_root: PathBuf,
+    /// `None` 表示未显式指定；实际路径由 [`RunCli::resolve_runs_root`] 决定。
+    runs_root: Option<PathBuf>,
     contract: PathBuf,
     mode: D0RunMode,
     commit: String,
@@ -95,7 +103,7 @@ impl RunCli {
         let mut cli = Self {
             matrix: PathBuf::from("experiments/configs/d0-cases.toml"),
             repo_root: PathBuf::from("."),
-            runs_root: PathBuf::from("/root/boundary-witness/runs"),
+            runs_root: None,
             contract: PathBuf::from("contracts/callback-retention/contract.toml"),
             mode: D0RunMode::Preflight,
             commit: String::new(),
@@ -116,7 +124,7 @@ impl RunCli {
                     cli.repo_root = PathBuf::from(required_value(&mut args, "--repo-root")?);
                 }
                 "--runs-root" => {
-                    cli.runs_root = PathBuf::from(required_value(&mut args, "--runs-root")?);
+                    cli.runs_root = Some(PathBuf::from(required_value(&mut args, "--runs-root")?));
                 }
                 "--contract" => {
                     cli.contract = PathBuf::from(required_value(&mut args, "--contract")?);
@@ -155,6 +163,33 @@ impl RunCli {
         }
 
         Ok(cli)
+    }
+
+    /// 按 `--runs-root` > `BW_RUNS_ROOT` > `<repo-root>/runs` 的优先级解析 run 输出根目录。
+    ///
+    /// 默认值落在仓库内是有意的：`.gitignore` 已忽略 `/runs/`，DVC 也按仓库内目录跟踪数据。
+    /// 不使用绝对默认路径，避免在非 root 环境下写入失败或越过部署边界。
+    fn resolve_runs_root(&self) -> PathBuf {
+        resolve_runs_root(
+            self.runs_root.as_deref(),
+            env::var_os("BW_RUNS_ROOT").as_deref(),
+            &self.repo_root,
+        )
+    }
+}
+
+/// [`RunCli::resolve_runs_root`] 的纯逻辑，便于在不改进程环境的前提下测试。
+fn resolve_runs_root(
+    explicit: Option<&Path>,
+    env_value: Option<&OsStr>,
+    repo_root: &Path,
+) -> PathBuf {
+    if let Some(runs_root) = explicit {
+        return runs_root.to_path_buf();
+    }
+    match env_value {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => repo_root.join("runs"),
     }
 }
 
@@ -203,6 +238,43 @@ fn escape_json(value: &str) -> String {
 
 fn print_usage() {
     println!(
-        "usage:\n  bw-d0 --check-matrix experiments/configs/d0-cases.toml --ground-truth experiments/ground-truth/d0-cases.toml\n  bw-d0 run --commit <sha> --deployment-sha256 <sha256> --config-digest <sha256> --stable-toolchain <rustc-version> [--mode preflight|formal] [--repo-root .] [--runs-root /root/boundary-witness/runs] [--contract contracts/callback-retention/contract.toml]"
+        "usage:\n  bw-d0 --check-matrix experiments/configs/d0-cases.toml --ground-truth experiments/ground-truth/d0-cases.toml\n  bw-d0 run --commit <sha> --deployment-sha256 <sha256> --config-digest <sha256> --stable-toolchain <rustc-version> [--mode preflight|formal] [--repo-root .] [--runs-root <dir>] [--contract contracts/callback-retention/contract.toml]\n\nrun output root resolves as --runs-root > $BW_RUNS_ROOT > <repo-root>/runs"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_runs_root_wins_over_environment() {
+        let resolved = resolve_runs_root(
+            Some(Path::new("/explicit/runs")),
+            Some(OsStr::new("/env/runs")),
+            Path::new("/repo"),
+        );
+        assert_eq!(resolved, PathBuf::from("/explicit/runs"));
+    }
+
+    #[test]
+    fn environment_wins_over_repo_default() {
+        let resolved = resolve_runs_root(None, Some(OsStr::new("/env/runs")), Path::new("/repo"));
+        assert_eq!(resolved, PathBuf::from("/env/runs"));
+    }
+
+    #[test]
+    fn empty_environment_falls_back_to_repo_default() {
+        let resolved = resolve_runs_root(None, Some(OsStr::new("")), Path::new("/repo"));
+        assert_eq!(resolved, PathBuf::from("/repo/runs"));
+    }
+
+    #[test]
+    fn default_runs_root_stays_inside_the_repository() {
+        let resolved = resolve_runs_root(None, None, Path::new("."));
+        assert_eq!(resolved, PathBuf::from("./runs"));
+        assert!(
+            resolved.is_relative(),
+            "default must not be an absolute path"
+        );
+    }
 }
