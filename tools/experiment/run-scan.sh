@@ -271,6 +271,7 @@ static_dir="${partial_run}/static"
 candidates_dir="${partial_run}/candidates"
 evidence_dir="${partial_run}/evidence"
 analysis_dir="${partial_run}/analysis"
+legacy_dir="${partial_run}/legacy-ranking"
 effort_dir="${partial_run}/adapter-effort"
 taxonomy_dir="${partial_run}/taxonomy"
 witness_dir="${partial_run}/witness"
@@ -283,8 +284,10 @@ if [[ "$cargo_locked" == "true" ]]; then
 fi
 
 api_map_args=()
+api_map_scan_args=()
 for map in "${api_maps[@]}"; do
   api_map_args+=(--api-map-toml "$map")
+  api_map_scan_args+=(--api-map "$map")
 done
 
 scan() {
@@ -321,9 +324,11 @@ scan() {
     mir_coverage_arg=(--mir-coverage "${static_dir}/mir-coverage.json")
   fi
 
+  # 同一份 API map 同时喂给 boundary 扫描与 compiler，两侧对"什么算注册"保持一致。
   run_stage index-boundaries \
     --manifest "$manifest" \
     --buildability "$buildability_path" \
+    "${api_map_scan_args[@]}" \
     --output "$boundary_index_path" \
     --logs-root "${partial_run}/logs" \
     --run-id "$run_id" || return 1
@@ -362,8 +367,16 @@ scan() {
     --output-dir "$analysis_dir" \
     --run-id "$run_id" || return 1
 
+  # adapter effort 与 failure taxonomy 属于 V3.2 pilot 计量链，消费的是 legacy
+  # ranked candidate schema；核心效果链走 graph-v3 + rank-lifecycle-v2。两者并存，
+  # 不能把 v2 输出喂给 legacy 消费者。
+  run_stage rank-lifecycle \
+    --candidates "$candidates_dir" \
+    --output-dir "$legacy_dir" \
+    --run-id "$run_id" || return 1
+
   run_stage account-adapter-effort \
-    --ranked-candidates "$analysis_dir" \
+    --ranked-candidates "$legacy_dir" \
     --output-dir "$effort_dir" \
     --run-id "$run_id" || return 1
 

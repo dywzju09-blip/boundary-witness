@@ -32,8 +32,24 @@ pub struct IndexBoundariesArgs {
     logs_root: PathBuf,
     #[arg(long)]
     run_id: String,
+    /// callback-retention API map TOML；可重复。声明的安全 API 也会被识别为边界。
+    #[arg(long = "api-map")]
+    api_maps: Vec<PathBuf>,
     #[arg(long, default_value_t = DEFAULT_MAX_LINE_BYTES)]
     max_line_bytes: usize,
+}
+
+/// API map 里声明的一个注册方法，按方法名索引。
+///
+/// `classify_foreign_callback_handoff` 只认裸 FFI 调用：它要求显式的 user_data 参数。
+/// 经 contract 包装的安全 API（`connection.update_hook(Some(closure))`）没有这个参数，
+/// 因而整条链在 candidate 阶段就断了，尽管 compiler 侧已经能按同一份 API map 分类。
+/// 本索引让 boundary 扫描消费同一份声明，两侧不再各说各话。
+#[derive(Clone, Debug)]
+struct ContractApiMethod {
+    method: String,
+    api_path: String,
+    role: bw_model::RegistrationRole,
 }
 
 #[derive(Serialize)]
@@ -78,6 +94,8 @@ pub fn run(args: IndexBoundariesArgs) -> Result<CommandStatus, CliError> {
         .map(|located| (located.value.crate_id.clone(), located.value))
         .collect::<BTreeMap<_, _>>();
 
+    let contract_apis = load_contract_apis(&args.api_maps)?;
+
     let mut records = Vec::<V32BoundaryIndexRecord>::new();
     let mut crate_count = 0_u64;
     let mut skipped_count = 0_u64;
@@ -99,7 +117,7 @@ pub fn run(args: IndexBoundariesArgs) -> Result<CommandStatus, CliError> {
         };
         crate_count += 1;
 
-        let crate_records = index_one_crate(&args, manifest_dir, manifest)?;
+        let crate_records = index_one_crate(&args, manifest_dir, manifest, &contract_apis)?;
         records.extend(crate_records);
     }
 
@@ -133,6 +151,7 @@ fn index_one_crate(
     args: &IndexBoundariesArgs,
     manifest_dir: &Path,
     manifest: &V32CorpusManifestRecord,
+    contract_apis: &[ContractApiMethod],
 ) -> Result<Vec<V32BoundaryIndexRecord>, CliError> {
     let source_path = resolve_local_source(manifest_dir, manifest)?;
     let crate_label = sanitize_id(&manifest.crate_id);
@@ -143,7 +162,7 @@ fn index_one_crate(
     }
 
     let source_lines = collect_source_lines(&source_path)?;
-    let hits = scan_source_lines(&source_lines);
+    let hits = scan_source_lines(&source_lines, contract_apis);
     let mut records = Vec::<V32BoundaryIndexRecord>::new();
 
     if hits.is_empty() {
@@ -315,10 +334,68 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), CliError
     Ok(())
 }
 
-fn scan_source_lines(lines: &[SourceLine]) -> Vec<BoundaryHit> {
+/// 从 API map 建立方法名索引。未提供 API map 时返回空表，扫描退回纯 FFI 模式。
+fn load_contract_apis(paths: &[PathBuf]) -> Result<Vec<ContractApiMethod>, CliError> {
+    let mut methods = Vec::new();
+    for path in paths {
+        let text = std::fs::read_to_string(path).map_err(|error| {
+            CliError::input(
+                "BW-BOUNDARY-API-MAP",
+                format!("{}: {error}", path.display()),
+            )
+        })?;
+        let api_map = bw_model::CallbackRetentionApiMap::from_toml_str(&text).map_err(|error| {
+            CliError::input(
+                "BW-BOUNDARY-API-MAP",
+                format!("{}: {error}", path.display()),
+            )
+        })?;
+        for entry in api_map.apis {
+            // rust_path 的最后一段是方法名；没有分段的条目无法按调用点匹配。
+            let Some(method) = entry.rust_path.rsplit("::").next().map(ToOwned::to_owned) else {
+                continue;
+            };
+            if method.is_empty() {
+                continue;
+            }
+            let role = match entry.contract_api_id.as_str() {
+                "api:register" => bw_model::RegistrationRole::Register,
+                "api:unregister" => bw_model::RegistrationRole::Unregister,
+                "api:replace" => bw_model::RegistrationRole::Replace,
+                _ => continue,
+            };
+            methods.push(ContractApiMethod {
+                method,
+                api_path: entry.rust_path.clone(),
+                role,
+            });
+        }
+    }
+    methods.sort_by(|left, right| {
+        left.api_path
+            .cmp(&right.api_path)
+            .then(left.method.cmp(&right.method))
+    });
+    methods.dedup_by(|left, right| left.api_path == right.api_path && left.method == right.method);
+    Ok(methods)
+}
+
+fn scan_source_lines(
+    lines: &[SourceLine],
+    contract_apis: &[ContractApiMethod],
+) -> Vec<BoundaryHit> {
     let mut hits = BTreeMap::<(V32BoundaryKind, String, u64, String), BoundaryHit>::new();
     for (index, line) in lines.iter().enumerate() {
         for hit in classify_line(line) {
+            let key = (
+                hit.kind,
+                hit.evidence.path.clone(),
+                hit.evidence.line_start.unwrap_or_default(),
+                hit.api_path.clone(),
+            );
+            hits.entry(key).or_insert(hit);
+        }
+        for hit in classify_contract_api_call(line, contract_apis) {
             let key = (
                 hit.kind,
                 hit.evidence.path.clone(),
@@ -338,6 +415,54 @@ fn scan_source_lines(lines: &[SourceLine]) -> Vec<BoundaryHit> {
         }
     }
     hits.into_values().collect()
+}
+
+/// 匹配 API map 声明的方法调用。
+///
+/// 只按方法名匹配（`rust_path` 的最后一段），因此是 source-level 启发式，confidence
+/// 记为 medium：候选不是结论，后续 compiler 事实与 contract 审计才决定是否成链。
+/// 匹配面被 API map 限定，未声明的方法一律不产生 hit。
+fn classify_contract_api_call(
+    line: &SourceLine,
+    contract_apis: &[ContractApiMethod],
+) -> Vec<BoundaryHit> {
+    let text = &line.text;
+    let mut hits = Vec::new();
+    for api in contract_apis {
+        let needle = format!(".{}(", api.method);
+        let Some(position) = text.find(&needle) else {
+            continue;
+        };
+        let arguments = &text[position + needle.len()..];
+        let kind = match api.role {
+            bw_model::RegistrationRole::Register | bw_model::RegistrationRole::Replace => {
+                // 注册必须带一个 callback；`None` 是注销而不是注册。
+                if !arguments.contains("Some(") {
+                    continue;
+                }
+                V32BoundaryKind::CallbackRegistration
+            }
+            bw_model::RegistrationRole::Unregister => {
+                if !arguments.contains("None") {
+                    continue;
+                }
+                V32BoundaryKind::CallbackUnregistration
+            }
+        };
+        hits.push(BoundaryHit {
+            kind,
+            api_path: api.api_path.clone(),
+            evidence: V32BoundaryEvidenceRef {
+                kind: V32BoundaryEvidenceKind::SourceSpan,
+                path: line.path.clone(),
+                line_start: Some(line.line_number),
+                line_end: Some(line.line_number),
+            },
+            confidence: "medium",
+            note: "call to an API declared by the callback-retention contract map",
+        });
+    }
+    hits
 }
 
 fn classify_foreign_callback_handoff(lines: &[SourceLine], index: usize) -> Option<BoundaryHit> {
