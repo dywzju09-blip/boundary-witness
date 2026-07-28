@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -25,6 +26,9 @@ pub struct BuildWitnessPlanArgs {
     ranked_candidates: PathBuf,
     #[arg(long = "graphs-dir")]
     graphs_dir: PathBuf,
+    /// 生命周期事实。提供时 plan 才能带上可执行的 target；缺省时 plan 只能人工执行。
+    #[arg(long)]
+    facts: Option<PathBuf>,
     #[arg(long = "output-dir")]
     output_dir: PathBuf,
     #[arg(long)]
@@ -62,6 +66,11 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
         .take(args.limit)
         .collect::<Vec<_>>();
 
+    let registration_apis = match &args.facts {
+        Some(facts_path) => registration_api_by_candidate(facts_path, args.max_line_bytes)?,
+        None => BTreeMap::new(),
+    };
+
     let mut plans = Vec::<V326WitnessPlanRecord>::new();
     for candidate in &ranked {
         let graph_path = resolve_graph_path(&args.graphs_dir, candidate)?;
@@ -87,12 +96,14 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
                 ),
             ));
         }
-        plans.push(plan_for_candidate(
-            &args.run_id,
-            candidate,
-            &graph,
-            graph_ref,
-        ));
+        let mut plan = plan_for_candidate(&args.run_id, candidate, &graph, graph_ref);
+        plan.target = witness_target_for_candidate(candidate, &graph, &registration_apis);
+        if plan.target.is_none() {
+            plan.notes.push(
+                "no contract API binding was resolved; this plan is manual-review only".to_owned(),
+            );
+        }
+        plans.push(plan);
     }
 
     validate_v3_2_6_witness_plans(plans.iter().cloned().enumerate().map(|(index, value)| {
@@ -126,6 +137,91 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
     };
     crate::commands::write_json_stdout(&output)?;
     Ok(CommandStatus::Success)
+}
+
+/// 从生命周期事实里取出每个候选的注册 API id。
+///
+/// api_id 只存在于事实的 `symbol_path` 上，graph 与 ranked candidate 都不携带它，
+/// 因此没有事实输入时 plan 无法绑定到具体 API。
+fn registration_api_by_candidate(
+    facts_path: &std::path::Path,
+    max_line_bytes: usize,
+) -> Result<BTreeMap<String, String>, CliError> {
+    let facts = read_jsonl::<bw_model::V326LifecycleFactRecord>(facts_path, max_line_bytes)?;
+    let mut apis = BTreeMap::<String, String>::new();
+    for located in facts {
+        let fact = located.value;
+        if fact.fact_kind != bw_model::V326LifecycleFactKind::RegisterCall {
+            continue;
+        }
+        let Some(api_id) = fact.symbol_path.as_deref().map(str::trim) else {
+            continue;
+        };
+        if !api_id.starts_with("api:") {
+            continue;
+        }
+        // 同一候选出现多个注册 API 时不猜：留空，plan 退回人工。
+        match apis.entry(fact.candidate_id.clone()) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(api_id.to_owned());
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                if slot.get() != api_id {
+                    slot.insert(String::new());
+                }
+            }
+        }
+    }
+    Ok(apis)
+}
+
+/// `crate:rusqlite:0.31.0` -> `("rusqlite", "0.31.0")`。
+fn split_crate_id(crate_id: &str) -> Option<(String, String)> {
+    let rest = crate_id.strip_prefix("crate:")?;
+    let (name, version) = rest.rsplit_once(':')?;
+    if name.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some((name.to_owned(), version.to_owned()))
+}
+
+fn witness_target_for_candidate(
+    candidate: &V326RankedCandidateRecord,
+    graph: &V326LifecycleGraphV3Record,
+    registration_apis: &BTreeMap<String, String>,
+) -> Option<bw_model::V326WitnessTarget> {
+    let registration_source_ref = graph
+        .objects
+        .iter()
+        .find(|object| object.object_kind == bw_model::V326LifecycleObjectKind::UserData)
+        .and_then(|object| object.source_ref.clone());
+    witness_target_from_parts(
+        &candidate.candidate_id,
+        &candidate.crate_id,
+        registration_apis,
+        registration_source_ref,
+    )
+}
+
+/// [`witness_target_for_candidate`] 的纯逻辑，便于在不构造完整 ranked/graph 记录的
+/// 前提下测试绑定与拒绝绑定的条件。
+fn witness_target_from_parts(
+    candidate_id: &str,
+    crate_id: &str,
+    registration_apis: &BTreeMap<String, String>,
+    registration_source_ref: Option<bw_model::V326SourceRef>,
+) -> Option<bw_model::V326WitnessTarget> {
+    let api_id = registration_apis.get(candidate_id)?;
+    if api_id.is_empty() {
+        return None;
+    }
+    let (crate_name, crate_version) = split_crate_id(crate_id)?;
+    Some(bw_model::V326WitnessTarget {
+        api_id: api_id.clone(),
+        crate_name,
+        crate_version,
+        registration_source_ref,
+    })
 }
 
 fn plan_for_candidate(
@@ -203,6 +299,8 @@ fn callback_plan_for_candidate(
         plan_id: format!("witness-plan:{}", sanitize_id(&candidate.candidate_id)),
         candidate_id: candidate.candidate_id.clone(),
         lifecycle_graph_ref: graph_ref,
+        // 由 run() 在生成后按事实解析填充；三个 route 的构造点都不自行猜测 API。
+        target: None,
         actions,
         runtime_observers: vec![
             "callback_register".to_owned(),
@@ -297,6 +395,8 @@ fn external_buffer_plan_for_candidate(
         plan_id: format!("witness-plan:{}", sanitize_id(&candidate.candidate_id)),
         candidate_id: candidate.candidate_id.clone(),
         lifecycle_graph_ref: graph_ref,
+        // 由 run() 在生成后按事实解析填充；三个 route 的构造点都不自行猜测 API。
+        target: None,
         actions,
         runtime_observers: vec![
             "external_buffer_bind".to_owned(),
@@ -390,6 +490,8 @@ fn returned_view_plan_for_candidate(
         plan_id: format!("witness-plan:{}", sanitize_id(&candidate.candidate_id)),
         candidate_id: candidate.candidate_id.clone(),
         lifecycle_graph_ref: graph_ref,
+        // 由 run() 在生成后按事实解析填充；三个 route 的构造点都不自行猜测 API。
+        target: None,
         actions,
         runtime_observers: vec![
             "returned_view_persist".to_owned(),
@@ -697,4 +799,95 @@ fn sanitize_id(value: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod witness_target_tests {
+    use super::*;
+
+    fn apis(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn splits_a_versioned_crate_id() {
+        assert_eq!(
+            split_crate_id("crate:rusqlite:0.31.0"),
+            Some(("rusqlite".to_owned(), "0.31.0".to_owned()))
+        );
+    }
+
+    #[test]
+    fn keeps_a_hyphenated_crate_name_intact() {
+        assert_eq!(
+            split_crate_id("crate:libsqlite3-sys:0.28.0"),
+            Some(("libsqlite3-sys".to_owned(), "0.28.0".to_owned()))
+        );
+    }
+
+    #[test]
+    fn rejects_a_crate_id_without_a_usable_version() {
+        assert_eq!(split_crate_id("crate:rusqlite"), None);
+        assert_eq!(split_crate_id("rusqlite:0.31.0"), None);
+        assert_eq!(split_crate_id("crate:rusqlite:"), None);
+    }
+
+    #[test]
+    fn binds_when_exactly_one_registration_api_is_known() {
+        let target = witness_target_from_parts(
+            "candidate:a",
+            "crate:rusqlite:0.31.0",
+            &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+            None,
+        )
+        .expect("a single known registration API must bind the plan");
+        assert_eq!(target.api_id, "api:rusqlite:update_hook:register");
+        assert_eq!(target.crate_name, "rusqlite");
+        assert_eq!(target.crate_version, "0.31.0");
+    }
+
+    #[test]
+    fn refuses_to_bind_without_a_registration_api() {
+        assert!(
+            witness_target_from_parts(
+                "candidate:a",
+                "crate:rusqlite:0.31.0",
+                &BTreeMap::new(),
+                None
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn refuses_to_bind_when_registration_apis_conflict() {
+        // registration_api_by_candidate 用空串表示"同一候选出现多个不同 API"。
+        assert!(
+            witness_target_from_parts(
+                "candidate:a",
+                "crate:rusqlite:0.31.0",
+                &apis(&[("candidate:a", "")]),
+                None
+            )
+            .is_none(),
+            "an ambiguous API must leave the plan manual-review only rather than pick one"
+        );
+    }
+
+    #[test]
+    fn refuses_to_bind_when_the_crate_id_carries_no_version() {
+        assert!(
+            witness_target_from_parts(
+                "candidate:a",
+                "crate:rusqlite",
+                &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+                None
+            )
+            .is_none(),
+            "a harness cannot declare a dependency without a version"
+        );
+    }
 }

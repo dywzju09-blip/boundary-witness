@@ -7576,6 +7576,7 @@ fn witness_plan_accepts_neutral_controlled_actions() {
         plan_id: "witness-plan:alpha:001".to_owned(),
         candidate_id: "candidate:alpha:001".to_owned(),
         lifecycle_graph_ref: "graphs-v3/candidate_alpha_001.json".to_owned(),
+        target: None,
         actions: vec![bw_model::V326WitnessAction {
             action_id: "action:alpha:register".to_owned(),
             action_kind: bw_model::V326WitnessActionKind::RegisterCallback,

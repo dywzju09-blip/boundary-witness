@@ -1263,6 +1263,12 @@ pub struct V326WitnessPlanRecord {
     pub plan_id: String,
     pub candidate_id: String,
     pub lifecycle_graph_ref: String,
+    /// executor 生成 harness 所需的具体绑定。
+    ///
+    /// `None` 表示这条 plan 无法自动执行，只能人工复核——例如静态侧没能把候选绑定到
+    /// 某个 contract API。显式记录不可执行，好过让 executor 去猜一个 API。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<V326WitnessTarget>,
     pub actions: Vec<V326WitnessAction>,
     #[serde(default)]
     pub runtime_observers: Vec<String>,
@@ -1272,6 +1278,24 @@ pub struct V326WitnessPlanRecord {
     pub replay_evidence_refs: Vec<String>,
     #[serde(default)]
     pub notes: Vec<String>,
+}
+
+/// 把一条 witness plan 绑定到可执行的具体目标。
+///
+/// [`V326WitnessAction`] 只描述意图（注册 callback、drop owner），不含调用哪个 crate 的
+/// 哪个 API，因此 plan 单独存在时只是人工待办清单。本结构补上 harness 生成所需的身份。
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct V326WitnessTarget {
+    /// callback-retention API map 中的 `api_id`，例如 `api:rusqlite:update_hook:register`。
+    /// harness 生成器按它选择模板；无法覆盖该 api_id 时必须拒绝生成而不是回退到通用模板。
+    pub api_id: String,
+    /// 被测 crate 的名称与版本，用于生成 harness 的依赖声明。
+    pub crate_name: String,
+    pub crate_version: String,
+    /// 静态侧观察到的注册位置，供 receipt 回指与人工复核。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_source_ref: Option<V326SourceRef>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

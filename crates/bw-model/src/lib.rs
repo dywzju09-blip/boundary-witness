@@ -89,7 +89,7 @@ pub use lifecycle_v326::{
     V326ObjectChainStatus, V326PairDeltaRecord, V326PairDeltaSummary, V326RankedCandidateRecord,
     V326RankedCandidateSummary, V326RankedChainSummary, V326ScoreBreakdown, V326SourceRef,
     V326WitnessAction, V326WitnessActionKind, V326WitnessPlanRecord, V326WitnessPlanSummary,
-    V326WitnessRoute, active_feature_names, build_v3_2_6_lifecycle_graph,
+    V326WitnessRoute, V326WitnessTarget, active_feature_names, build_v3_2_6_lifecycle_graph,
     build_v3_2_6_lifecycle_graph_v3, compare_v3_2_6_pair, derive_v3_2_6_lifecycle_features,
     derive_v3_2_6_lifecycle_features_with_context, lifecycle_fact_from_static_fact,
     rank_v3_2_6_features, summarize_v3_2_6_ranked_object_chains, validate_v3_2_6_anonymous_pairs,
