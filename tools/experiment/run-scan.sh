@@ -211,7 +211,15 @@ run_stage() {
   # keeps the other stages running against the toolchain they were built with.
   local -a stage_env=()
   if [[ "$name" == "extract-static-facts" && -n "$toolchain_lib" ]]; then
-    stage_env=(env "LD_LIBRARY_PATH=${toolchain_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}")
+    # RUSTUP_TOOLCHAIN makes cargo build the crate and its path dependencies with
+    # the same toolchain the wrapper links against. Without it a crate that depends
+    # on this repository fails with E0514: its deps come from the default stable
+    # toolchain while the wrapper compiles the crate itself as nightly.
+    stage_env=(
+      env
+      "LD_LIBRARY_PATH=${toolchain_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+      "RUSTUP_TOOLCHAIN=${toolchain}"
+    )
   fi
   if "${stage_env[@]}" "${bw_cmd[@]}" "$name" "$@" > "$out_file" 2> "$err_file"; then
     exit_code=0
