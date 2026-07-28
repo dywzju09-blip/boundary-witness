@@ -1146,7 +1146,11 @@ fn install_fake_docker(fixture: &Fixture, body: &str) -> EnvironmentGuard {
         container_engine: std::env::var_os("BW_CONTAINER_ENGINE"),
     };
     let path = match &guard.path {
-        Some(current) => std::env::join_paths([bin.as_os_str(), current]).unwrap(),
+        Some(current) => {
+            let mut entries = vec![bin.clone()];
+            entries.extend(std::env::split_paths(current));
+            std::env::join_paths(entries).unwrap()
+        }
         None => bin.into_os_string(),
     };
     unsafe {

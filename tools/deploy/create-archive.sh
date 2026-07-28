@@ -98,29 +98,27 @@ archive_tmp="${tmp_dir}/source.tar.zst"
 sha_tmp="${tmp_dir}/source.sha256"
 manifest_tmp="${tmp_dir}/deployment.json"
 
-if [[ "$profile" == "full-experiment" ]]; then
-  git -C "$repo" archive --format=tar --prefix=boundary-witness/ HEAD \
-    | zstd -T0 -19 -q -c > "$archive_tmp"
-else
-  export_dir="${tmp_dir}/export"
-  mkdir -p "$export_dir"
-  git -C "$repo" archive --format=tar --prefix=boundary-witness/ HEAD \
-    | tar -x -C "$export_dir"
+export_dir="${tmp_dir}/export"
+mkdir -p "$export_dir"
+git -C "$repo" archive --format=tar --prefix=boundary-witness/ HEAD \
+  | tar -x -C "$export_dir"
+rm -rf \
+  "${export_dir}/boundary-witness/experiments/artifacts" \
+  "${export_dir}/boundary-witness/docs" \
+  "${export_dir}/boundary-witness/target" \
+  "${export_dir}/boundary-witness/runs" \
+  "${export_dir}/boundary-witness/scratch"
+if [[ "$profile" != "full-experiment" ]]; then
+  rm -rf "${export_dir}/boundary-witness/experiments/ground-truth"
+fi
+if [[ "$profile" == "blind-runtime" ]]; then
   rm -rf \
-    "${export_dir}/boundary-witness/experiments/ground-truth" \
-    "${export_dir}/boundary-witness/experiments/artifacts" \
-    "${export_dir}/boundary-witness/docs" \
-    "${export_dir}/boundary-witness/target" \
-    "${export_dir}/boundary-witness/runs" \
-    "${export_dir}/boundary-witness/scratch"
-  if [[ "$profile" == "blind-runtime" ]]; then
-    rm -rf \
-      "${export_dir}/boundary-witness/benchmarks/historical-cves" \
-      "${export_dir}/boundary-witness/experiments/schemas" \
-      "${export_dir}/boundary-witness/fixtures"
-  fi
-  if [[ "$profile" == "blind-runtime" ]]; then
-    python3 - "${export_dir}/boundary-witness" <<'PY'
+    "${export_dir}/boundary-witness/benchmarks/historical-cves" \
+    "${export_dir}/boundary-witness/experiments/schemas" \
+    "${export_dir}/boundary-witness/fixtures"
+fi
+if [[ "$profile" == "blind-runtime" ]]; then
+  python3 - "${export_dir}/boundary-witness" <<'PY'
 import pathlib
 import re
 import sys
@@ -150,10 +148,9 @@ for path in root.rglob("*"):
     if any(contains_forbidden_token(relative, token) for token in forbidden):
         raise SystemExit(f"blind-runtime archive path contains forbidden token: {relative}")
 PY
-  fi
-  COPYFILE_DISABLE=1 tar -C "$export_dir" -cf - boundary-witness \
-    | zstd -T0 -19 -q -c > "$archive_tmp"
 fi
+COPYFILE_DISABLE=1 tar -C "$export_dir" -cf - boundary-witness \
+  | zstd -T0 -19 -q -c > "$archive_tmp"
 
 archive_sha="$(sha256_file "$archive_tmp")"
 printf '%s  source.tar.zst\n' "$archive_sha" > "$sha_tmp"
@@ -172,18 +169,27 @@ manifest_path = sys.argv[1]
 allowed_top_level = [
     ".dockerignore",
     ".gitattributes",
+    ".github",
     ".gitignore",
     "AGENTS.md",
+    "CONTRIBUTING.md",
     "Cargo.lock",
     "Cargo.toml",
+    "LICENSE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "README.md",
+    "SECURITY.md",
     "benchmarks",
     "compiler",
     "contracts",
     "crates",
+    "docs",
     "experiments",
     "fixtures",
     "infra",
     "rust-toolchain.toml",
+    "schemas",
     "tests",
     "tools",
 ]

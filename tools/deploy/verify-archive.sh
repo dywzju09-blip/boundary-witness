@@ -97,18 +97,27 @@ manifest_path, tar_path, archive_sha256 = sys.argv[1:4]
 allowed_top_level = [
     ".dockerignore",
     ".gitattributes",
+    ".github",
     ".gitignore",
     "AGENTS.md",
+    "CONTRIBUTING.md",
     "Cargo.lock",
     "Cargo.toml",
+    "LICENSE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "README.md",
+    "SECURITY.md",
     "benchmarks",
     "compiler",
     "contracts",
     "crates",
+    "docs",
     "experiments",
     "fixtures",
     "infra",
     "rust-toolchain.toml",
+    "schemas",
     "tests",
     "tools",
 ]
@@ -117,7 +126,6 @@ blocked_top_level = {
     ".superpowers",
     ".worktrees",
     "dist",
-    "docs",
     "runs",
     "scratch",
     "target",
@@ -217,6 +225,8 @@ with tarfile.open(tar_path, "r:") as tf:
             seen_cargo_toml = True
         rel_lower = rel.lower()
         if profile in {"staging-builder", "blind-runtime"}:
+            if rel_lower == "docs" or rel_lower.startswith("docs/"):
+                die(f"{profile} archive contains docs path: {rel}")
             if rel_lower == "experiments/ground-truth" or rel_lower.startswith("experiments/ground-truth/"):
                 die(f"{profile} archive contains ground truth path: {rel}")
         if profile == "blind-runtime":

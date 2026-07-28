@@ -7,7 +7,11 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 create_tool="${repo_root}/tools/blind/create-public-archive.sh"
 verify_tool="${repo_root}/tools/blind/verify-public-archive.sh"
 install_tool="${repo_root}/tools/blind/install-public-archive.sh"
-tmp_root="${repo_root}/target/tmp/blind-pack-policy"
+tmp_root="${BW_BLIND_PACK_POLICY_TMP_ROOT:-}"
+if [[ -z "$tmp_root" ]]; then
+  tmp_root="$(mktemp -d -t bw-blind-pack-policy.XXXXXX)"
+fi
+cargo_target_dir="${CARGO_TARGET_DIR:-${tmp_root}/cargo-target}"
 pack="${tmp_root}/pack"
 clean_worktree="${tmp_root}/clean-worktree"
 dirty_sentinel="${repo_root}/.blind-pack-policy-dirty-${$}"
@@ -417,7 +421,7 @@ PY
 ) > "${inaccurate_pack}/checksums.sha256"
 if (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_create" \
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_create" \
     "$inaccurate_pack" "${inaccurate_pack}-out" "$inaccurate_commit"
 ) >"${tmp_root}/inaccurate-commit.out" 2>"${tmp_root}/inaccurate-commit.err"; then
   fail "inaccurate method commit was accepted"
@@ -427,7 +431,7 @@ nested_pack="${clean_worktree}/target/tmp/blind-pack-policy/nested-output-pack"
 cp -R "$clean_pack" "$nested_pack"
 if (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_create" \
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_create" \
     "$nested_pack" "${nested_pack}/generated" "$clean_method_commit"
 ) >"${tmp_root}/nested-output.out" 2>"${tmp_root}/nested-output.err"; then
   fail "output directory inside public pack was accepted"
@@ -435,7 +439,7 @@ fi
 
 (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_create" "$clean_pack" "$out" "$clean_method_commit"
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_create" "$clean_pack" "$out" "$clean_method_commit"
 ) >"${tmp_root}/create.out" 2>"${tmp_root}/create.err"
 
 archive="${out}/blind-pack.tar.zst"
@@ -488,7 +492,7 @@ done < "$listing"
 
 (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_create" "$clean_pack" "$repeat_out" "$clean_method_commit"
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_create" "$clean_pack" "$repeat_out" "$clean_method_commit"
 ) >"${tmp_root}/create-repeat.out" 2>"${tmp_root}/create-repeat.err"
 [[ "$(sha256_file "${repeat_out}/blind-pack.tar.zst")" == "$archive_sha" ]] \
   || fail "repeated archive creation was not deterministic"
@@ -503,7 +507,7 @@ for forbidden in private ground-truth ground_truth cve- ghsa- advisory poc .git;
   mkdir -p "${mutant}/cases/${forbidden}"
   if (
     cd "$clean_worktree"
-    CARGO_TARGET_DIR="${repo_root}/target" "$clean_create" \
+    CARGO_TARGET_DIR="$cargo_target_dir" "$clean_create" \
       "$mutant" "${mutant}-out" "$clean_method_commit"
   ) >"${tmp_root}/forbidden-${safe_name}.out" 2>"${tmp_root}/forbidden-${safe_name}.err"; then
     fail "forbidden public path was accepted: $forbidden"
@@ -512,7 +516,7 @@ done
 
 (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_verify" "$archive" "$sha_file" "$deployment"
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_verify" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/verify.out" 2>"${tmp_root}/verify.err"
 
 for binding in method_commit public_manifest_sha256 archive_sha256; do
@@ -532,7 +536,7 @@ with open(sys.argv[2], "w", encoding="utf-8") as output:
 PY
   if (
     cd "$clean_worktree"
-    CARGO_TARGET_DIR="${repo_root}/target" "$clean_verify" \
+    CARGO_TARGET_DIR="$cargo_target_dir" "$clean_verify" \
       "$archive" "$sha_file" "$bad_deployment"
   ) >"${tmp_root}/bad-deployment-${binding}.out" \
     2>"${tmp_root}/bad-deployment-${binding}.err"; then
@@ -572,7 +576,7 @@ with open(sys.argv[2], "w", encoding="utf-8") as output:
 PY
   if (
     cd "$clean_worktree"
-    CARGO_TARGET_DIR="${repo_root}/target" "$clean_verify" \
+    CARGO_TARGET_DIR="$cargo_target_dir" "$clean_verify" \
       "$archive" "$sha_file" "$bad_deployment"
   ) >"${tmp_root}/bad-deployment-${mutation}.out" \
     2>"${tmp_root}/bad-deployment-${mutation}.err"; then
@@ -588,7 +592,7 @@ for mutation in \
   make_mutant_archive "$mutation" "$mutant_root"
   if (
     cd "$clean_worktree"
-    CARGO_TARGET_DIR="${repo_root}/target" "$clean_verify" \
+    CARGO_TARGET_DIR="$cargo_target_dir" "$clean_verify" \
       "${mutant_root}/blind-pack.tar.zst" \
       "${mutant_root}/blind-pack.sha256" \
       "${mutant_root}/blind-deployment.json"
@@ -606,7 +610,7 @@ COPYFILE_DISABLE=1 tar -cf "${tamper_root}/blind-pack.tar" \
 zstd -q -19 -f "${tamper_root}/blind-pack.tar" -o "${tamper_root}/blind-pack.tar.zst"
 if (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_verify" \
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_verify" \
     "${tamper_root}/blind-pack.tar.zst" "$sha_file" "$deployment"
 ) >"${tmp_root}/tamper.out" 2>"${tmp_root}/tamper.err"; then
   fail "tampered archive passed verification"
@@ -643,7 +647,7 @@ for invalid_key_case in invalid-hex odd-length-hex forbidden-key-id; do
       BW_BLIND_RECEIPTS_ROOT="$invalid_receipt_root" \
       BW_BLIND_RECEIPT_KEY_ID="$invalid_key_id" \
       BW_BLIND_RECEIPT_KEY_HEX="$invalid_key_hex" \
-      CARGO_TARGET_DIR="${repo_root}/target" \
+      CARGO_TARGET_DIR="$cargo_target_dir" \
       "$clean_install" "$archive" "$sha_file" "$deployment"
   ) >"${tmp_root}/${invalid_key_case}.out" 2>"${tmp_root}/${invalid_key_case}.err"
   invalid_key_status=$?
@@ -675,7 +679,7 @@ for invalid_receipt_field_case in forbidden-host-id forbidden-installed-path; do
     BW_BLIND_PACKS_ROOT="$invalid_receipt_install_root" \
       BW_BLIND_RECEIPTS_ROOT="$invalid_receipt_root" \
       BW_BLIND_HOST_ID="$invalid_receipt_host_id" \
-      CARGO_TARGET_DIR="${repo_root}/target" \
+      CARGO_TARGET_DIR="$cargo_target_dir" \
       "$clean_install" "$archive" "$sha_file" "$deployment"
   ) >"${tmp_root}/${invalid_receipt_field_case}.out" 2>"${tmp_root}/${invalid_receipt_field_case}.err"
   invalid_receipt_field_status=$?
@@ -706,7 +710,7 @@ env -u BW_BLIND_HOST_ID \
   BW_BLIND_RECEIPTS_ROOT="$empty_hostname_receipt_root" \
   BW_BLIND_RECEIPT_KEY_ID="test-key" \
   BW_BLIND_RECEIPT_KEY_HEX="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" \
-  CARGO_TARGET_DIR="${repo_root}/target" \
+  CARGO_TARGET_DIR="$cargo_target_dir" \
   "$clean_install" "$archive" "$sha_file" "$deployment" \
   >"${tmp_root}/empty-hostname.out" 2>"${tmp_root}/empty-hostname.err"
 empty_hostname_receipt="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["install_receipt"])' "${tmp_root}/empty-hostname.out")"
@@ -729,7 +733,7 @@ set +e
   cd "$clean_worktree"
   BW_BLIND_PACKS_ROOT="$internal_receipt_install_root" \
     BW_BLIND_RECEIPTS_ROOT="$internal_receipt_root" \
-    CARGO_TARGET_DIR="${repo_root}/target" \
+    CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/internal-receipt-root.out" 2>"${tmp_root}/internal-receipt-root.err"
 internal_receipt_status=$?
@@ -757,7 +761,7 @@ set +e
   cd "$clean_worktree"
   BW_BLIND_PACKS_ROOT="$symlink_target_install_root" \
     BW_BLIND_RECEIPTS_ROOT="$symlink_target_receipt_root" \
-    CARGO_TARGET_DIR="${repo_root}/target" \
+    CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/symlink-target.out" 2>"${tmp_root}/symlink-target.err"
 symlink_target_status=$?
@@ -777,7 +781,7 @@ rg -q 'install target.*symlink' "${tmp_root}/symlink-target.err" \
 
 (
   cd "$clean_worktree"
-  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="${repo_root}/target" \
+  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/install.out" 2>"${tmp_root}/install.err"
 installed="${install_root}/${archive_sha}"
@@ -841,7 +845,7 @@ before="$(legacy_tree_digest "$installed")"
 
 (
   cd "$clean_worktree"
-  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="${repo_root}/target" \
+  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/install-again.out" 2>"${tmp_root}/install-again.err"
 BW_EXPECTED_RECEIPT="$install_receipt" python3 - \
@@ -905,7 +909,7 @@ for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_p
 PY
 (
   cd "$clean_worktree"
-  CARGO_TARGET_DIR="${repo_root}/target" "$clean_create" \
+  CARGO_TARGET_DIR="$cargo_target_dir" "$clean_create" \
     "$collision_pack" "$collision_out" "$clean_method_commit"
 ) >"${tmp_root}/collision-create.out" 2>"${tmp_root}/collision-create.err"
 
@@ -931,7 +935,7 @@ PY
 set +e
 (
   cd "$clean_worktree"
-  BW_BLIND_PACKS_ROOT="$collision_install_root" CARGO_TARGET_DIR="${repo_root}/target" \
+  BW_BLIND_PACKS_ROOT="$collision_install_root" CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$collision_archive" "$collision_sha_file" "$collision_deployment"
 ) >"${tmp_root}/install-digest-collision.out" \
   2>"${tmp_root}/install-digest-collision.err"
@@ -964,7 +968,7 @@ set +e
 (
   cd "$clean_worktree"
   PATH="${wrapper_dir}:$PATH" BW_REAL_ZSTD="$real_zstd" BW_ZSTD_STATE="$wrapper_dir" \
-    BW_BLIND_PACKS_ROOT="$swap_root" CARGO_TARGET_DIR="${repo_root}/target" \
+    BW_BLIND_PACKS_ROOT="$swap_root" CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$swap_source" "$sha_file" "$deployment"
 ) >"${tmp_root}/archive-swap.out" 2>"${tmp_root}/archive-swap.err" &
 swap_pid=$!
@@ -990,7 +994,7 @@ chmod 0600 "${installed}/policy.toml"
 set +e
 (
   cd "$clean_worktree"
-  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="${repo_root}/target" \
+  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/install-conflict.out" 2>"${tmp_root}/install-conflict.err"
 conflict_status=$?
@@ -1003,7 +1007,7 @@ chmod 0700 "$installed"
 set +e
 (
   cd "$clean_worktree"
-  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="${repo_root}/target" \
+  BW_BLIND_PACKS_ROOT="$install_root" CARGO_TARGET_DIR="$cargo_target_dir" \
     "$clean_install" "$archive" "$sha_file" "$deployment"
 ) >"${tmp_root}/install-root-mode-conflict.out" \
   2>"${tmp_root}/install-root-mode-conflict.err"

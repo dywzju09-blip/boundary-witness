@@ -11,11 +11,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         run: |
+          rustup toolchain install 1.97.0 --component clippy --component rustfmt
+          rustup toolchain install nightly-2026-07-08 --component rustc-dev --component rust-src --component llvm-tools-preview --component rustfmt --component clippy
           rustup show active-toolchain
           rustc --version
           cargo --version
       - name: Public tree check
         run: python3 tools/repository/check_public_tree.py --root . --max-bytes 10485760
+      - name: Python governance tests
+        run: python3 -m unittest discover -s tools -t . -v
       - name: Format
         run: cargo fmt --all --check
       - name: Workspace check
@@ -23,9 +27,11 @@ jobs:
       - name: Workspace test
         run: cargo test --workspace --locked
       - name: Compiler check
-        run: cargo check --manifest-path compiler/bw-rustc/Cargo.toml --locked
+        working-directory: compiler/bw-rustc
+        run: cargo check --locked
       - name: Compiler test
-        run: cargo test --manifest-path compiler/bw-rustc/Cargo.toml --locked
+        working-directory: compiler/bw-rustc
+        run: cargo test --locked
       - name: Schema tests
         run: cargo test -p bw-model --locked schema
       - name: Contract tests
