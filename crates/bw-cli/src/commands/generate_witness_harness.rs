@@ -198,6 +198,23 @@ fn generate_one(
         )
     })?;
 
+    // 运行时用 bind_object 建立 capture，而编译器产出的静态事实用另一套 site id。
+    // oracle 要求两侧一致，否则以 BW-ORACLE-STATIC-CAPTURE-MISSING 拒绝判定。
+    // 这份 bridge 规格记录 harness 实际使用的 site id，供 bridge-witness-facts 合成
+    // 对应的 CallbackSite/ObjectSite/CallbackCapture 事实。
+    let slug = sanitize_site_slug(&plan.plan_id);
+    let bridge = serde_json::json!({
+        "schema_version": "boundary-witness.witness-site-bridge/0.1",
+        "plan_id": plan.plan_id,
+        "candidate_id": plan.candidate_id,
+        "callback_site_id": format!("site:{slug}:callback"),
+        "object_site_id": format!("site:{slug}:object"),
+        "capture_site_id": format!("site:{slug}:capture"),
+        "capture_mode": "borrowed",
+    });
+    write_json_file(&harness_dir.join("site-bridge.json"), &bridge)
+        .map_err(|error| refusal(REASON_UNSUPPORTED_API, error.to_string()))?;
+
     Ok(GeneratedHarness {
         plan_id: plan.plan_id.clone(),
         candidate_id: plan.candidate_id.clone(),
@@ -299,6 +316,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let counter_site = site("site:{plan_slug}:object");
     let counter = Tracked::new(runtime.clone(), counter_site.clone(), BorrowedCounter::new());
     let token = observed.register(site("site:{plan_slug}:callback"))?;
+    // bind_object 的第二个参数是对象自身的 site id。bridge 里的 capture_site_id 只用作
+    // CallbackCapture 事实自身的 site_id，两者不可互换。
     token.bind_object(counter.id(), &counter_site)?;
     runtime.emit_checkpoint(CheckpointKind::Registered)?;
 
@@ -506,4 +525,146 @@ mod tests {
             "harness generation must be deterministic so its sha256 binds a run to its source"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// bridge-witness-facts
+// ---------------------------------------------------------------------------
+
+/// 把 harness 的运行时 site id 补进静态事实。
+///
+/// harness 在运行时通过 `bind_object` 建立 capture，编译器产出的静态事实使用另一套
+/// site id，oracle 因此以 `BW-ORACLE-STATIC-CAPTURE-MISSING` 拒绝判定。本命令按
+/// `site-bridge.json` 合成 CallbackSite / ObjectSite / CallbackCapture 三条事实，
+/// build_id 取自既有静态事实，保证 oracle 的 build 一致性检查仍然生效。
+#[derive(Args)]
+pub struct BridgeWitnessFactsArgs {
+    #[arg(long = "static-facts")]
+    static_facts: PathBuf,
+    #[arg(long)]
+    bridge: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SiteBridge {
+    plan_id: String,
+    callback_site_id: String,
+    object_site_id: String,
+    capture_site_id: String,
+    capture_mode: bw_model::CaptureMode,
+}
+
+#[derive(Debug, Serialize)]
+struct BridgeOutput {
+    kind: &'static str,
+    plan_id: String,
+    build_id: String,
+    input_fact_count: u64,
+    bridge_fact_count: u64,
+    output: String,
+}
+
+pub fn run_bridge(args: BridgeWitnessFactsArgs) -> Result<CommandStatus, CliError> {
+    let facts_text = fs::read_to_string(&args.static_facts)?;
+    let mut lines = facts_text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let first = lines.first().ok_or_else(|| {
+        CliError::input(
+            "BW-V326-BRIDGE-EMPTY-FACTS",
+            format!("{} 没有静态事实", args.static_facts.display()),
+        )
+    })?;
+    let build_id = bw_model::StaticFactEnvelope::from_json_str(first)
+        .map_err(|error| {
+            CliError::input(
+                "BW-V326-BRIDGE-FACTS",
+                format!("{}: {error}", args.static_facts.display()),
+            )
+        })?
+        .build_id;
+
+    let bridge: SiteBridge =
+        serde_json::from_str(&fs::read_to_string(&args.bridge)?).map_err(|error| {
+            CliError::input(
+                "BW-V326-BRIDGE-SPEC",
+                format!("{}: {error}", args.bridge.display()),
+            )
+        })?;
+
+    let bridge_facts = bridge_facts(&bridge, &build_id);
+    for fact in &bridge_facts {
+        lines.push(
+            serde_json::to_string(fact).map_err(|error| CliError::internal(error.to_string()))?,
+        );
+    }
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&args.output, lines.join("\n") + "\n")?;
+
+    write_json_stdout(&BridgeOutput {
+        kind: "v3-2-6-witness-site-bridge",
+        plan_id: bridge.plan_id.clone(),
+        build_id: build_id.0.clone(),
+        input_fact_count: (lines.len() - bridge_facts.len()) as u64,
+        bridge_fact_count: bridge_facts.len() as u64,
+        output: args.output.display().to_string(),
+    })?;
+    Ok(CommandStatus::Success)
+}
+
+fn bridge_facts(
+    bridge: &SiteBridge,
+    build_id: &bw_model::BuildId,
+) -> Vec<bw_model::StaticFactEnvelope> {
+    let slug = sanitize_site_slug(&bridge.plan_id);
+    let envelope = |suffix: &str, payload: bw_model::StaticFact| bw_model::StaticFactEnvelope {
+        schema_version: bw_model::STATIC_SCHEMA_V01.to_owned(),
+        record_id: bw_model::RecordId::from(format!("fact:bridge:{slug}:{suffix}")),
+        producer: "bw-generate-witness-harness@0.1".to_owned(),
+        build_id: build_id.clone(),
+        artifact: None,
+        source_ref: None,
+        payload,
+    };
+    vec![
+        envelope(
+            "callback",
+            bw_model::StaticFact::CallbackSite(bw_model::CallbackSiteFact {
+                site_id: bw_model::SiteId::from(bridge.callback_site_id.as_str()),
+                semantic_site_key: bw_model::SemanticSiteKey::from(format!(
+                    "semantic:bridge:{slug}:callback"
+                )),
+                def_path: format!("runtime_bridge::{slug}::callback"),
+            }),
+        ),
+        envelope(
+            "object",
+            bw_model::StaticFact::ObjectSite(bw_model::ObjectSiteFact {
+                site_id: bw_model::SiteId::from(bridge.object_site_id.as_str()),
+                semantic_site_key: bw_model::SemanticSiteKey::from(format!(
+                    "semantic:bridge:{slug}:object"
+                )),
+                type_name: "runtime_bridge::tracked_object".to_owned(),
+            }),
+        ),
+        envelope(
+            "capture",
+            bw_model::StaticFact::CallbackCapture(bw_model::CallbackCaptureFact {
+                site_id: bw_model::SiteId::from(bridge.capture_site_id.as_str()),
+                semantic_site_key: bw_model::SemanticSiteKey::from(format!(
+                    "semantic:bridge:{slug}:capture"
+                )),
+                callback_site_id: bw_model::SiteId::from(bridge.callback_site_id.as_str()),
+                object_site_id: bw_model::SiteId::from(bridge.object_site_id.as_str()),
+                capture_ordinal: 0,
+                capture_mode: bridge.capture_mode,
+            }),
+        ),
+    ]
 }

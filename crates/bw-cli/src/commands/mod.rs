@@ -122,6 +122,8 @@ pub enum Command {
     BuildWitnessPlan(build_witness_plan::BuildWitnessPlanArgs),
     /// 从已绑定的 witness plan 生成本地受控 harness 源码。
     GenerateWitnessHarness(generate_witness_harness::GenerateWitnessHarnessArgs),
+    /// 把 harness 的运行时 site id 补进静态事实，供 oracle 判定。
+    BridgeWitnessFacts(generate_witness_harness::BridgeWitnessFactsArgs),
     /// 审计 V3.2.x 本地 lifecycle contract registry 覆盖。
     AuditLifecycleContracts(audit_lifecycle_contracts::AuditLifecycleContractsArgs),
     /// 从版本化 callback retention contract registry materialize 生命周期 contract。
@@ -157,6 +159,7 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),
         Command::BuildWitnessPlan(args) => build_witness_plan::run(args),
         Command::GenerateWitnessHarness(args) => generate_witness_harness::run(args),
+        Command::BridgeWitnessFacts(args) => generate_witness_harness::run_bridge(args),
         Command::AuditLifecycleContracts(args) => audit_lifecycle_contracts::run(args),
         Command::MaterializeLifecycleContracts(args) => materialize_lifecycle_contracts::run(args),
         Command::CompareAnonymousPairs(args) => compare_anonymous_pairs::run(args),
