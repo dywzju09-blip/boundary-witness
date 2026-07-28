@@ -151,6 +151,8 @@
         "ambiguous_chain_count": { "type": "integer", "minimum": 0 },
         "observation_only_chain_count": { "type": "integer", "minimum": 0 },
         "identity_transport_chain_count": { "type": "integer", "minimum": 0 },
+        "release_ordering_chain_count": { "type": "integer", "minimum": 0 },
+        "use_ordering_chain_count": { "type": "integer", "minimum": 0 },
         "lifecycle_ordering_chain_count": { "type": "integer", "minimum": 0 },
         "complete_risk_chain_count": { "type": "integer", "minimum": 0 },
         "chain_fact_refs": {

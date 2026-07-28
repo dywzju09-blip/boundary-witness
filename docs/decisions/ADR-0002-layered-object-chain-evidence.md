@@ -13,8 +13,12 @@ Accepted
 对象链证据分为三层：
 
 1. `identity_transport`：证明同一逻辑对象或传递关系；
-2. `lifecycle_ordering`：证明 release、invalidation、use 等事件顺序；
-3. `complete_risk_chain`：同对象、危险顺序和风险路径同时闭合。
+2. `release_ordering`：证明 release 相对 register 的顺序；
+3. `use_ordering`：证明 release 之后 use 的顺序；
+4. `lifecycle_ordering`：`release_ordering` 与 `use_ordering` 的并集，保留为兼容层；
+5. `complete_risk_chain`：同对象、危险顺序和风险路径同时闭合。
+
+`release_ordering` 与 `use_ordering` 从原先单一的 `lifecycle_ordering` 拆出。合并表达无法区分"release coverage 已证明但 use 顺序未知"与"两者都未证明"，而这两种情况对后续取证的指向完全不同。新消费者读细分层；`lifecycle_ordering` 语义不变，继续等于二者的并集。
 
 Graph-v3、ranking 和 CLI 以 `verified_layers`/`missing_layers` 为规范语义。`verified_static_chain` 仅作为兼容字段保留，不能继续承载完整风险链解释。缺少任一层时，候选应保留缺证原因，而不是用 API 名称、源码距离、candidate score 或历史标签补齐。
 

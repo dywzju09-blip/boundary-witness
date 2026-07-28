@@ -170,6 +170,8 @@
     "object_chain_layer": {
       "enum": [
         "identity_transport",
+        "release_ordering",
+        "use_ordering",
         "lifecycle_ordering",
         "complete_risk_chain"
       ]

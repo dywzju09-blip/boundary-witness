@@ -15,7 +15,9 @@ IdentityTransport
 | 层 | 回答的问题 | 典型必要证据 | 仍不能证明 |
 | --- | --- | --- | --- |
 | `identity_transport` | store/load、capture/use、参数/返回或 set/get 是否属于同一逻辑对象 | matching endpoint、binding key、capture slot、opaque generation key、无相关 barrier 的 `ObjectFlow` | release/use 先后、风险路径、动态触发 |
-| `lifecycle_ordering` | release、drop、invalidation 与后续 use 的顺序是否已证明 | release post-dominance、`CallbackReleaseUseOrderFact`、`ReturnedBorrowInvalidationOrderFact`、同对象事件 | 身份本身、完整风险路径、动态影响 |
+| `release_ordering` | release 相对 register 的顺序是否已证明 | `ReleasePathProofFact`（release post-dominance） | use 顺序、身份本身、完整风险路径 |
+| `use_ordering` | release 之后的 use 顺序是否已证明 | `CallbackReleaseUseOrderFact`（`unknown_ordering` 不计）、`ReturnedBorrowInvalidationOrderFact` | release coverage、身份本身、完整风险路径 |
+| `lifecycle_ordering` | 上面两层的并集，兼容层 | 同上 | 身份本身、完整风险路径、动态影响 |
 | `complete_risk_chain` | 同一对象、危险顺序和风险 use 路径是否同时闭合 | identity transport + ordering + callback/returned-view risk fact 的同链 lineage | 真实执行可触发、UB、漏洞或可利用性 |
 
 `V326ObjectChain.verified_layers` 是规范读口，`missing_layers` 说明缺口。`chain_status=verified_static_chain` 只为兼容保留，不能把三层重新压成一个布尔值。

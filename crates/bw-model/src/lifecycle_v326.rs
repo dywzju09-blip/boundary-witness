@@ -335,6 +335,12 @@ pub struct V326RankedChainSummary {
     pub identity_transport_chain_count: u32,
     #[serde(default)]
     #[serde(skip_serializing_if = "is_zero_u32")]
+    pub release_ordering_chain_count: u32,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub use_ordering_chain_count: u32,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero_u32")]
     pub lifecycle_ordering_chain_count: u32,
     #[serde(default)]
     #[serde(skip_serializing_if = "is_zero_u32")]
@@ -357,6 +363,8 @@ impl Default for V326RankedChainSummary {
             ambiguous_chain_count: 0,
             observation_only_chain_count: 0,
             identity_transport_chain_count: 0,
+            release_ordering_chain_count: 0,
+            use_ordering_chain_count: 0,
             lifecycle_ordering_chain_count: 0,
             complete_risk_chain_count: 0,
             chain_fact_refs: Vec::new(),
@@ -1210,6 +1218,12 @@ pub enum V326ObjectChainStatus {
 #[serde(rename_all = "snake_case")]
 pub enum V326ObjectChainLayer {
     IdentityTransport,
+    /// release 相对 register 的顺序已证明。
+    ReleaseOrdering,
+    /// 对象在 release 之后的 use 顺序已证明。
+    UseOrdering,
+    /// [`V326ObjectChainLayer::ReleaseOrdering`] 与 [`V326ObjectChainLayer::UseOrdering`]
+    /// 的并集。保留为兼容层，新消费者应读取更细的两层以区分缺的是哪一种顺序。
     LifecycleOrdering,
     CompleteRiskChain,
 }
@@ -3483,6 +3497,18 @@ pub fn summarize_v3_2_6_ranked_object_chains(
         }
         if chain
             .verified_layers
+            .contains(&V326ObjectChainLayer::ReleaseOrdering)
+        {
+            summary.release_ordering_chain_count += 1;
+        }
+        if chain
+            .verified_layers
+            .contains(&V326ObjectChainLayer::UseOrdering)
+        {
+            summary.use_ordering_chain_count += 1;
+        }
+        if chain
+            .verified_layers
             .contains(&V326ObjectChainLayer::LifecycleOrdering)
         {
             summary.lifecycle_ordering_chain_count += 1;
@@ -4783,7 +4809,15 @@ fn object_chain_verified_layers(
     if object_ids.len() >= 2 && !fact_refs.is_empty() {
         layers.insert(V326ObjectChainLayer::IdentityTransport);
     }
-    if object_chain_has_lifecycle_ordering_fact(fact_refs, facts) {
+    let has_release_ordering = object_chain_has_release_ordering_fact(fact_refs, facts);
+    let has_use_ordering = object_chain_has_use_ordering_fact(fact_refs, facts);
+    if has_release_ordering {
+        layers.insert(V326ObjectChainLayer::ReleaseOrdering);
+    }
+    if has_use_ordering {
+        layers.insert(V326ObjectChainLayer::UseOrdering);
+    }
+    if has_release_ordering || has_use_ordering {
         layers.insert(V326ObjectChainLayer::LifecycleOrdering);
     }
     if object_chain_has_complete_risk_fact(fact_refs, facts) {
@@ -4808,6 +4842,14 @@ fn object_chain_missing_layers(
     let mut missing = BTreeSet::<V326ObjectChainLayer>::new();
     if !verified.contains(&V326ObjectChainLayer::IdentityTransport) {
         missing.insert(V326ObjectChainLayer::IdentityTransport);
+    }
+    let needs_release_ordering = object_chain_needs_release_ordering(fact_refs, facts);
+    let needs_use_ordering = object_chain_needs_use_ordering(fact_refs, facts);
+    if needs_release_ordering && !verified.contains(&V326ObjectChainLayer::ReleaseOrdering) {
+        missing.insert(V326ObjectChainLayer::ReleaseOrdering);
+    }
+    if needs_use_ordering && !verified.contains(&V326ObjectChainLayer::UseOrdering) {
+        missing.insert(V326ObjectChainLayer::UseOrdering);
     }
     if object_chain_needs_lifecycle_ordering(fact_refs, facts)
         && !verified.contains(&V326ObjectChainLayer::LifecycleOrdering)
@@ -4847,13 +4889,24 @@ fn fact_ref_contains_proven_callback_release_use_order(
     })
 }
 
-fn object_chain_has_lifecycle_ordering_fact(
+/// release 相对 register 的顺序证明：release path proof 证明每条到出口的路径都经过 release。
+fn object_chain_has_release_ordering_fact(
     fact_refs: &[String],
     facts: &[V326LifecycleFactRecord],
 ) -> bool {
     fact_refs.iter().any(|fact_ref| {
         fact_ref_contains_kind(facts, fact_ref, V326LifecycleFactKind::ReleasePathProof)
-            || fact_ref_contains_proven_callback_release_use_order(facts, fact_ref)
+    })
+}
+
+/// release 之后 use 的顺序证明。`unknown_ordering` 记录不计入，见
+/// [`PROVEN_CALLBACK_RELEASE_USE_ORDER_OBJECT_IDS`]。
+fn object_chain_has_use_ordering_fact(
+    fact_refs: &[String],
+    facts: &[V326LifecycleFactRecord],
+) -> bool {
+    fact_refs.iter().any(|fact_ref| {
+        fact_ref_contains_proven_callback_release_use_order(facts, fact_ref)
             || fact_ref_contains_kind(
                 facts,
                 fact_ref,
@@ -4873,6 +4926,45 @@ fn object_chain_has_complete_risk_fact(
                 fact_ref,
                 V326LifecycleFactKind::ReturnedBorrowInvalidationOrder,
             )
+    })
+}
+
+/// 出现 register/release 事实即意味着这条链应当给出 release 顺序结论。
+fn object_chain_needs_release_ordering(
+    fact_refs: &[String],
+    facts: &[V326LifecycleFactRecord],
+) -> bool {
+    fact_refs.iter().any(|fact_ref| {
+        fact_ref_contains_kind(facts, fact_ref, V326LifecycleFactKind::RegisterCall)
+            || fact_ref_contains_kind(facts, fact_ref, V326LifecycleFactKind::ReleaseCall)
+            || fact_ref_contains_kind(facts, fact_ref, V326LifecycleFactKind::ReleasePathProof)
+    })
+}
+
+/// 出现 use 侧事实（callback 重建、returned borrow、external buffer）即意味着这条链
+/// 应当给出 use 顺序结论。
+fn object_chain_needs_use_ordering(
+    fact_refs: &[String],
+    facts: &[V326LifecycleFactRecord],
+) -> bool {
+    fact_refs.iter().any(|fact_ref| {
+        fact_ref_contains_kind(
+            facts,
+            fact_ref,
+            V326LifecycleFactKind::CallbackUserDataReconstruction,
+        ) || fact_ref_contains_kind(
+            facts,
+            fact_ref,
+            V326LifecycleFactKind::ReturnedBorrowRelation,
+        ) || fact_ref_contains_kind(
+            facts,
+            fact_ref,
+            V326LifecycleFactKind::PersistedReturnedBorrow,
+        ) || fact_ref_contains_kind(
+            facts,
+            fact_ref,
+            V326LifecycleFactKind::ExternalBufferBinding,
+        )
     })
 }
 

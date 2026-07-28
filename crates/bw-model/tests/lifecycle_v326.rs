@@ -8974,3 +8974,85 @@ fn unknown_callback_release_use_ordering_is_not_a_release_use_chain() {
         "the object binding is still proven, so identity transport stays verified"
     );
 }
+
+#[test]
+fn proven_ordering_lights_both_release_and_use_ordering_layers() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::ReleaseBeforeCallbackUse,
+    );
+
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::ReleaseOrdering),
+        "the release path proof proves release ordering"
+    );
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::UseOrdering),
+        "a proven callback release/use order proves use ordering"
+    );
+}
+
+#[test]
+fn unknown_use_ordering_keeps_release_ordering_and_drops_only_use_ordering() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::UnknownOrdering,
+    );
+
+    // 这正是拆层的目的：release coverage 已证明，缺的只是 use 顺序。
+    // 合并成单一 lifecycle_ordering 时这两种情况无法区分。
+    assert!(
+        graph_has_layer(&graph, bw_model::V326ObjectChainLayer::ReleaseOrdering),
+        "release ordering is still proven by the release path proof"
+    );
+    assert!(
+        !graph_has_layer(&graph, bw_model::V326ObjectChainLayer::UseOrdering),
+        "an unproven use order must not light the use ordering layer"
+    );
+    assert!(
+        !graph_has_layer(&graph, bw_model::V326ObjectChainLayer::CompleteRiskChain),
+        "without use ordering the chain is not a complete risk chain"
+    );
+}
+
+#[test]
+fn missing_use_ordering_is_reported_as_a_missing_layer() {
+    let graph = callback_release_use_graph_for_ordering(
+        bw_model::CallbackReleaseUseOrdering::UnknownOrdering,
+    );
+
+    assert!(
+        graph.object_chains.iter().any(|chain| {
+            chain
+                .missing_layers
+                .contains(&bw_model::V326ObjectChainLayer::UseOrdering)
+        }),
+        "a chain that needs use ordering but cannot prove it must say so in missing_layers"
+    );
+}
+
+#[test]
+fn lifecycle_ordering_stays_the_union_of_the_two_finer_layers() {
+    for ordering in [
+        bw_model::CallbackReleaseUseOrdering::ReleaseBeforeCallbackUse,
+        bw_model::CallbackReleaseUseOrdering::UnknownOrdering,
+    ] {
+        let graph = callback_release_use_graph_for_ordering(ordering);
+        for chain in &graph.object_chains {
+            let release = chain
+                .verified_layers
+                .contains(&bw_model::V326ObjectChainLayer::ReleaseOrdering);
+            let use_order = chain
+                .verified_layers
+                .contains(&bw_model::V326ObjectChainLayer::UseOrdering);
+            let union = chain
+                .verified_layers
+                .contains(&bw_model::V326ObjectChainLayer::LifecycleOrdering);
+            assert_eq!(
+                union,
+                release || use_order,
+                "the compatibility layer must stay exactly the union so existing consumers keep \
+                 their current meaning: chain={}",
+                chain.chain_id
+            );
+        }
+    }
+}
