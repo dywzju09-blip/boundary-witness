@@ -5,6 +5,7 @@
 //! "验证过没问题"。拒绝原因写进 generation manifest，使覆盖缺口可计数。
 
 use std::{
+    collections::BTreeSet,
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
@@ -21,16 +22,52 @@ use crate::{
     exit::{CliError, CommandStatus},
 };
 
-/// `rusqlite-lab-shared` 把 rusqlite 钉在 `>=0.26.1, <=0.26.2` 并使用 vendored patch。
-/// 生成的 harness 与该 shared crate 链接，因此只能针对同一区间内的版本。
-const SUPPORTED_RUSQLITE_VERSIONS: [&str; 2] = ["0.26.1", "0.26.2"];
 const RUSQLITE_CRATE_NAME: &str = "rusqlite";
 
-/// 有模板的注册 API。新增条目必须同时新增模板与 fixture。
-const UPDATE_HOOK_APIS: [&str; 3] = [
+/// 仓库里 vendored rusqlite 的存放位置。
+///
+/// 生成的 harness 带 `[patch.crates-io] rusqlite = { path = <vendor> }`，因此**能链接
+/// 哪些版本完全由这个目录决定**，不是由一份手写常量决定。两者一旦漂移就会出静默错误：
+/// 声明一个 vendor 里没有的版本时 patch 不匹配，cargo 转而去 crates.io 取真包，
+/// harness 于是链接了一个未经审阅的 crate，而产物上看不出这件事。
+const RUSQLITE_VENDOR_DIR: &str = "benchmarks/historical-cves/rusqlite/vendor";
+
+/// harness 的生命周期模板。
+///
+/// 每个模板对应 shared crate 里一套受控封装；新增 API 必须同时有封装与模板，
+/// 否则只能拒绝。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HarnessTemplate {
+    UpdateHook,
+    ScalarFunction,
+}
+
+impl HarnessTemplate {
+    /// 按 api_id 选模板。认不出就是覆盖缺口，不回退到任意模板。
+    fn for_api(api_id: &str) -> Option<Self> {
+        match api_id {
+            "api:rusqlite:update_hook:register"
+            | "api:rusqlite:update_hook:unregister"
+            | "api:rusqlite:update_hook:replace" => Some(Self::UpdateHook),
+            "api:rusqlite:create_scalar_function:register" => Some(Self::ScalarFunction),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpdateHook => "update_hook",
+            Self::ScalarFunction => "create_scalar_function",
+        }
+    }
+}
+
+/// 目前有模板的注册 API，供 manifest 记录覆盖面。
+const SUPPORTED_APIS: [&str; 4] = [
     "api:rusqlite:update_hook:register",
     "api:rusqlite:update_hook:unregister",
     "api:rusqlite:update_hook:replace",
+    "api:rusqlite:create_scalar_function:register",
 ];
 
 #[derive(Args)]
@@ -77,6 +114,7 @@ struct GeneratedHarness {
 
 #[derive(Debug, Serialize)]
 struct HarnessCoverage {
+    template: &'static str,
     pattern_family: String,
     release_before_callback_use: bool,
     callback_use_after_release: bool,
@@ -149,8 +187,8 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
         "run_id": run_id,
         "generated": generated,
         "refused": refused,
-        "supported_apis": UPDATE_HOOK_APIS,
-        "supported_crate_versions": SUPPORTED_RUSQLITE_VERSIONS,
+        "supported_apis": SUPPORTED_APIS,
+        "supported_crate_versions": vendored_rusqlite_versions(&repo_root),
         "notes": [
             "a generated harness reproduces the lifecycle sequence the static analysis observed for that candidate",
             "reproducing a sequence is not a defect conclusion; read `reproduces.still_unproven` for what the run does not cover",
@@ -185,12 +223,12 @@ fn generate_one(
         detail,
     };
 
-    if !UPDATE_HOOK_APIS.contains(&target.api_id.as_str()) {
+    let Some(template) = HarnessTemplate::for_api(&target.api_id) else {
         return Err(refusal(
             REASON_UNSUPPORTED_API,
             format!("no template covers {}", target.api_id),
         ));
-    }
+    };
     // 模板要链接的是**声明该 API 的 crate**，不是被扫 crate。拿被扫 crate 的版本去挑
     // 模板会把 `bw_app 0.1.0` 当成 `rusqlite 0.1.0`——两者几乎总是不同的 crate。
     let Some(api_crate) = &target.api_crate else {
@@ -202,14 +240,27 @@ fn generate_one(
             ),
         ));
     };
-    if api_crate.name != RUSQLITE_CRATE_NAME
-        || !SUPPORTED_RUSQLITE_VERSIONS.contains(&api_crate.version.as_str())
-    {
+    if api_crate.name != RUSQLITE_CRATE_NAME {
+        return Err(refusal(
+            REASON_UNSUPPORTED_VERSION,
+            format!("no harness links against {}", api_crate.name),
+        ));
+    }
+    // 能链接哪些版本由 vendor 目录决定。声明一个没 vendored 的版本时 patch 不生效，
+    // cargo 会转去 crates.io 取真包——harness 于是链接了未经审阅的代码，且产物上看不出来。
+    let vendored = vendored_rusqlite_versions(repo_root);
+    if !vendored.contains(&api_crate.version) {
         return Err(refusal(
             REASON_UNSUPPORTED_VERSION,
             format!(
-                "{} {} is outside the versions the shared harness crate links against",
-                api_crate.name, api_crate.version
+                "{} {} is not vendored; the harness can only link {}",
+                api_crate.name,
+                api_crate.version,
+                if vendored.is_empty() {
+                    "nothing".to_owned()
+                } else {
+                    vendored.iter().cloned().collect::<Vec<_>>().join(", ")
+                }
             ),
         ));
     }
@@ -252,7 +303,10 @@ fn generate_one(
         )
     })?;
 
-    let main_source = render_update_hook_main(plan, target, shape);
+    let main_source = match template {
+        HarnessTemplate::UpdateHook => render_update_hook_main(plan, target, shape),
+        HarnessTemplate::ScalarFunction => render_scalar_function_main(plan, target, shape),
+    };
     let cargo_toml = render_cargo_toml(&harness_name, repo_root, target);
     fs::write(source_dir.join("main.rs"), &main_source).map_err(|error| {
         refusal(
@@ -295,12 +349,135 @@ fn generate_one(
         harness_dir: harness_dir.display().to_string(),
         main_sha256: sha256_hex(main_source.as_bytes()),
         reproduces: HarnessCoverage {
+            template: template.as_str(),
             pattern_family: format!("{:?}", shape.pattern_family),
             release_before_callback_use: shape.release_before_callback_use,
             callback_use_after_release: shape.callback_use_after_release,
             still_unproven: shape.unproven.clone(),
         },
     })
+}
+
+/// 按观察到的形状生成 `create_scalar_function` 生命周期 harness。
+///
+/// 与 update_hook 模板同构，区别只在注册的外部 API：标量函数注册在连接上按
+/// (name, n_arg) 建键，回调由 SQL 求值触发而不是由写操作触发。
+fn render_scalar_function_main(
+    plan: &V326WitnessPlanRecord,
+    target: &V326WitnessTarget,
+    shape: &V326WitnessObservedShape,
+) -> String {
+    let plan_id = &plan.plan_id;
+    let candidate_id = &plan.candidate_id;
+    let api_id = &target.api_id;
+    let pattern_family = format!("{:?}", shape.pattern_family);
+    let callback_object_use = if shape.callback_use_after_release {
+        r#"callback_runtime.emit_deferred(RuntimeEvent::ObjectUse(ObjectUseEvent {
+                instance_id: callback_counter_id.clone(),
+                use_site_id: callback_counter_site.clone(),
+                use_kind: ObjectUseKind::Read,
+            }));
+            callback_counter.record(1);"#
+    } else {
+        r#"// 静态侧未观察到"释放后仍使用"，harness 不得替它制造这一步。
+            let _ = (&callback_counter_id, &callback_counter_site, &callback_counter);"#
+    };
+    format!(
+        r#"// Generated by `bw generate-witness-harness`. Do not edit by hand.
+//
+// plan:      {plan_id}
+// candidate: {candidate_id}
+// api:       {api_id}
+// shape:     {pattern_family}
+//
+// The sequence below is derived from what the static analysis observed for this
+// candidate, not from a fixed script: the owner is dropped here only because the
+// candidate was observed to release it while the callback was still registered.
+//
+// The harness replays that sequence and emits a runtime trace. It asserts nothing:
+// the oracle decides whether the sequence violates the contract. Reproducing a
+// sequence is not a defect conclusion about the scanned crate.
+use bw_model::{{CheckpointKind, ObjectUseEvent, ObjectUseKind, RuntimeEvent, SiteId}};
+use bw_runtime::Tracked;
+use rusqlite::{{functions::FunctionFlags, Connection}};
+use rusqlite_lab_shared::{{
+    runtime::{{benchmark_build_id, benchmark_runtime}},
+    scalar_function::ScalarFunctionConnection,
+    BorrowedCounter,
+}};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {{
+    let runtime = benchmark_runtime("run:{plan_slug}", "trace:{plan_slug}")?;
+    runtime.emit_trace_start(benchmark_build_id("build:{plan_slug}"))?;
+
+    let connection = Connection::open_in_memory()?;
+
+    let observed = ScalarFunctionConnection::open(runtime.clone(), site("site:{plan_slug}:connection"))?;
+    let counter_site = site("site:{plan_slug}:object");
+    let counter = Tracked::new(runtime.clone(), counter_site.clone(), BorrowedCounter::new());
+    let token = observed.register("bw_witness", 0, site("site:{plan_slug}:callback"))?;
+    // bind_object 的第二个参数是对象自身的 site id，不是 capture 事实的 site id。
+    token.bind_object(counter.id(), &counter_site)?;
+    runtime.emit_checkpoint(CheckpointKind::Registered)?;
+
+    let callback_token = token.clone();
+    let callback_runtime = runtime.clone();
+    let callback_counter_id = counter.id().clone();
+    let callback_counter_site = counter_site.clone();
+    let callback_counter = counter.get();
+    connection.create_scalar_function(
+        "bw_witness",
+        0,
+        FunctionFlags::SQLITE_UTF8,
+        move |_context| {{
+            let _ = callback_token.invoke(site("site:{plan_slug}:invoke"));
+            {callback_object_use}
+            Ok(1_i64)
+        }},
+    )?;
+
+    // 静态侧观察到 owner 在 callback 仍被外部持有时释放，这里复现那一步。
+    drop(counter);
+    runtime.emit_checkpoint(CheckpointKind::LaterCallbackPhase)?;
+    let _: i64 = connection.query_row("SELECT bw_witness()", [], |row| row.get(0))?;
+    observed.close(site("site:{plan_slug}:connection-drop"))?;
+    runtime.emit_trace_end()?;
+    runtime.finish()?;
+    Ok(())
+}}
+
+fn site(value: &'static str) -> SiteId {{
+    SiteId::from(value)
+}}
+"#,
+        plan_id = plan_id,
+        candidate_id = candidate_id,
+        api_id = api_id,
+        pattern_family = pattern_family,
+        callback_object_use = callback_object_use,
+        plan_slug = sanitize_site_slug(plan_id),
+    )
+}
+
+/// 仓库里实际 vendored 的 rusqlite 版本。
+///
+/// 从目录名 `rusqlite-<version>` 读，而不是维护一份常量：常量与磁盘漂移时的失败是
+/// 静默的（patch 落空 → cargo 去 crates.io 取真包），排查成本远高于多一次目录读取。
+fn vendored_rusqlite_versions(repo_root: &Path) -> BTreeSet<String> {
+    let Ok(entries) = fs::read_dir(repo_root.join(RUSQLITE_VENDOR_DIR)) else {
+        return BTreeSet::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix("rusqlite-"))
+                .map(ToOwned::to_owned)
+        })
+        .collect()
 }
 
 /// crate 名只允许 `[a-z0-9_]`，plan id 里的 `:`/`-` 需要折叠。
@@ -534,6 +711,16 @@ mod tests {
         }
     }
 
+    /// 真实仓库根：生成器能链接哪些版本取自仓库的 vendor 目录，临时目录里没有。
+    fn repo_root() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+    }
+
     /// 静态侧观察到的形状。两个顺序位直接决定生成器造不造那一步。
     fn shape(
         release_before_callback_use: bool,
@@ -568,7 +755,7 @@ mod tests {
         );
         let error = generate_one(
             temp.path(),
-            temp.path(),
+            &repo_root(),
             &plan,
             plan.target.as_ref().unwrap(),
         )
@@ -585,7 +772,7 @@ mod tests {
         );
         let error = generate_one(
             temp.path(),
-            temp.path(),
+            &repo_root(),
             &plan,
             plan.target.as_ref().unwrap(),
         )
@@ -602,7 +789,7 @@ mod tests {
         );
         let record = generate_one(
             temp.path(),
-            temp.path(),
+            &repo_root(),
             &plan,
             plan.target.as_ref().unwrap(),
         )
@@ -642,7 +829,7 @@ mod tests {
 
         let refusal = generate_one(
             temp.path(),
-            temp.path(),
+            &repo_root(),
             &plan,
             plan.target.as_ref().unwrap(),
         )
@@ -667,7 +854,7 @@ mod tests {
 
         let refusal = generate_one(
             temp.path(),
-            temp.path(),
+            &repo_root(),
             &plan,
             plan.target.as_ref().unwrap(),
         )
@@ -699,6 +886,83 @@ mod tests {
         assert!(
             !without_use.contains("RuntimeEvent::ObjectUse"),
             "the harness must not invent a use the static analysis never observed"
+        );
+    }
+
+    #[test]
+    fn scalar_function_registrations_have_a_template() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan(
+            "witness-plan:candidate:scalar",
+            Some(target(
+                "api:rusqlite:create_scalar_function:register",
+                "0.26.1",
+            )),
+        );
+
+        let record = generate_one(
+            temp.path(),
+            &repo_root(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect("create_scalar_function must be covered, not refused");
+
+        assert_eq!(record.reproduces.template, "create_scalar_function");
+        let main_source =
+            fs::read_to_string(std::path::Path::new(&record.harness_dir).join("src/main.rs"))
+                .expect("the harness source must be written");
+        assert!(
+            main_source.contains("create_scalar_function"),
+            "the scalar template must register through the scalar API, not update_hook"
+        );
+        assert!(
+            !main_source.contains("update_hook"),
+            "templates must not bleed into each other: {main_source}"
+        );
+    }
+
+    #[test]
+    fn every_supported_api_resolves_to_a_template() {
+        for api_id in SUPPORTED_APIS {
+            assert!(
+                HarnessTemplate::for_api(api_id).is_some(),
+                "{api_id} is advertised as supported but has no template"
+            );
+        }
+        assert!(
+            HarnessTemplate::for_api("api:rusqlite:commit_hook:register").is_none(),
+            "an API without a template must be refused rather than routed to a lookalike"
+        );
+    }
+
+    /// 能链接哪些版本由 vendor 目录决定，不是常量。两者漂移会静默换成 crates.io 上的
+    /// 真包，harness 于是链接了未经审阅的代码而产物看不出来。
+    #[test]
+    fn linkable_versions_come_from_the_vendor_directory() {
+        let vendored = vendored_rusqlite_versions(&repo_root());
+        assert!(
+            vendored.contains("0.26.1"),
+            "the repository vendors rusqlite 0.26.1; got {vendored:?}"
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan(
+            "witness-plan:candidate:unvendored",
+            Some(target("api:rusqlite:update_hook:register", "0.99.0")),
+        );
+        let refusal = generate_one(
+            temp.path(),
+            &repo_root(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect_err("a version that is not vendored cannot be linked");
+        assert_eq!(refusal.reason, REASON_UNSUPPORTED_VERSION);
+        assert!(
+            refusal.detail.contains("0.26.1"),
+            "the refusal must say what can be linked instead: {}",
+            refusal.detail
         );
     }
 
