@@ -56,6 +56,8 @@ fn registration_in_a_crate_that_only_depends_on_the_api_is_recognised() {
     )
     .expect("config should be written");
 
+    // 与 extract-static-facts 施加的 RUSTFLAGS 保持一致：依赖不带 MIR 就看不穿
+    // 依赖里的注册封装，跨 crate 摘要那条断言会失去意义。
     let status = Command::new("cargo")
         .args(["check", "--manifest-path"])
         .arg(&fixture)
@@ -64,6 +66,7 @@ fn registration_in_a_crate_that_only_depends_on_the_api_is_recognised() {
         .env("RUSTC_WRAPPER", env!("CARGO_BIN_EXE_bw-rustc"))
         .env("BW_RUSTC_CONFIG", &config)
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("RUSTFLAGS", "-Zalways-encode-mir")
         .status()
         .expect("cargo check should run");
     assert!(status.success(), "fixture cargo check failed: {status}");
@@ -111,6 +114,13 @@ fn registration_in_a_crate_that_only_depends_on_the_api_is_recognised() {
     assert!(
         !owners.contains("calls_same_name_on_another_type"),
         "Statement::update_hook shares the method name but is not the contract API; got {registrations:?}"
+    );
+
+    // 注册包在依赖 crate 的一层封装里，调用点不含合约 API 的名字。认出它要求读到
+    // 依赖的函数体——这正是此前 `as_local()?` 直接放弃的那条路径。
+    assert!(
+        owners.contains("registers_through_a_dependency_helper"),
+        "a registration wrapped in a dependency's helper must be seen through; got {registrations:?}"
     );
 }
 

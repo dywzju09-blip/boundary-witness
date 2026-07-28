@@ -1,11 +1,9 @@
 [package]
-name = "rusqlite"
+name = "libsqlite3-sys"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [lib]
+name = "libsqlite3_sys"
 path = "src/lib.rs"
-
-[dependencies]
-libsqlite3-sys = { path = "../libsqlite3-sys" }

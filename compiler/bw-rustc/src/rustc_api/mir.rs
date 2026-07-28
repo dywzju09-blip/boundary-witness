@@ -10728,8 +10728,7 @@ fn summarize_registration_callable_inner<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path.clone()) {
         return None;
@@ -10843,8 +10842,7 @@ fn summarize_openssl_ex_data_registration_callable<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     let predecessors = raw_pointer_basic_block_predecessors(body);
     let mut raw_pointer_exit_origins = vec![None; body.basic_blocks.len()];
@@ -10976,8 +10974,7 @@ fn summarize_openssl_ex_data_get_callable<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     let predecessors = raw_pointer_basic_block_predecessors(body);
     let mut raw_pointer_exit_origins = vec![None; body.basic_blocks.len()];
@@ -11100,8 +11097,7 @@ fn summarize_callback_user_data_invocation_callable<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
 
     if body.arg_count == 0 {
         return None;
@@ -11748,8 +11744,7 @@ fn summarize_returned_borrow_callable_with_captures<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let return_local = Local::new(0);
     if !ty_contains_ref(body.local_decls[return_local].ty) {
         return None;
@@ -11860,8 +11855,7 @@ fn summarize_returned_borrow_slot_assignment_callable<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     let mut visitor = MirSiteVisitor {
         tcx,
@@ -12012,8 +12006,7 @@ fn summarize_string_key_return_callable<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) 
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let return_local = Local::new(0);
     let return_type = body.local_decls[return_local].ty;
     let return_type_name = return_type.to_string();
@@ -12258,8 +12251,7 @@ fn summarize_returned_borrow_collection_use_callable_inner<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path) {
         return None;
@@ -12535,8 +12527,7 @@ fn summarize_returned_borrow_value_use_callable<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     if !returned_borrow_value_argument_use_type(body.local_decls[Local::new(0)].ty) {
         return None;
     }
@@ -12626,8 +12617,7 @@ fn summarize_returned_borrow_wrapper_destructure_callable<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     if !returned_borrow_value_argument_use_type(body.local_decls[Local::new(0)].ty) {
         return None;
     }
@@ -12796,8 +12786,7 @@ fn summarize_returned_borrow_collection_mutation_callable_inner<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path) {
         return None;
@@ -12938,8 +12927,7 @@ fn summarize_returned_borrow_collection_remove_return_callable_inner<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path) {
         return None;
@@ -13118,8 +13106,7 @@ fn summarize_returned_borrow_collection_entry_callable_inner<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path) {
         return None;
@@ -13309,8 +13296,7 @@ fn summarize_returned_borrow_collection_entry_value_reference_callable_inner<'tc
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path) {
         return None;
@@ -13512,8 +13498,7 @@ fn summarize_returned_borrow_collection_persist_callable_inner<'tcx>(
     {
         return None;
     }
-    let local_def_id = def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(def_id);
     let owner_def_path = tcx.def_path_str(def_id);
     if !visited.insert(owner_def_path.clone()) {
         return None;
@@ -16577,8 +16562,7 @@ fn raw_pointer_passthrough_arg_index<'tcx>(
     if !tcx.is_mir_available(callee_def_id) {
         return None;
     }
-    let local_def_id = callee_def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(callee_def_id);
     if body.basic_blocks.len() != 1 {
         return None;
     }
@@ -16632,8 +16616,7 @@ fn raw_pointer_return_field_arg_mappings<'tcx>(
     if !tcx.is_mir_available(callee_def_id) {
         return None;
     }
-    let local_def_id = callee_def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(callee_def_id);
     if body.basic_blocks.len() != 1 {
         return None;
     }
@@ -16687,8 +16670,7 @@ fn raw_pointer_release_arg_place_key<'tcx>(
     if !tcx.is_mir_available(callee_def_id) {
         return None;
     }
-    let local_def_id = callee_def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(callee_def_id);
     let mut released_arg_key = None;
     let predecessors = raw_pointer_basic_block_predecessors(body);
     let mut block_exit_origins = vec![None; body.basic_blocks.len()];
@@ -16791,8 +16773,7 @@ fn raw_pointer_release_arg_place_key_on_any_path<'tcx>(
     if !tcx.is_mir_available(callee_def_id) {
         return None;
     }
-    let local_def_id = callee_def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(callee_def_id);
     let mut released_arg_key = None;
     let predecessors = raw_pointer_basic_block_predecessors(body);
     let mut block_exit_origins = vec![None; body.basic_blocks.len()];
@@ -16894,8 +16875,7 @@ fn raw_pointer_shared_owner_release_arg_place_key_on_any_path<'tcx>(
     if !tcx.is_mir_available(callee_def_id) {
         return None;
     }
-    let local_def_id = callee_def_id.as_local()?;
-    let body = tcx.optimized_mir(local_def_id);
+    let body = tcx.optimized_mir(callee_def_id);
     let mut released_arg_key = None;
     let predecessors = raw_pointer_basic_block_predecessors(body);
     let mut block_exit_origins = vec![None; body.basic_blocks.len()];

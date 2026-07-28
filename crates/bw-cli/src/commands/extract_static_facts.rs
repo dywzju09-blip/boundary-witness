@@ -37,8 +37,14 @@ const PUBLIC_FORBIDDEN_TOKENS: [&str; 9] = [
     "poc",
     "exploit",
 ];
-const STATIC_EXTRACTION_COMPAT_RUSTFLAGS: &str =
-    "-A useless_deprecated -A dangerous_implicit_autorefs -A bindings_with_variant_name";
+/// `-Zalways-encode-mir` 是跨 crate 摘要的前提。
+///
+/// rustc 默认只为泛型和 `#[inline]` 函数把 MIR 编码进 rlib，普通的 `pub fn` 不编码。
+/// 而注册往往包在依赖 crate 的一层薄封装里（`fn install(cb, data) { conn.update_hook(..) }`），
+/// 拿不到那层的函数体就看不穿它，整条注册链在这里断掉。分析要看穿依赖，就得让依赖
+/// 带上 MIR。代价是 rlib 变大、构建变慢，只在静态抽取这一步施加。
+const STATIC_EXTRACTION_COMPAT_RUSTFLAGS: &str = "-A useless_deprecated \
+     -A dangerous_implicit_autorefs -A bindings_with_variant_name -Zalways-encode-mir";
 
 #[derive(Args)]
 pub struct ExtractStaticFactsArgs {

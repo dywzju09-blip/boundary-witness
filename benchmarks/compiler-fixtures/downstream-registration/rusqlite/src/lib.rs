@@ -5,6 +5,7 @@
 //! 的可见路径，只能退回 `rusqlite::hooks::<impl rusqlite::Connection>::update_hook`。
 //! 换句话说，这个 fixture 复现的是 def path 的形状，不是 SQLite 的行为。
 
+pub mod helpers;
 pub mod hooks;
 
 pub struct Connection {

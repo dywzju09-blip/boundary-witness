@@ -35,6 +35,22 @@ pub fn calls_same_name_on_another_type() {
     ));
 }
 
+/// 注册包在依赖 crate 的一层封装里：调用点本身不含任何合约 API 的名字。
+///
+/// 认出它要求看穿 `rusqlite::helpers::install_update_hook` 的函数体，确认第 0 个参数
+/// 是 callback、第 1 个是 user data，再把下标映射回这里的实参。callee 在另一个 crate，
+/// 所以这条路径同时依赖"不因非本地而放弃"和"依赖带 MIR 编译"。
+pub fn registers_through_a_dependency_helper() {
+    let counter = Box::new(Counter::new());
+    let user_data = Box::into_raw(counter).cast::<std::ffi::c_void>();
+    rusqlite::helpers::install_update_hook(Some(on_update), user_data);
+}
+
+unsafe extern "C" fn on_update(user_data: *mut std::ffi::c_void) {
+    let counter = unsafe { &*(user_data as *const Counter) };
+    counter.record(1);
+}
+
 /// callback 捕获的对象，让注册点有个可追踪的 user data，而不是空闭包。
 #[derive(Clone, Copy)]
 struct Counter {
@@ -46,7 +62,7 @@ impl Counter {
         Self { total: 0 }
     }
 
-    fn record(mut self, rowid: i64) {
-        self.total += rowid;
+    fn record(&self, rowid: i64) {
+        let _ = self.total + rowid;
     }
 }

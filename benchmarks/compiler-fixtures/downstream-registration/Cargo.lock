@@ -10,5 +10,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsqlite3-sys"
+version = "0.1.0"
+
+[[package]]
 name = "rusqlite"
 version = "0.1.0"
+dependencies = [
+ "libsqlite3-sys",
+]
