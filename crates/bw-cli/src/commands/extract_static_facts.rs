@@ -25,6 +25,7 @@ use crate::{
 
 const STATIC_EXTRACTION_STATUS_SCHEMA_V1: &str = "v3.2.static_fact_extraction_status.1";
 const STATIC_FEATURE_PROFILE_SCHEMA_V1: &str = "v3.2.static_feature_profile.1";
+const RESOLVED_DEPENDENCIES_SCHEMA_V1: &str = "v3.2.resolved_dependencies.1";
 const PUBLIC_FORBIDDEN_TOKENS: [&str; 9] = [
     "vulnerable",
     "fixed",
@@ -87,6 +88,7 @@ struct ExtractStaticFactsOutput {
     mir_coverage_path: String,
     status_path: String,
     stats_path: String,
+    resolved_dependencies_path: String,
     checksums_path: String,
 }
 
@@ -117,6 +119,24 @@ enum StaticExtractionStatus {
 #[derive(Deserialize)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
+    /// 锁文件所在目录。metadata 用 `--no-deps` 跑，因此依赖解析结果只能从锁文件读。
+    #[serde(default)]
+    workspace_root: PathBuf,
+}
+
+/// 一个被扫 crate 解析到的依赖版本。
+///
+/// witness plan 要知道注册 API 由哪个 crate 的哪个版本提供，才能生成能编译的 harness。
+/// 被扫 crate 自己的版本回答不了这个问题：扫任意 crate 找第三方 API 误用时，提供方
+/// 是另一个 crate。这里只记录解析结果，不判断哪个依赖跟合约有关——那是 plan 阶段
+/// 拿 API map 去比对的事。
+#[derive(Serialize)]
+struct ResolvedDependenciesRecord {
+    schema_version: &'static str,
+    run_id: String,
+    crate_id: String,
+    packages: Vec<CoveragePackage>,
+    notes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -240,6 +260,7 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
     let manifest_dir = args.manifest.parent().unwrap_or_else(|| Path::new("."));
     let mut status_records = Vec::<StaticExtractionStatusRecord>::new();
     let mut expected_packages = BTreeSet::<CoveragePackage>::new();
+    let mut resolved_dependencies = Vec::<ResolvedDependenciesRecord>::new();
 
     for located in manifest_records {
         let status = extract_one(
@@ -248,6 +269,7 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
             &located.value,
             &feature_profiles,
             &mut expected_packages,
+            &mut resolved_dependencies,
             &rustc_private_lib_dirs,
         )?;
         status_records.push(status);
@@ -267,6 +289,9 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
 
     let status_path = args.output_dir.join("static-extraction-status.jsonl");
     write_jsonl_records(&status_path, &status_records)?;
+
+    let resolved_dependencies_path = args.output_dir.join("resolved-dependencies.jsonl");
+    write_jsonl_records(&resolved_dependencies_path, &resolved_dependencies)?;
 
     let analyzed_count = status_records
         .iter()
@@ -311,6 +336,7 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
             "mir-coverage.json",
             "static-extraction-status.jsonl",
             "static-extraction-stats.json",
+            "resolved-dependencies.jsonl",
         ],
         &checksums_path,
     )?;
@@ -328,6 +354,7 @@ pub fn run(args: ExtractStaticFactsArgs) -> Result<CommandStatus, CliError> {
         mir_coverage_path: mir_coverage_path.display().to_string(),
         status_path: status_path.display().to_string(),
         stats_path: stats_path.display().to_string(),
+        resolved_dependencies_path: resolved_dependencies_path.display().to_string(),
         checksums_path: checksums_path.display().to_string(),
     };
     write_json_stdout(&summary)?;
@@ -340,6 +367,7 @@ fn extract_one(
     record: &V32CorpusManifestRecord,
     feature_profiles: &BTreeMap<String, CargoFeatureSelection>,
     expected_packages: &mut BTreeSet<CoveragePackage>,
+    resolved_dependencies: &mut Vec<ResolvedDependenciesRecord>,
     rustc_private_lib_dirs: &[PathBuf],
 ) -> Result<StaticExtractionStatusRecord, CliError> {
     let log_ref = format!("static-facts/{}.log", sanitize_file_stem(&record.crate_id));
@@ -581,6 +609,12 @@ fn extract_one(
             ));
             write_log(&log_path, "extract-static-facts", &log_output, "")?;
             if status.success() {
+                // cargo check 成功后锁文件一定已写出，此时读到的是本次实际编译的版本。
+                resolved_dependencies.push(read_resolved_dependencies(
+                    &args.run_id,
+                    &record.crate_id,
+                    &metadata.workspace_root,
+                )?);
                 Ok(status_record(
                     args,
                     record,
@@ -631,6 +665,75 @@ fn extract_one(
             ))
         }
     }
+}
+
+/// 从 `Cargo.lock` 读被扫 crate 这次实际解析到的依赖版本。
+///
+/// 读锁文件而不是再跑一次带依赖的 `cargo metadata`：`cargo check` 刚跑完，锁文件就是
+/// 本次编译的解析结果，且不额外起进程。锁文件缺失或解析不了不是错误——记成空集合
+/// 加一条 note，让下游知道"这条 crate 的提供方版本不可知"，而不是让它以为没有依赖。
+fn read_resolved_dependencies(
+    run_id: &str,
+    crate_id: &str,
+    workspace_root: &Path,
+) -> Result<ResolvedDependenciesRecord, CliError> {
+    let mut notes = Vec::new();
+    let packages = if workspace_root.as_os_str().is_empty() {
+        notes.push("cargo metadata did not report a workspace_root".to_owned());
+        Vec::new()
+    } else {
+        let lock_path = workspace_root.join("Cargo.lock");
+        match fs::read_to_string(&lock_path) {
+            Ok(text) => match parse_lockfile_packages(&text) {
+                Some(packages) => packages,
+                None => {
+                    notes.push("Cargo.lock did not parse as a package list".to_owned());
+                    Vec::new()
+                }
+            },
+            Err(_) => {
+                notes.push("Cargo.lock was not readable after cargo check".to_owned());
+                Vec::new()
+            }
+        }
+    };
+    if packages.is_empty() && notes.is_empty() {
+        notes.push("Cargo.lock listed no packages".to_owned());
+    }
+    Ok(ResolvedDependenciesRecord {
+        schema_version: RESOLVED_DEPENDENCIES_SCHEMA_V1,
+        run_id: run_id.to_owned(),
+        crate_id: crate_id.to_owned(),
+        packages,
+        notes,
+    })
+}
+
+/// `Cargo.lock` 的 `[[package]]` 表。同一个 crate 可能有多个版本共存，全部保留。
+fn parse_lockfile_packages(text: &str) -> Option<Vec<CoveragePackage>> {
+    #[derive(Deserialize)]
+    struct Lockfile {
+        #[serde(default)]
+        package: Vec<LockedPackage>,
+    }
+    #[derive(Deserialize)]
+    struct LockedPackage {
+        name: String,
+        version: String,
+    }
+
+    let lockfile = toml::from_str::<Lockfile>(text).ok()?;
+    let mut packages = lockfile
+        .package
+        .into_iter()
+        .map(|package| CoveragePackage {
+            name: package.name,
+            version: package.version,
+        })
+        .collect::<Vec<_>>();
+    packages.sort();
+    packages.dedup();
+    Some(packages)
 }
 
 fn cargo_metadata_command(

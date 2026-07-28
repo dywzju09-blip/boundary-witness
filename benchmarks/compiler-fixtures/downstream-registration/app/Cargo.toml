@@ -1,0 +1,12 @@
+[package]
+name = "downstream-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "downstream_app"
+path = "src/lib.rs"
+
+[dependencies]
+rusqlite = { path = "../rusqlite" }

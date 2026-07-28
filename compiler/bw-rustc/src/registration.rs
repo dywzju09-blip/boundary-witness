@@ -394,6 +394,7 @@ fn entry_matches(entry: &ApiMapEntry, canonical_def_path: &str, context: CallCon
             && api_path_without_crate(&entry.rust_path)
                 .is_some_and(|path| canonical_def_path == path))
         || rusqlite_cfg_module_impl_matches(entry, canonical_def_path, context)
+        || cross_crate_inherent_impl_matches(entry, canonical_def_path)
         || rusqlite_ffi_call_matches(entry, canonical_def_path)
         || openssl_ffi_call_matches(entry, canonical_def_path)
         || pyo3_ffi_call_matches(entry, canonical_def_path)
@@ -402,6 +403,60 @@ fn entry_matches(entry: &ApiMapEntry, canonical_def_path: &str, context: CallCon
 
 fn api_path_without_crate(api_rust_path: &str) -> Option<&str> {
     api_rust_path.split_once("::").map(|(_, path)| path)
+}
+
+/// 被分析的 crate 只是 API 的**使用者**，callee 定义在声明该 API 的 crate 里。
+///
+/// API map 写的是人类可读的 `<krate>::<Owner>::<method>`，但 rustc 对一个跨 crate
+/// 的固有实现方法打印的是 `<krate>::<module>::<impl <SelfTy>>::<method>`：模块段和
+/// `<impl …>` 段都在，因而既不等于 map 里的路径，也不是编译该 crate 自身时那种
+/// 无 crate 前缀的形式（`<module>::<impl …>::<method>`，由
+/// [`rusqlite_cfg_module_impl_matches`] 处理）。
+///
+/// 判定只看 callee 自己的 def path —— crate、self 类型、方法名。**不看当前被编译的
+/// crate 是谁**：调用方是谁与"这个调用是不是注册"无关。这正是扫描任意 crate 找
+/// 第三方 API 误用时走的路径。
+fn cross_crate_inherent_impl_matches(entry: &ApiMapEntry, canonical_def_path: &str) -> bool {
+    let Some((krate, owner, method)) = split_owner_api_rust_path(&entry.rust_path) else {
+        return false;
+    };
+    let Some(rest) = canonical_def_path.strip_prefix(&format!("{krate}::")) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_suffix(&format!("::{method}")) else {
+        return false;
+    };
+    let Some(self_ty) = inherent_impl_self_type(rest) else {
+        return false;
+    };
+    self_ty == owner || self_ty.ends_with(&format!("::{owner}"))
+}
+
+/// 把 API map 的 `<krate>::<Owner>::<method>` 拆开。段数必须正好是 3：自由函数
+/// （`openssl_sys::SSL_CTX_set_ex_data`）不是固有实现方法，不该走这条匹配。
+fn split_owner_api_rust_path(api_rust_path: &str) -> Option<(&str, &str, &str)> {
+    let mut segments = api_rust_path.split("::");
+    let krate = segments.next()?;
+    let owner = segments.next()?;
+    let method = segments.next()?;
+    segments.next().is_none().then_some((krate, owner, method))
+}
+
+/// 从 `<module>::<impl <SelfTy>>` 里取出 `SelfTy`，仅限固有实现。
+///
+/// trait 实现打印成 `<impl <Trait> for <SelfTy>>`，必须拒绝：否则
+/// `<impl Drop for rusqlite::Connection>::drop` 这类路径会因为尾段同名而被误判成注册。
+/// 带泛型参数的 self 类型（`<impl Foo<Bar>>`）这里会被保守地判不匹配，宁可漏也不错认。
+fn inherent_impl_self_type(path: &str) -> Option<&str> {
+    let inner = path.strip_suffix('>')?;
+    let (module_prefix, self_ty) = inner.rsplit_once("<impl ")?;
+    if !(module_prefix.is_empty() || module_prefix.ends_with("::")) {
+        return None;
+    }
+    if self_ty.contains(" for ") || self_ty.contains('<') || self_ty.contains('>') {
+        return None;
+    }
+    Some(self_ty)
 }
 
 fn rusqlite_cfg_module_impl_matches(
@@ -1183,6 +1238,154 @@ mod tests {
             assert!(classification.is_none());
         }
     }
+
+    /// 这是自动 0day 扫描实际走的路径：被扫的 crate 只是 rusqlite 的使用者。
+    /// def path 取自真实编译产物 —— 见 `downstream_caller_registration_site` fixture。
+    #[test]
+    fn classifies_update_hook_called_from_a_downstream_crate() {
+        let classification = classify_call(
+            "rusqlite::hooks::<impl rusqlite::Connection>::update_hook",
+            RegistrationArgumentKind::CallbackPresent,
+            unrelated_context(),
+        )
+        .expect("a crate that merely depends on rusqlite must still register the call");
+
+        assert!(matches!(
+            classification,
+            CallClassification::Registration {
+                api_id,
+                role: RegistrationRole::Register,
+            } if api_id == "api:rusqlite:update_hook:register"
+        ));
+    }
+
+    #[test]
+    fn downstream_update_hook_with_explicit_none_is_an_unregister() {
+        let classification = classify_call(
+            "rusqlite::hooks::<impl rusqlite::Connection>::update_hook",
+            RegistrationArgumentKind::ExplicitNone,
+            unrelated_context(),
+        )
+        .expect("downstream unregistration must classify too");
+
+        assert!(matches!(
+            classification,
+            CallClassification::Registration {
+                role: RegistrationRole::Unregister,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn downstream_callback_argument_indices_are_resolved() {
+        assert_eq!(
+            callback_argument_indices(
+                "rusqlite::hooks::<impl rusqlite::Connection>::update_hook",
+                unrelated_context(),
+            ),
+            vec![1],
+            "without the argument index the downstream call has no callback to bind"
+        );
+    }
+
+    // 以下是放宽匹配的代价边界。跨 crate 匹配只依据 callee 的 def path，所以必须
+    // 逐条钉死它不认什么，否则误判会一路传导到最终结论。
+
+    /// trait 实现的方法名可能与注册 API 同名，尾段匹配会把它错认成注册。
+    #[test]
+    fn trait_impl_on_the_same_type_is_not_a_registration() {
+        for def_path in [
+            "rusqlite::hooks::<impl UpdateHook for rusqlite::Connection>::update_hook",
+            "rusqlite::inner_connection::<impl Drop for rusqlite::Connection>::update_hook",
+        ] {
+            assert!(
+                classify_call(
+                    def_path,
+                    RegistrationArgumentKind::CallbackPresent,
+                    unrelated_context(),
+                )
+                .is_none(),
+                "trait impl must not be mistaken for the inherent registration API: {def_path}"
+            );
+        }
+    }
+
+    /// 同名方法挂在别的类型上，不是合约声明的那个 owner。
+    #[test]
+    fn same_method_on_another_type_is_not_a_registration() {
+        assert!(
+            classify_call(
+                "rusqlite::hooks::<impl rusqlite::Statement>::update_hook",
+                RegistrationArgumentKind::CallbackPresent,
+                unrelated_context(),
+            )
+            .is_none(),
+            "the owner type in the API map is part of the identity, not decoration"
+        );
+    }
+
+    /// 别的 crate 里刚好有个同名同签名的 `Connection::update_hook`。
+    #[test]
+    fn same_shape_in_another_crate_is_not_a_registration() {
+        assert!(
+            classify_call(
+                "other_db::hooks::<impl other_db::Connection>::update_hook",
+                RegistrationArgumentKind::CallbackPresent,
+                unrelated_context(),
+            )
+            .is_none(),
+            "the declaring crate is part of the identity"
+        );
+    }
+
+    /// 使用者自己写的同名自由函数或方法，不在 rusqlite 里。
+    #[test]
+    fn caller_own_helper_named_like_the_api_is_not_a_registration() {
+        for def_path in [
+            "my_app::db::update_hook",
+            "my_app::db::<impl my_app::db::Connection>::update_hook",
+            "rusqlite_helpers::<impl rusqlite_helpers::Connection>::update_hook",
+        ] {
+            assert!(
+                classify_call(
+                    def_path,
+                    RegistrationArgumentKind::CallbackPresent,
+                    unrelated_context(),
+                )
+                .is_none(),
+                "a lookalike outside the declaring crate must not classify: {def_path}"
+            );
+        }
+    }
+
+    /// `<impl …>` 段本身是识别固有实现的凭据，没有它就只是个模块内的自由函数。
+    #[test]
+    fn free_function_in_the_declaring_crate_is_not_a_registration() {
+        assert!(
+            classify_call(
+                "rusqlite::hooks::update_hook",
+                RegistrationArgumentKind::CallbackPresent,
+                unrelated_context(),
+            )
+            .is_none(),
+            "a free function in rusqlite::hooks is not Connection::update_hook"
+        );
+    }
+
+    /// 老路径必须原样保留：编译 rusqlite 自身时 def path 没有 crate 前缀。
+    #[test]
+    fn in_crate_form_still_classifies_after_the_cross_crate_arm() {
+        assert!(
+            classify_call(
+                "hooks::<impl rusqlite::Connection>::update_hook",
+                RegistrationArgumentKind::CallbackPresent,
+                rusqlite_context(),
+            )
+            .is_some(),
+            "the cross-crate arm is additive; compiling rusqlite itself must be unaffected"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1265,6 +1468,9 @@ user_data_arg_indices = [2]
             .iter()
             .filter(|entry| entry.rust_path == "registry_only::Handle::set_callback")
             .count();
-        assert_eq!(matches, 2, "per-call extra maps must add to, not replace, the configured set");
+        assert_eq!(
+            matches, 2,
+            "per-call extra maps must add to, not replace, the configured set"
+        );
     }
 }

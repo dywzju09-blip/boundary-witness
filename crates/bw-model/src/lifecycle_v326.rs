@@ -1290,12 +1290,31 @@ pub struct V326WitnessTarget {
     /// callback-retention API map 中的 `api_id`，例如 `api:rusqlite:update_hook:register`。
     /// harness 生成器按它选择模板；无法覆盖该 api_id 时必须拒绝生成而不是回退到通用模板。
     pub api_id: String,
-    /// 被测 crate 的名称与版本，用于生成 harness 的依赖声明。
+    /// **被扫 crate** 的名称与版本，即可疑注册点所在的 crate。用于报告与回指。
     pub crate_name: String,
     pub crate_version: String,
+    /// **声明该 API 的 crate** 及其在被扫 crate 中解析到的版本。
+    ///
+    /// 与 [`Self::crate_name`] 是两回事：扫任意 crate 找第三方 API 误用时，二者几乎
+    /// 总是不同的 crate。harness 要链接的是这个 crate，不是被扫 crate —— 拿被扫 crate
+    /// 的版本去挑模板会把 `bw_app 0.1.0` 当成 `rusqlite 0.1.0`。
+    ///
+    /// `None` 表示没能唯一确定提供方（API map 里该 api_id 落在多个 crate 上，或被扫
+    /// crate 的依赖解析结果不可得）。这是缺证记录，不是错误：plan 仍然写出，只是
+    /// 不可自动执行。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_crate: Option<V326WitnessApiCrate>,
     /// 静态侧观察到的注册位置，供 receipt 回指与人工复核。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration_source_ref: Option<V326SourceRef>,
+}
+
+/// 声明某个注册 API 的 crate，及其在被扫 crate 中实际解析到的版本。
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct V326WitnessApiCrate {
+    pub name: String,
+    pub version: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

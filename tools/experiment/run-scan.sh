@@ -389,10 +389,19 @@ scan() {
 
   # --facts 决定 plan 能否带上可执行 target：api_id 只存在于事实里，ranked candidate
   # 与 graph 都不携带它。缺少它时 plan 退化成人工待办清单。
+  # resolved-dependencies 让 plan 的 target 带上"声明该 API 的 crate"的版本。缺了它
+  # plan 仍然绑定 API，只是不可自动执行——所以跳过静态事实时这里也不该硬失败。
+  local resolved_dependencies_arg=()
+  if [[ -f "${static_dir}/resolved-dependencies.jsonl" ]]; then
+    resolved_dependencies_arg=(--resolved-dependencies "${static_dir}/resolved-dependencies.jsonl")
+  fi
+
   run_stage build-witness-plan \
     --ranked-candidates "${analysis_dir}/ranked-candidates.jsonl.zst" \
     --graphs-dir "${analysis_dir}/graphs-v3" \
     --facts "${evidence_dir}/lifecycle-facts.jsonl.zst" \
+    "${api_map_scan_args[@]}" \
+    "${resolved_dependencies_arg[@]}" \
     --limit "$witness_limit" \
     --output-dir "$witness_dir" \
     --run-id "$run_id" || return 1

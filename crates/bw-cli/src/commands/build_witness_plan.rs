@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -29,6 +29,13 @@ pub struct BuildWitnessPlanArgs {
     /// 生命周期事实。提供时 plan 才能带上可执行的 target；缺省时 plan 只能人工执行。
     #[arg(long)]
     facts: Option<PathBuf>,
+    /// callback-retention API map，可重复。用于确定注册 API 由哪个 crate 声明。
+    #[arg(long = "api-map")]
+    api_maps: Vec<PathBuf>,
+    /// extract-static-facts 写出的 resolved-dependencies.jsonl。
+    /// 与 --api-map 同时提供时，plan 的 target 才能带上 harness 要链接的提供方版本。
+    #[arg(long = "resolved-dependencies")]
+    resolved_dependencies: Option<PathBuf>,
     #[arg(long = "output-dir")]
     output_dir: PathBuf,
     #[arg(long)]
@@ -70,6 +77,11 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
         Some(facts_path) => registration_api_by_candidate(facts_path, args.max_line_bytes)?,
         None => BTreeMap::new(),
     };
+    let api_declaring_crates = load_api_declaring_crates(&args.api_maps)?;
+    let resolved_dependencies = match &args.resolved_dependencies {
+        Some(path) => resolved_dependencies_by_crate(path, args.max_line_bytes)?,
+        None => BTreeMap::new(),
+    };
 
     let mut plans = Vec::<V326WitnessPlanRecord>::new();
     for candidate in &ranked {
@@ -97,11 +109,24 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
             ));
         }
         let mut plan = plan_for_candidate(&args.run_id, candidate, &graph, graph_ref);
-        plan.target = witness_target_for_candidate(candidate, &graph, &registration_apis);
-        if plan.target.is_none() {
-            plan.notes.push(
+        plan.target = witness_target_for_candidate(
+            candidate,
+            &graph,
+            &registration_apis,
+            &api_declaring_crates,
+            &resolved_dependencies,
+        );
+        match &plan.target {
+            None => plan.notes.push(
                 "no contract API binding was resolved; this plan is manual-review only".to_owned(),
-            );
+            ),
+            // 提供方版本缺失不降级成"没有 target"：API 绑定本身是成立的，只是不可自动执行。
+            Some(target) if target.api_crate.is_none() => plan.notes.push(
+                "the crate declaring this API was not resolved to a version; \
+                 the plan is bound but not automatically executable"
+                    .to_owned(),
+            ),
+            Some(_) => {}
         }
         plans.push(plan);
     }
@@ -189,6 +214,8 @@ fn witness_target_for_candidate(
     candidate: &V326RankedCandidateRecord,
     graph: &V326LifecycleGraphV3Record,
     registration_apis: &BTreeMap<String, String>,
+    api_declaring_crates: &BTreeMap<String, BTreeSet<String>>,
+    resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Option<bw_model::V326WitnessTarget> {
     let registration_source_ref = graph
         .objects
@@ -199,6 +226,8 @@ fn witness_target_for_candidate(
         &candidate.candidate_id,
         &candidate.crate_id,
         registration_apis,
+        api_declaring_crates,
+        resolved_dependencies,
         registration_source_ref,
     )
 }
@@ -209,6 +238,8 @@ fn witness_target_from_parts(
     candidate_id: &str,
     crate_id: &str,
     registration_apis: &BTreeMap<String, String>,
+    api_declaring_crates: &BTreeMap<String, BTreeSet<String>>,
+    resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
     registration_source_ref: Option<bw_model::V326SourceRef>,
 ) -> Option<bw_model::V326WitnessTarget> {
     let api_id = registration_apis.get(candidate_id)?;
@@ -216,12 +247,131 @@ fn witness_target_from_parts(
         return None;
     }
     let (crate_name, crate_version) = split_crate_id(crate_id)?;
+    let api_crate = resolve_api_crate(
+        api_id,
+        crate_id,
+        api_declaring_crates,
+        resolved_dependencies,
+        &crate_name,
+        &crate_version,
+    );
     Some(bw_model::V326WitnessTarget {
         api_id: api_id.clone(),
         crate_name,
         crate_version,
+        api_crate,
         registration_source_ref,
     })
+}
+
+/// 确定这个 api_id 由哪个 crate 的哪个版本提供。
+///
+/// 一个 api_id 可能被多个 crate 声明（同一个 API 家族的安全封装与 `-sys` 直调），所以
+/// 不能只看 API map；真正生效的是被扫 crate 实际解析到的那个。取交集，唯一才绑定：
+/// 零个说明依赖解析结果里根本没有提供方，多个说明分不清走的是哪条，两种都是缺证。
+fn resolve_api_crate(
+    api_id: &str,
+    crate_id: &str,
+    api_declaring_crates: &BTreeMap<String, BTreeSet<String>>,
+    resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
+    candidate_crate_name: &str,
+    candidate_crate_version: &str,
+) -> Option<bw_model::V326WitnessApiCrate> {
+    let declaring = api_declaring_crates.get(api_id)?;
+    // API 声明在被扫 crate 自己身上：提供方就是它自己，无需查依赖。
+    if declaring.contains(candidate_crate_name) {
+        return Some(bw_model::V326WitnessApiCrate {
+            name: candidate_crate_name.to_owned(),
+            version: candidate_crate_version.to_owned(),
+        });
+    }
+    let resolved = resolved_dependencies.get(crate_id)?;
+    let mut matches = declaring
+        .iter()
+        .filter_map(|name| {
+            resolved
+                .get(name)
+                .map(|version| bw_model::V326WitnessApiCrate {
+                    name: name.clone(),
+                    version: version.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+/// api_id → 声明它的 crate 名集合，取自 API map 里 `rust_path` 的首段。
+fn load_api_declaring_crates(
+    paths: &[PathBuf],
+) -> Result<BTreeMap<String, BTreeSet<String>>, CliError> {
+    let mut declaring = BTreeMap::<String, BTreeSet<String>>::new();
+    for path in paths {
+        let text = fs::read_to_string(path).map_err(|error| {
+            CliError::input(
+                "BW-V326-WITNESS-API-MAP",
+                format!("{}: {error}", path.display()),
+            )
+        })?;
+        let api_map = bw_model::CallbackRetentionApiMap::from_toml_str(&text).map_err(|error| {
+            CliError::input(
+                "BW-V326-WITNESS-API-MAP",
+                format!("{}: {error}", path.display()),
+            )
+        })?;
+        for entry in api_map.apis {
+            // `rust_path` 首段是 crate 名。没有 `::` 的条目（裸外部符号）说明不出提供方。
+            let Some((krate, _)) = entry.rust_path.split_once("::") else {
+                continue;
+            };
+            declaring
+                .entry(entry.api_id)
+                .or_default()
+                .insert(krate.to_owned());
+        }
+    }
+    Ok(declaring)
+}
+
+/// crate_id → {依赖包名: 版本}。同名多版本共存时不猜，整条丢弃留给缺证记录。
+fn resolved_dependencies_by_crate(
+    path: &Path,
+    max_line_bytes: usize,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>, CliError> {
+    #[derive(serde::Deserialize)]
+    struct ResolvedDependenciesRecord {
+        crate_id: String,
+        #[serde(default)]
+        packages: Vec<ResolvedPackage>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ResolvedPackage {
+        name: String,
+        version: String,
+    }
+
+    let records = read_jsonl::<ResolvedDependenciesRecord>(path, max_line_bytes)?;
+    let mut by_crate = BTreeMap::<String, BTreeMap<String, String>>::new();
+    for located in records {
+        let record = located.value;
+        let mut ambiguous = BTreeSet::<String>::new();
+        let versions = by_crate.entry(record.crate_id).or_default();
+        for package in record.packages {
+            match versions.entry(package.name.clone()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(package.version);
+                }
+                std::collections::btree_map::Entry::Occupied(slot) => {
+                    if slot.get() != &package.version {
+                        ambiguous.insert(package.name);
+                    }
+                }
+            }
+        }
+        for name in ambiguous {
+            versions.remove(&name);
+        }
+    }
+    Ok(by_crate)
 }
 
 fn plan_for_candidate(
@@ -841,6 +991,8 @@ mod witness_target_tests {
             "candidate:a",
             "crate:rusqlite:0.31.0",
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
             None,
         )
         .expect("a single known registration API must bind the plan");
@@ -856,6 +1008,8 @@ mod witness_target_tests {
                 "candidate:a",
                 "crate:rusqlite:0.31.0",
                 &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
                 None
             )
             .is_none()
@@ -870,6 +1024,8 @@ mod witness_target_tests {
                 "candidate:a",
                 "crate:rusqlite:0.31.0",
                 &apis(&[("candidate:a", "")]),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
                 None
             )
             .is_none(),
@@ -884,10 +1040,157 @@ mod witness_target_tests {
                 "candidate:a",
                 "crate:rusqlite",
                 &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
                 None
             )
             .is_none(),
             "a harness cannot declare a dependency without a version"
+        );
+    }
+
+    fn declaring(entries: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+        entries
+            .iter()
+            .map(|(api_id, crates)| {
+                (
+                    (*api_id).to_owned(),
+                    crates.iter().map(|name| (*name).to_owned()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn resolved(entries: &[(&str, &[(&str, &str)])]) -> BTreeMap<String, BTreeMap<String, String>> {
+        entries
+            .iter()
+            .map(|(crate_id, packages)| {
+                (
+                    (*crate_id).to_owned(),
+                    packages
+                        .iter()
+                        .map(|(name, version)| ((*name).to_owned(), (*version).to_owned()))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// 这是自动 0day 扫描的主形状：被扫 crate 只是 rusqlite 的使用者，harness 要链接的
+    /// 是 rusqlite 的版本，不是被扫 crate 的版本。
+    #[test]
+    fn api_crate_is_the_declaring_crate_not_the_scanned_crate() {
+        let target = witness_target_from_parts(
+            "candidate:a",
+            "crate:some_app:0.1.0",
+            &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+            &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
+            &resolved(&[("crate:some_app:0.1.0", &[("rusqlite", "0.26.1")])]),
+            None,
+        )
+        .expect("the plan must still bind");
+
+        assert_eq!(target.crate_name, "some_app");
+        assert_eq!(target.crate_version, "0.1.0");
+        let api_crate = target
+            .api_crate
+            .expect("the declaring crate resolved to exactly one dependency");
+        assert_eq!(api_crate.name, "rusqlite");
+        assert_eq!(
+            api_crate.version, "0.26.1",
+            "the harness links the API provider's version, never the scanned crate's"
+        );
+    }
+
+    #[test]
+    fn api_crate_is_the_scanned_crate_when_it_declares_the_api_itself() {
+        let target = witness_target_from_parts(
+            "candidate:a",
+            "crate:rusqlite:0.26.1",
+            &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+            &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("the plan must still bind");
+
+        let api_crate = target.api_crate.expect("the crate declares the API itself");
+        assert_eq!(api_crate.name, "rusqlite");
+        assert_eq!(api_crate.version, "0.26.1");
+    }
+
+    /// 同一个 api_id 可能被安全封装与 `-sys` 直调同时声明；两个都在依赖里就分不清
+    /// 走的是哪条。缺证记录，不猜。
+    #[test]
+    fn ambiguous_declaring_crates_leave_the_api_crate_unresolved() {
+        let target = witness_target_from_parts(
+            "candidate:a",
+            "crate:some_app:0.1.0",
+            &apis(&[("candidate:a", "api:openssl:ssl_set_ex_data:register")]),
+            &declaring(&[(
+                "api:openssl:ssl_set_ex_data:register",
+                &["openssl", "openssl_sys"],
+            )]),
+            &resolved(&[(
+                "crate:some_app:0.1.0",
+                &[("openssl", "0.10.66"), ("openssl_sys", "0.9.103")],
+            )]),
+            None,
+        )
+        .expect("an ambiguous provider must not unbind the API itself");
+
+        assert!(
+            target.api_crate.is_none(),
+            "two possible providers must be recorded as a gap, not guessed between"
+        );
+    }
+
+    #[test]
+    fn missing_dependency_resolution_leaves_the_api_crate_unresolved() {
+        let target = witness_target_from_parts(
+            "candidate:a",
+            "crate:some_app:0.1.0",
+            &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
+            &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("the API binding does not depend on dependency resolution");
+
+        assert!(target.api_crate.is_none());
+    }
+
+    #[test]
+    fn declaring_crates_come_from_the_rust_path_not_the_api_id() {
+        // api_id 的第二段是家族名，未必等于提供方 crate：openssl 家族由 openssl_sys 提供。
+        let temp =
+            std::env::temp_dir().join(format!("bw-witness-api-map-{}.toml", std::process::id()));
+        fs::write(
+            &temp,
+            r#"
+schema_version = "bw.api-map/0.1"
+map_id = "api-map:test"
+producer = "boundary-witness@test"
+contract_id = "contract:callback-retention"
+
+[[apis]]
+api_id = "api:openssl:ssl_set_ex_data:register"
+rust_path = "openssl_sys::SSL_set_ex_data"
+contract_api_id = "api:register"
+callback_family = "openssl_ex_data"
+"#,
+        )
+        .expect("temp api map should be written");
+
+        let declaring = load_api_declaring_crates(&[temp.clone()]).expect("api map should load");
+        fs::remove_file(&temp).ok();
+
+        assert_eq!(
+            declaring
+                .get("api:openssl:ssl_set_ex_data:register")
+                .map(|crates| crates.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["openssl_sys".to_owned()]),
+            "the provider crate is the rust_path's first segment"
         );
     }
 }
