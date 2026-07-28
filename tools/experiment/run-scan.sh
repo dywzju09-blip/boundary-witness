@@ -25,6 +25,7 @@ Options:
   --component-id <id>      Contract component id. Default: callback-retention
   --records-per-part <n>   Candidate partition size. Default: 1000
   --witness-limit <n>      Witness plans to emit. Default: 10
+  --toolchain <name>       Toolchain the rustc wrapper links against. Default: nightly-2026-07-08
   --cargo-locked           Pass --locked to the cargo stages. Off by default
   --skip-static-facts      Skip MIR extraction; downstream stages run without static facts
   --keep-partial           Keep the .partial directory when a stage fails
@@ -78,6 +79,7 @@ witness_limit="10"
 skip_static_facts="false"
 keep_partial="false"
 cargo_locked="false"
+toolchain="nightly-2026-07-08"
 api_maps=()
 
 while [[ $# -gt 0 ]]; do
@@ -115,6 +117,9 @@ while [[ $# -gt 0 ]]; do
     --witness-limit)
       [[ $# -ge 2 ]] || fail "--witness-limit requires a value"
       witness_limit="$2"; shift 2 ;;
+    --toolchain)
+      [[ $# -ge 2 ]] || fail "--toolchain requires a value"
+      toolchain="$2"; shift 2 ;;
     --cargo-locked)
       cargo_locked="true"; shift ;;
     --skip-static-facts)
@@ -149,6 +154,14 @@ fi
 
 if [[ "$skip_static_facts" != "true" && -z "$rustc_wrapper" ]]; then
   fail "--rustc-wrapper is required unless --skip-static-facts is given"
+fi
+
+# The wrapper is a rustc_private binary. Without its toolchain's lib directory on
+# the loader path it cannot start at all, and the stage reports only exit 127.
+toolchain_lib=""
+if [[ "$skip_static_facts" != "true" ]]; then
+  toolchain_lib="$(rustc "+${toolchain}" --print sysroot 2>/dev/null)/lib"
+  [[ -d "$toolchain_lib" ]] || fail "toolchain ${toolchain} is not installed: ${toolchain_lib}"
 fi
 
 if [[ -z "$run_id" ]]; then
@@ -194,7 +207,13 @@ run_stage() {
   local exit_code=0
 
   note "stage ${label}"
-  if "${bw_cmd[@]}" "$name" "$@" > "$out_file" 2> "$err_file"; then
+  # Only the static-fact stage spawns the wrapper; scoping the loader path to it
+  # keeps the other stages running against the toolchain they were built with.
+  local -a stage_env=()
+  if [[ "$name" == "extract-static-facts" && -n "$toolchain_lib" ]]; then
+    stage_env=(env "LD_LIBRARY_PATH=${toolchain_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}")
+  fi
+  if "${stage_env[@]}" "${bw_cmd[@]}" "$name" "$@" > "$out_file" 2> "$err_file"; then
     exit_code=0
   else
     exit_code=$?
