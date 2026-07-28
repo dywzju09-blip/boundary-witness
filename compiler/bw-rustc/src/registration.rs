@@ -130,8 +130,48 @@ pub fn classify_call_with_api_maps(
     matching.into_iter().find_map(entry_classification)
 }
 
+/// 本次分析实际生效的 callback API map 集合。
+///
+/// 一个 wrapper 进程只分析一个 crate，因此配置在分析开始时装载一次即可。没有它时，
+/// registry 装载的 API map 无法到达 `classify_call` 等分类入口——`AnalysisRequest`
+/// 的对应字段此前只写不读，checksum 与 manifest 审计因而不影响任何分类结果。
+struct ConfiguredApiMaps {
+    entries: Vec<ApiMapEntry>,
+    include_embedded: bool,
+}
+
+static CONFIGURED_API_MAPS: OnceLock<ConfiguredApiMaps> = OnceLock::new();
+
+/// 装载本次分析的 callback API map。只有首次调用生效。
+///
+/// `include_embedded` 为 false 时，编译进二进制的内置 API map 不参与分类，
+/// 生效集合完全来自经过 checksum 校验的 registry。
+pub fn configure_api_maps(api_maps: &[CallbackRetentionApiMap], include_embedded: bool) {
+    let _ = CONFIGURED_API_MAPS.set(ConfiguredApiMaps {
+        entries: api_maps.iter().flat_map(api_map_entries).collect(),
+        include_embedded,
+    });
+}
+
 fn all_api_entries(extra_api_maps: &[CallbackRetentionApiMap]) -> Vec<ApiMapEntry> {
-    let mut entries = embedded_api_entries().to_vec();
+    merge_api_entries(CONFIGURED_API_MAPS.get(), extra_api_maps)
+}
+
+/// [`all_api_entries`] 的纯逻辑，便于在不写进程级配置的前提下测试取舍。
+fn merge_api_entries(
+    configured: Option<&ConfiguredApiMaps>,
+    extra_api_maps: &[CallbackRetentionApiMap],
+) -> Vec<ApiMapEntry> {
+    let include_embedded = configured.is_none_or(|configured| configured.include_embedded);
+
+    let mut entries = if include_embedded {
+        embedded_api_entries().to_vec()
+    } else {
+        Vec::new()
+    };
+    if let Some(configured) = configured {
+        entries.extend(configured.entries.iter().cloned());
+    }
     entries.extend(extra_api_maps.iter().flat_map(api_map_entries));
     entries
 }
@@ -1142,5 +1182,89 @@ mod tests {
 
             assert!(classification.is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod api_map_source_tests {
+    use super::*;
+
+    const REGISTRY_MAP: &str = r#"
+schema_version = "bw.api-map/0.1"
+map_id = "api-map:registry-only"
+producer = "boundary-witness@test"
+contract_id = "contract:callback-retention"
+
+[[apis]]
+api_id = "api:registry_only:register"
+rust_path = "registry_only::Handle::set_callback"
+contract_api_id = "api:register"
+callback_family = "registry_only_callback"
+callback_arg_indices = [1]
+user_data_arg_indices = [2]
+"#;
+
+    fn registry_map() -> CallbackRetentionApiMap {
+        CallbackRetentionApiMap::from_toml_str(REGISTRY_MAP).expect("test API map must parse")
+    }
+
+    fn configured(include_embedded: bool) -> ConfiguredApiMaps {
+        ConfiguredApiMaps {
+            entries: api_map_entries(&registry_map()),
+            include_embedded,
+        }
+    }
+
+    fn has_rust_path(entries: &[ApiMapEntry], rust_path: &str) -> bool {
+        entries.iter().any(|entry| entry.rust_path == rust_path)
+    }
+
+    #[test]
+    fn embedded_maps_are_used_when_nothing_is_configured() {
+        let entries = merge_api_entries(None, &[]);
+        assert!(
+            has_rust_path(&entries, "rusqlite::Connection::update_hook"),
+            "without a registry the embedded maps must stay in effect"
+        );
+    }
+
+    #[test]
+    fn configured_registry_maps_reach_classification() {
+        let configured = configured(true);
+        let entries = merge_api_entries(Some(&configured), &[]);
+        assert!(
+            has_rust_path(&entries, "registry_only::Handle::set_callback"),
+            "a registry-loaded API map must reach the classifier; it was previously carried on \
+             AnalysisRequest and never read"
+        );
+    }
+
+    #[test]
+    fn excluding_embedded_maps_leaves_only_the_audited_registry() {
+        let configured = configured(false);
+        let entries = merge_api_entries(Some(&configured), &[]);
+        assert!(
+            has_rust_path(&entries, "registry_only::Handle::set_callback"),
+            "the audited registry must still be in effect"
+        );
+        assert!(
+            !has_rust_path(&entries, "rusqlite::Connection::update_hook"),
+            "embedded maps must not bypass the registry checksum audit once it is in force"
+        );
+        assert!(
+            !has_rust_path(&entries, "openssl::ssl::SslRef::set_ex_data"),
+            "no embedded map may survive an exclusive registry"
+        );
+    }
+
+    #[test]
+    fn extra_api_maps_are_appended_on_top_of_the_configured_set() {
+        let configured = configured(false);
+        let entries = merge_api_entries(Some(&configured), &[registry_map()]);
+        let matches = entries
+            .iter()
+            .filter(|entry| entry.rust_path == "registry_only::Handle::set_callback")
+            .count();
+        assert_eq!(matches, 2, "per-call extra maps must add to, not replace, the configured set");
     }
 }

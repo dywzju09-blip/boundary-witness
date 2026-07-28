@@ -14,6 +14,7 @@ use crate::{
     config::AnalysisRequest,
     coverage::write_mir_coverage,
     domain::{StaticFactContext, facts_from_captures, facts_from_mir_sites, write_static_facts},
+    registration,
 };
 
 pub fn run_after_analysis(invocation: WrapperInvocation, request: AnalysisRequest) -> i32 {
@@ -46,6 +47,11 @@ fn analyze_crate<'tcx>(
     request: &AnalysisRequest,
 ) -> Result<(), AnalysisError> {
     write_analysis_started(request)?;
+    // 分类入口从进程级配置读取 API map，因此必须在遍历 MIR 之前装载。
+    registration::configure_api_maps(
+        &request.callback_retention_api_maps,
+        request.embedded_callback_api_maps,
+    );
     let captures = captures::collect_crate_captures(tcx)?;
     let context = StaticFactContext::new(
         &request.crate_name,

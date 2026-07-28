@@ -36,6 +36,8 @@ pub struct AnalysisRequest {
     pub expected_packages: Vec<ExpectedPackage>,
     pub collection_lookup_contracts: Vec<CollectionLookupContract>,
     pub callback_retention_api_maps: Vec<CallbackRetentionApiMap>,
+    /// 是否让编译进二进制的内置 callback API map 参与分类。
+    pub embedded_callback_api_maps: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -52,6 +54,9 @@ pub struct CompilerConfig {
     callback_retention_api_maps: Vec<CallbackRetentionApiMap>,
     #[serde(default)]
     callback_retention_api_map_registries: Vec<CallbackRetentionApiMapRegistryRef>,
+    /// 覆盖内置 callback API map 的默认取舍；缺省时由是否配置 registry 决定。
+    #[serde(default)]
+    embedded_callback_api_maps: Option<bool>,
     #[serde(skip)]
     metadata: Option<CargoMetadata>,
     #[serde(skip)]
@@ -577,7 +582,18 @@ impl CompilerConfig {
             expected_packages: self.expected_packages.clone(),
             collection_lookup_contracts: self.collection_lookup_contracts.clone(),
             callback_retention_api_maps: self.callback_retention_api_maps.clone(),
+            embedded_callback_api_maps: self.embedded_callback_api_maps_enabled(),
         })
+    }
+
+    /// 配置了 callback API map registry 时，内置表默认不参与分类。
+    ///
+    /// 否则经过 checksum 与 manifest 审计的 registry 之外，二进制仍会注入四张未经
+    /// 审计的 API map，审计结论便不能代表实际生效的分类集合。显式设置
+    /// `embedded_callback_api_maps` 可以覆盖该默认值。
+    fn embedded_callback_api_maps_enabled(&self) -> bool {
+        self.embedded_callback_api_maps
+            .unwrap_or_else(|| self.callback_retention_api_map_registries.is_empty())
     }
 
     fn resolve_expected_packages(&self) -> Result<Vec<ExpectedPackage>, ConfigError> {
@@ -1004,6 +1020,52 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn embedded_callback_api_maps_default_on_without_a_registry() {
+        let config: CompilerConfig = serde_json::from_value(serde_json::json!({
+            "output_dir": "/tmp/out",
+            "allowlist": [{"crate_name": "demo", "target": "lib"}]
+        }))
+        .expect("config should parse");
+        assert!(
+            config.embedded_callback_api_maps_enabled(),
+            "with no registry configured the embedded maps stay in effect"
+        );
+    }
+
+    #[test]
+    fn embedded_callback_api_maps_default_off_once_a_registry_is_configured() {
+        let config: CompilerConfig = serde_json::from_value(serde_json::json!({
+            "output_dir": "/tmp/out",
+            "allowlist": [{"crate_name": "demo", "target": "lib"}],
+            "callback_retention_api_map_registries": [
+                {"path": "registry.toml", "sha256": "00".repeat(32)}
+            ]
+        }))
+        .expect("config should parse");
+        assert!(
+            !config.embedded_callback_api_maps_enabled(),
+            "an audited registry must not be silently widened by unaudited embedded maps"
+        );
+    }
+
+    #[test]
+    fn embedded_callback_api_maps_can_be_forced_on_alongside_a_registry() {
+        let config: CompilerConfig = serde_json::from_value(serde_json::json!({
+            "output_dir": "/tmp/out",
+            "allowlist": [{"crate_name": "demo", "target": "lib"}],
+            "embedded_callback_api_maps": true,
+            "callback_retention_api_map_registries": [
+                {"path": "registry.toml", "sha256": "00".repeat(32)}
+            ]
+        }))
+        .expect("config should parse");
+        assert!(
+            config.embedded_callback_api_maps_enabled(),
+            "an explicit setting must override the registry-derived default"
+        );
+    }
 
     #[test]
     fn collection_lookup_contract_registry_loads_with_matching_checksum() {

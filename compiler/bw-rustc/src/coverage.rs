@@ -251,6 +251,7 @@ mod tests {
             expected_packages: vec![],
             collection_lookup_contracts: vec![],
             callback_retention_api_maps: vec![],
+            embedded_callback_api_maps: true,
         }
     }
 
