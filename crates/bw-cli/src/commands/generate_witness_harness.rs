@@ -116,6 +116,9 @@ struct GeneratedHarness {
 struct HarnessCoverage {
     template: &'static str,
     pattern_family: String,
+    /// 释放是被观察到的；顺序是否已被静态证明见下一个字段。
+    release_observed: bool,
+    /// false 表示顺序静态侧未定，由这次动态运行判定。
     release_before_callback_use: bool,
     callback_use_after_release: bool,
     still_unproven: Vec<String>,
@@ -281,10 +284,11 @@ fn generate_one(
             ),
         ));
     }
-    // 静态侧没证明"owner 在 callback 仍注册时被释放"，harness 就造不出要见证的那个序列。
-    // 硬跑一个结构上不可能违规的 harness，"no findings" 会被读成"验证通过"——那是假阴性
-    // 的最坏形式：拒绝生成才是诚实的。
-    if !shape.release_before_callback_use {
+    // 门槛是"释放被观察到"，不是"释放顺序被证明"。闭包注册进外部库后调用点不在被扫
+    // 函数里，顺序静态侧证不出来——用"已证明"当门槛会恰好拒掉动态见证唯一有意义的
+    // 那一类。但完全没观察到释放时仍须拒绝：那样的 harness 结构上不可能违规，跑完的
+    // "no findings" 会被读成"验证通过"，是假阴性的最坏形式。
+    if !shape.release_observed {
         return Err(refusal(
             REASON_NO_RELEASE_ORDERING,
             "the candidate was never observed releasing the owner while the callback stayed \
@@ -351,6 +355,7 @@ fn generate_one(
         reproduces: HarnessCoverage {
             template: template.as_str(),
             pattern_family: format!("{:?}", shape.pattern_family),
+            release_observed: shape.release_observed,
             release_before_callback_use: shape.release_before_callback_use,
             callback_use_after_release: shape.callback_use_after_release,
             still_unproven: shape.unproven.clone(),
@@ -728,6 +733,7 @@ mod tests {
     ) -> V326WitnessObservedShape {
         V326WitnessObservedShape {
             pattern_family: V32PatternFamily::RetainedBorrowedCallback,
+            release_observed: release_before_callback_use,
             release_before_callback_use,
             callback_use_after_release,
             unproven: vec!["release_order_proof_missing".to_owned()],

@@ -1330,10 +1330,17 @@ pub struct V326WitnessApiCrate {
 pub struct V326WitnessObservedShape {
     /// 候选的模式家族，决定 owner 与 callback 的持有关系。
     pub pattern_family: V32PatternFamily,
-    /// 是否观察到 owner 在 callback 仍注册期间被释放。
+    /// 是否**观察到**注册期间发生了释放（不要求能证明顺序）。
     ///
     /// 固定模板无条件 `drop(owner)`，等于把结论写死在剧本里。这里为 false 时 harness
     /// 不得制造这次释放——否则它验证的是模板，不是候选。
+    ///
+    /// 与 [`Self::release_before_callback_use`] 的区别很关键：闭包注册进外部库之后，
+    /// 回调的调用点在库内部，不在被扫函数的 CFG 里，顺序**在静态侧永远证不出来**。
+    /// 拿"顺序已证明"当生成门槛，会恰好拒掉动态见证唯一存在意义的那一类候选。
+    #[serde(default)]
+    pub release_observed: bool,
+    /// 是否**证明**了 owner 在 callback 仍注册期间被释放。false 表示顺序留给动态判定。
     pub release_before_callback_use: bool,
     /// 是否观察到 callback 在 owner 释放后仍使用该对象。
     pub callback_use_after_release: bool,

@@ -10,8 +10,8 @@ use super::rustc_hir::def_id::{DefId, LocalDefId};
 use super::rustc_hir::{self as hir};
 use super::rustc_index::Idx;
 use super::rustc_middle::mir::{
-    AggregateKind, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem, Rvalue,
-    StatementKind, Terminator, TerminatorKind, visit::Visitor,
+    AggregateKind, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem, RETURN_PLACE,
+    Rvalue, StatementKind, Terminator, TerminatorKind, visit::Visitor,
 };
 use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor};
 use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
@@ -116,6 +116,8 @@ pub fn collect_mir_sites<'tcx>(
             observations: MirSiteObservations::default(),
             raw_pointer_origins: BTreeMap::new(),
             raw_pointer_borrow_origins: BTreeMap::new(),
+            closure_upvar_sources: BTreeMap::new(),
+            receiver_borrow_locals: BTreeMap::new(),
             borrowed_foreign_pointer_origins: BTreeMap::new(),
             returned_borrow_origins: BTreeMap::new(),
             returned_borrow_return_origins: Vec::new(),
@@ -204,6 +206,8 @@ pub fn collect_mir_sites<'tcx>(
             observations: MirSiteObservations::default(),
             raw_pointer_origins: BTreeMap::new(),
             raw_pointer_borrow_origins: BTreeMap::new(),
+            closure_upvar_sources: BTreeMap::new(),
+            receiver_borrow_locals: BTreeMap::new(),
             borrowed_foreign_pointer_origins: BTreeMap::new(),
             returned_borrow_origins: BTreeMap::new(),
             returned_borrow_return_origins: Vec::new(),
@@ -643,6 +647,16 @@ struct MirSiteVisitor<'a, 'tcx> {
     observations: MirSiteObservations,
     raw_pointer_origins: BTreeMap<RawPointerPlaceKey, Option<RawPointerReference>>,
     raw_pointer_borrow_origins: BTreeMap<Local, Option<RawPointerPlaceKey>>,
+    /// 被移进某个闭包成为 upvar 的 local。
+    ///
+    /// 留存缺陷的形状是"闭包捕获的对象被销毁"，而不是"闭包本身被销毁"。要认出前者，
+    /// drop 一个 local 时必须知道它是否已经进了某个闭包。
+    closure_upvar_sources: BTreeMap<Local, DefId>,
+    /// `receiver -> {由它借出的 local}`。
+    ///
+    /// `fn get(&self) -> &T { &self.value }` 这类方法把接收者的一部分借出去，闭包捕获
+    /// 到的是借用而不是接收者本身。没有这层别名，drop 接收者与捕获借用就永远对不上号。
+    receiver_borrow_locals: BTreeMap<Local, BTreeSet<Local>>,
     borrowed_foreign_pointer_origins: BTreeMap<RawPointerPlaceKey, Option<BorrowReference>>,
     returned_borrow_origins: BTreeMap<Local, Option<ReturnedBorrowOrigin>>,
     returned_borrow_return_origins: Vec<ReturnedBorrowReturnAssignment>,
@@ -1224,6 +1238,7 @@ impl<'tcx> Visitor<'tcx> for MirSiteVisitor<'_, 'tcx> {
         self.record_returned_borrow_storage_assignment(place, rvalue, location);
         self.observe_returned_borrow_storage_use_assignment(place, rvalue, location);
         self.observe_closure_capture_use_assignment(rvalue, location);
+        self.record_closure_upvar_sources(rvalue);
         self.record_returned_borrow_indexed_iterator_assignment(place, rvalue);
         self.record_returned_borrow_slice_storage_assignment(place, rvalue);
         self.observe_returned_borrow_assignment(place, rvalue, location);
@@ -1280,6 +1295,7 @@ impl<'tcx> MirSiteVisitor<'_, 'tcx> {
         );
         self.observe_callback_user_data_summary_invocation(callee_def_id, args, span, location);
         self.record_local_method_call(&callee_def_path, span, location);
+        self.record_receiver_borrow_call(callee_def_id, args, destination);
         self.observe_atomic_ordering_load(&callee_def_path, args, span, location);
         if let Some(destination) = destination {
             self.record_scoped_key_passthrough_call(
@@ -1857,6 +1873,73 @@ impl<'tcx> MirSiteVisitor<'_, 'tcx> {
         self.forget_raw_pointer_origin_prefix(&source_key);
     }
 
+    /// 记下哪些 local 被移进了闭包成为 upvar。
+    ///
+    /// 只看闭包聚合的实参，不做别名分析：这里要回答的是"这个 local 进没进那个闭包"，
+    /// 是一个语法事实，不是可达性问题。
+    fn record_closure_upvar_sources(&mut self, rvalue: &Rvalue<'tcx>) {
+        let Rvalue::Aggregate(kind, operands) = rvalue else {
+            return;
+        };
+        let Some(closure_def_id) = closure_def_id_from_aggregate_kind(kind) else {
+            return;
+        };
+        for operand in operands.iter() {
+            let Some(place) = operand.place() else {
+                continue;
+            };
+            self.closure_upvar_sources
+                .insert(place.local, closure_def_id);
+        }
+    }
+
+    /// 记下 `dest = receiver.method()` 且该方法返回接收者内部借用的情况。
+    ///
+    /// 闭包捕获到的往往是这种借用，而 drop 的是接收者本身。没有这条别名，
+    /// "被捕获的对象"与"被销毁的对象"是两个互不相识的 site。
+    fn record_receiver_borrow_call(
+        &mut self,
+        callee_def_id: DefId,
+        args: &[super::rustc_span::Spanned<Operand<'tcx>>],
+        destination: Option<&Place<'tcx>>,
+    ) {
+        let Some(destination) = destination else {
+            return;
+        };
+        if !destination.projection.is_empty() {
+            return;
+        }
+        if !callable_returns_receiver_borrow(self.tcx, callee_def_id) {
+            return;
+        }
+        let Some(receiver) = args.first().and_then(|arg| arg.node.place()) else {
+            return;
+        };
+        self.receiver_borrow_locals
+            .entry(receiver.local)
+            .or_default()
+            .insert(destination.local);
+    }
+
+    /// 这次 drop 是否销毁了某个仍被注册 callback 捕获的对象。
+    ///
+    /// 直接捕获（闭包收下这个 local）与借用捕获（闭包收下从这个 local 借出的引用）
+    /// 都算：两种情况下 callback 之后拿到的都是已失效的对象。
+    fn captured_callback_for_dropped_local(&self, local: Local) -> Option<CallbackReference> {
+        let closure_def_id = self
+            .closure_upvar_sources
+            .get(&local)
+            .copied()
+            .or_else(|| {
+                self.receiver_borrow_locals.get(&local).and_then(|borrows| {
+                    borrows
+                        .iter()
+                        .find_map(|borrow| self.closure_upvar_sources.get(borrow).copied())
+                })
+            })?;
+        self.callback_reference_from_def_id(closure_def_id)
+    }
+
     fn drop_observation(
         &self,
         place: &Place<'tcx>,
@@ -1876,7 +1959,9 @@ impl<'tcx> MirSiteVisitor<'_, 'tcx> {
             mir_location: format!("{location:?}"),
             object_type_name,
             drop_kind,
-            callback: self.callback_reference_from_ty(object_ty),
+            callback: self
+                .callback_reference_from_ty(object_ty)
+                .or_else(|| self.captured_callback_for_dropped_local(place.local)),
         })
     }
 
@@ -11770,6 +11855,8 @@ fn summarize_returned_borrow_callable_with_captures<'tcx>(
         observations: MirSiteObservations::default(),
         raw_pointer_origins: BTreeMap::new(),
         raw_pointer_borrow_origins: BTreeMap::new(),
+        closure_upvar_sources: BTreeMap::new(),
+        receiver_borrow_locals: BTreeMap::new(),
         borrowed_foreign_pointer_origins: BTreeMap::new(),
         returned_borrow_origins: BTreeMap::new(),
         returned_borrow_return_origins: Vec::new(),
@@ -11877,6 +11964,8 @@ fn summarize_returned_borrow_slot_assignment_callable<'tcx>(
         observations: MirSiteObservations::default(),
         raw_pointer_origins: BTreeMap::new(),
         raw_pointer_borrow_origins: BTreeMap::new(),
+        closure_upvar_sources: BTreeMap::new(),
+        receiver_borrow_locals: BTreeMap::new(),
         borrowed_foreign_pointer_origins: BTreeMap::new(),
         returned_borrow_origins: BTreeMap::new(),
         returned_borrow_return_origins: Vec::new(),
@@ -13539,6 +13628,8 @@ fn summarize_returned_borrow_collection_persist_callable_inner<'tcx>(
         observations: MirSiteObservations::default(),
         raw_pointer_origins: BTreeMap::new(),
         raw_pointer_borrow_origins: BTreeMap::new(),
+        closure_upvar_sources: BTreeMap::new(),
+        receiver_borrow_locals: BTreeMap::new(),
         borrowed_foreign_pointer_origins: BTreeMap::new(),
         returned_borrow_origins: BTreeMap::new(),
         returned_borrow_return_origins: Vec::new(),
@@ -19607,6 +19698,47 @@ fn raw_pointer_arg_projection_key(body: &Body<'_>, place: &Place<'_>) -> Option<
         return None;
     }
     Some(projection)
+}
+
+/// callee 是否把接收者的一部分借出去作为返回值，例如 `fn get(&self) -> &T { &self.value }`。
+///
+/// 这是完全健全的普通写法，`ReturnedBorrowRelation` 那套（针对未约束生命周期）不会触发；
+/// 但对留存分析它很关键：闭包捕获的是这个借用，而被销毁的是接收者。
+///
+/// 判据保持窄：返回值必须直接由对第 0 个参数（接收者）的借用赋值而来。看不出来就返回
+/// false —— 宁可漏掉一条别名，也不要凭猜测把两个无关对象连在一起。
+fn callable_returns_receiver_borrow<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
+    if !matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(def_id)
+    {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    let Some(receiver) = body.args_iter().next() else {
+        return false;
+    };
+    if !matches!(
+        body.local_decls[receiver].ty.kind(),
+        ty::Ref(..) | ty::RawPtr(..)
+    ) {
+        return false;
+    }
+    body.basic_blocks.iter().any(|block| {
+        block.statements.iter().any(|statement| {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                return false;
+            };
+            let (place, rvalue) = &**assignment;
+            // 只认直接写进返回位置 `_0` 的赋值。
+            if place.local != RETURN_PLACE || !place.projection.is_empty() {
+                return false;
+            }
+            let Rvalue::Ref(_, _, borrowed) = rvalue else {
+                return false;
+            };
+            borrowed.local == receiver
+        })
+    })
 }
 
 fn is_lifecycle_owner_ty(ty: Ty<'_>) -> bool {

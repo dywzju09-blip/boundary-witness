@@ -247,12 +247,24 @@ fn observed_shape_for_candidate(
     unproven.extend(summary.chain_incomplete_reasons.iter().cloned());
     unproven.sort();
     unproven.dedup();
+    // 释放"被观察到"与释放顺序"被证明"是两件事。注册进外部库的闭包，其调用点不在
+    // 被扫函数的 CFG 里，顺序静态侧永远证不出来——那正是动态见证要回答的问题。
+    let release_before_callback_use =
+        summary.release_ordering_chain_count > 0 || summary.complete_risk_chain_count > 0;
+    let release_observed = release_before_callback_use
+        || candidate
+            .risk_features
+            .iter()
+            .any(|feature| feature == "missing_unregister_before_drop");
     bw_model::V326WitnessObservedShape {
         pattern_family: candidate.pattern_family,
-        release_before_callback_use: summary.release_ordering_chain_count > 0
-            || summary.complete_risk_chain_count > 0,
+        release_observed,
+        release_before_callback_use,
+        // 同理：identity transport 已证明说明 callback 确实持有这个对象，那么让 harness
+        // 在回调里碰它才能给 oracle 判定的机会。"是否在释放之后"正是动态要回答的。
         callback_use_after_release: summary.use_ordering_chain_count > 0
-            || summary.complete_risk_chain_count > 0,
+            || summary.complete_risk_chain_count > 0
+            || (release_observed && summary.identity_transport_chain_count > 0),
         unproven,
     }
 }
