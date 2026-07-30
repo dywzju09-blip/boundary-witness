@@ -4,6 +4,7 @@
 
 ## 新 Agent
 
+1. [研究主线与创新点](project/research-thesis.md)（方向权威）
 1. [项目概览](project/overview.md)
 2. [当前状态](project/current-status.md)
 3. [范围与边界](project/scope-and-boundaries.md)

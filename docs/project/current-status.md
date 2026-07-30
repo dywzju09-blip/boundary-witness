@@ -2,7 +2,17 @@
 
 **阶段锚点：V3.2.x core-effect hardening。V3.3 gate 未通过。**
 
-本文只陈述当前公开工作树中可以由代码、测试和运行记录支撑的状态。状态含义见 [术语](terminology.md#状态词)。`Implemented` 说明实现和测试存在；只有与当前 commit、配置、数据及 checksum 对齐的正式运行记录才能标为 `Verified`。
+本文只陈述当前公开工作树中可以由代码、测试和运行记录支撑的状态。方向权威见 [research thesis](research-thesis.md)；能力边界见 [scope and boundaries](scope-and-boundaries.md)。状态含义见 [术语](terminology.md#状态词)。`Implemented` 说明实现和测试存在；只有与当前 commit、配置、数据及 checksum 对齐的正式运行记录才能标为 `Verified`。
+
+## 相对研究主线的位置
+
+论题声称健全性判定需要联结 Rust 侧契约与外部侧行为。**外部侧分析尚未开始**，因此三条创新点均未成立：
+
+| 创新点 | 状态 | 缺什么 |
+| --- | --- | --- |
+| N1 跨语言契约错配判定 | `Planned` | 外部侧有界分析（roadmap P2）未开始；持有期维度的外部侧证据目前是从 API 清单推断 |
+| N2 消除人工 API 清单 | `Planned` | 清单仍是必需输入，消融实验无法进行 |
+| N3 定向见证 | `Planned` | 见证生成（roadmap P4）未开始 |
 
 ## 状态总览
 
@@ -11,20 +21,22 @@
 | `Implemented` | 静态候选、candidate-scoped 生命周期事实、graph-v3、ranking 和 witness plan 主链 | 代码与测试存在；输出仍是候选与验证计划 |
 | `Implemented` | mutation/reassignment barrier | model、compiler 与 collection/storage barrier 已实现并有测试 |
 | `Implemented` | closure capture slot 与 use-side projection | compiler golden 和 graph tests 已有本地验收 |
-| `Implemented` | opaque handle identity schema enforcement | 当前工作树包含结构化 generation key 与 validator；迁移后仍需完整回归复验 |
-| `Implemented` | returned-borrow exact claimant | 共享事实只接受唯一 exact anchor；迁移后仍需完整回归复验 |
-| `Implemented` | object-chain proof-layer split | identity、ordering、complete risk chain 已分层；迁移后仍需完整回归复验 |
+| `Implemented` | opaque handle identity schema enforcement | 当前工作树包含结构化 generation key 与 validator；仍需完整回归复验 |
+| `Implemented` | returned-borrow exact claimant | 共享事实只接受唯一 exact anchor；仍需完整回归复验 |
+| `Implemented` | object-chain proof-layer split | identity、ordering、complete risk chain 已分层；仍需完整回归复验 |
 | `Implemented` | runtime、oracle 与 fuzz observer 基础 | 组件测试通过；不是任意候选 executor |
-| `Implemented` | 返回借用寿命不受输入约束的定义点识别 | `unconstrained_return_lifetime_relation` 从 HIR 签名判定，无需 API map |
-| `Implemented` | 回调参数生命周期 bound 的定义点识别 | `callback_lifetime_bounds` 从 HIR 签名判定 bound 绑在函数声明的 lifetime 还是 `'static`，无需 API map；健全与不健全两侧都产出事实 |
-| `Implemented` | 回调 bound 是否弱于 C 侧持有期 | `derive_v3_2_6_callback_bound_verdicts` 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；人工版本边界降为兜底与审计对照。rusqlite 0.26.1 上 update/commit/rollback_hook 三条的 plan 判定已由事实给出 |
-| `Planned` | 排名把能绑定的注册候选排进默认 witness limit | 上述三条候选排 15-18 位，默认 `--witness-limit 10` 取不到，默认扫描的 plan 仍全是 no_target。与排名和风险不相关这一项同源 |
-| `Planned` | 不读 API map 也能识别回调注册 API（阶段 B 下一步） | 外部持有期那一半的证据仍是 API map 分类出来的 register / unregister 事实；接入新组件仍必须先手写 map。见 [范围与边界 §2.3](scope-and-boundaries.md) |
-| `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状，尚未达到普遍能力 |
-| `Planned` | 通用 dynamic witness executor | witness plan 到自动 harness/executor/receipt 的闭环不完整 |
+| `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound 是声明 lifetime 还是 `'static`，四态取值，无需 API 清单；健全与不健全两侧都产出事实 |
+| `Implemented` | 返回借用寿命不受输入约束的定义点识别 | 从 HIR 签名比较输入与输出的 lifetime 参数集合，无需 API 清单。此维度与 Yuga 重叠，不作创新点 |
+| `Implemented` | 持有期维度的两侧联结与判定来源记录 | 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；两路结论不一致时都留在产物中 |
+| `Planned` | 外部侧有界分析（roadmap P2） | 逃逸、写穿、调用与存储、释放契约四个查询均未实现。这是 N1 的前提 |
+| `Planned` | 边界事实模型二元化（roadmap P0） | 现有事实全部单侧；`hand_off_id` 未引入 |
+| `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现 |
+| `Planned` | 定向见证生成与动态确认（roadmap P4） | witness plan 到自动 harness/executor/receipt 的闭环不完整 |
+| `Planned` | 排名把可绑定的注册候选排进默认输出上限 | 默认上限取不到它们，默认扫描看不到判定结果 |
+| `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状 |
 | `Blocked` | V3.3、约 100 crate pilot、sealed holdout | clean method commit、完整 public regression、pilot、freeze 与新 sealed smoke 尚未全部完成 |
 | `Deprecated` | 以 `verified_static_chain` 单字段代表所有证明层 | 字段仅作兼容保留，规范语义改用 `verified_layers`/`missing_layers` |
-| `Verified` | 当前迁移仓库中的正式实验能力结论 | 无；仓库内尚无与当前迁移 commit 对齐的完整运行证据可支撑新的 `Verified` 声明 |
+| `Verified` | 正式实验能力结论 | 无；仓库内尚无与当前 commit 对齐的完整运行证据可支撑 `Verified` 声明 |
 
 ## Implemented：静态分析主链
 

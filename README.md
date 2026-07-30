@@ -14,11 +14,19 @@ V3.3 gate 未通过。当前工作树中的静态主链、proof-layer split、op
 
 最新状态以 [current status](docs/project/current-status.md) 为准；术语含义见 [terminology](docs/project/terminology.md)。
 
+## 研究主线
+
+论题：**安全 Rust API 包装外部组件时的健全性，等价于「Rust 侧类型层契约」与「外部侧跨界实际行为」之间是否存在逐维错配。** 生命周期持有期是其中一维，别名、线程、重入、展开、释放责任、值域、初始化各是一维。
+
+方向权威是 [research thesis](docs/project/research-thesis.md)，任何实现都必须落到其中一条创新点上。实现阶段见 [roadmap](docs/roadmap/roadmap.md)。
+
 ## 能力与非目标
 
-BoundaryWitness 当前能定位 Rust-C 边界，生成生命周期敏感候选，提取 compiler/static facts，构建 graph-v3 proof layers，执行 ranking/pair comparison，并为动态验证生成 witness plan。其中候选定位在回调家族上**仅覆盖 API map 已声明的 API**；返回借用寿命不受约束这一类则可从签名自动识别，无需 API map。
+当前能定位 Rust-C 边界、生成生命周期敏感候选、提取 compiler/static facts、构建 graph-v3 proof layers、执行 ranking/pair comparison，并为动态验证生成 witness plan。持有期维度可从 HIR 签名自动读出 Rust 侧契约，无需 API 清单；返回借用寿命不受约束这一类同样如此。
 
-它当前不承诺通用 0-day 自动发现、自动识别未经 API map 声明的回调注册 API、静态候选直接确认漏洞、任意深度全程序 points-to、任意候选自动 harness、可利用性评估或 V3.3 已通过。其中前两项是路线上的目标而非放弃的方向，其余是范围之外。范围边界见 [scope and boundaries](docs/project/scope-and-boundaries.md)，能力主线见 [roadmap](docs/roadmap/roadmap.md)。
+**外部侧行为分析尚未实现**，因此论题声称的跨语言联结尚未成立：持有期维度的外部侧证据目前由 API 清单分类推断而来。接入新组件仍必须先有人手写清单。
+
+当前不承诺跨语言契约错配判定已达成、不读 API 清单也能识别回调注册 API、通用 0-day 自动发现、静态候选直接确认漏洞、任意深度全程序 points-to、任意候选自动 harness、可利用性评估或 V3.3 已通过。前三项是路线上的目标，其余是范围之外。逐维覆盖状态见 [scope and boundaries](docs/project/scope-and-boundaries.md)。
 
 ## 工作原理
 
@@ -104,6 +112,7 @@ PR 层运行格式、workspace check、核心 crate 测试和相关 compiler 测
 
 完整导航见 [docs README](docs/README.md)。常用入口：
 
+- [research thesis](docs/project/research-thesis.md)
 - [project overview](docs/project/overview.md)
 - [current status](docs/project/current-status.md)
 - [system overview](docs/architecture/system-overview.md)

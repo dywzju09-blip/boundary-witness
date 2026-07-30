@@ -1,22 +1,26 @@
 # 项目概览
 
-BoundaryWitness 的**最终目标是在 Rust 组件中自动发现未知（0-day）生命周期缺陷**。当前处于通往该目标的第一个阶段：**V3.2.x hardening，即可审计、可证伪的已知缺陷验证版**。它围绕 Rust–C 边界恢复生命周期事实，将中性静态证据组织为对象链和风险候选，并为后续动态验证准备可追溯输入。项目不把候选排序等同于漏洞确认，也不把历史样本回归包装成未知漏洞发现。
+BoundaryWitness 研究一个问题：**安全 Rust API 包装外部组件时的健全性，能否通过联结 Rust 侧类型层契约与外部侧跨界实际行为来自动判定。** 方向权威是 [research thesis](research-thesis.md)，本文只做入口性介绍。
 
-## 目标层级
+当前阶段是 **V3.2.x core-effect hardening**，V3.3 gate 未通过。项目不把候选排序等同于漏洞确认，也不把历史样本回归包装成未知漏洞发现。
 
-最终目标与当前能力必须分开陈述，两者的距离就是路线图：
+## 论题与目标层级
+
+缺陷的形态是**逐维契约错配**：某一维上，Rust 侧类型允许的比外部侧实际发生的宽。生命周期持有期是其中一维，别名、线程、重入、展开、释放责任、值域、初始化各是一维。
 
 ```text
-最终目标：在 Rust 组件中自动发现未知（0-day）生命周期缺陷
+论题：健全性 = 逐维契约错配，判定它必须跨语言联结两侧事实
   ↑
-阶段 B：定义点分析——自动识别哪些 API 的回调 bound 过松
+N3 定向见证：把「可能不健全」降为「已确认可触发」
   ↑
-阶段 A（当前）：给定已知不健全的组件，能否把它证明出来
+N2 消除人工 API 清单：结构化推断外部符号的角色
   ↑
-仪器：n-day 数据集，用于度量阶段 A 的检出率与误报率
+N1 两侧事实模型与逐维判定框架（外部侧尚未实现）
+  ↑
+仪器：已披露公告与 n-day 对照，用于度量检出率与误报率
 ```
 
-已知 n-day 是**度量工具能力的仪器**，不是交付目标。下文"明确非目标"列出的是当前阶段尚未达成的能力，不是项目放弃的方向。
+已披露公告是**度量工具能力的仪器**，不是交付目标。三条创新点的定义、相关工作定位与评估设计见 [research thesis](research-thesis.md)；实现阶段划分见 [roadmap](../roadmap/roadmap.md)。
 
 ## 研究问题
 
@@ -41,12 +45,14 @@ BoundaryWitness 的**最终目标是在 Rust 组件中自动发现未知（0-day
 
 ## 当前阶段尚未达成
 
-以下能力当前版本**不承诺**。其中通用 0-day 自动发现是项目的最终目标，列在这里表示当前阶段尚未达成，不表示放弃；其余各条是范围之外，不在路线上。
+以下能力当前版本**不承诺**。前一组是路线上的目标，后一组是范围之外。
 
-**尚未达成，但在路线上**：
+**尚未达成，但在路线上**（阶段编号见 [roadmap](../roadmap/roadmap.md)）：
 
-- 通用 0-day 自动发现与自动确认（最终目标，见上文目标层级）；
-- 自动识别未经人工 api map 声明的回调注册 API（阶段 B）；
+- 外部侧行为分析——逃逸、写穿、调用与存储、释放契约四个查询（P2）。**这是三条创新点共同的前提**；
+- 不读人工 API 清单也能识别外部符号的角色（P1，N2 的全部内容）；
+- 别名、线程、重入、展开、值域、初始化六个维度（P5、P6）；
+- 定向见证生成与动态确认（P4，N3 的全部内容）；
 - 对 trait/dyn dispatch、async/coroutine、复杂循环合流、动态 key/index 的普遍精确处理；
 - 任意深度跨函数/跨 crate `ObjectFlow`；
 - 在 V3.3 gate 通过前开展正式前瞻大规模扫描（时序限制，非能力限制）。
@@ -107,15 +113,8 @@ BoundaryWitness 的**最终目标是在 Rust 组件中自动发现未知（0-day
 
 ## 当前研究路线
 
-当前路线保持在 **V3.2.x core-effect hardening**：
+路线按 [roadmap](../roadmap/roadmap.md) 的阶段执行，关键路径是 **P2 外部侧有界分析**——它同时决定持有期维度的精度与别名维度能否成立，且是从零起的新组件。P0 与 P2 建议并行起步。
 
-1. 收紧 opaque-handle identity、returned-borrow claimant 和 proof-layer 语义；
-2. 扩展但不放宽同对象 `ObjectFlow` 与 release/use ordering；
-3. 将 contract 消费推进为可审计、可加载的通用 registry；
-4. 打通 witness plan 到 executor、runtime/oracle、重放回执的通用动态桥；
-5. 在 clean method commit 上执行完整 public regression 和约 100 crate 工程 pilot；
-6. 冻结 scanner、Contract、feature profile 与 checksum；
-7. 使用新的、未 reveal 的 sealed holdout 进行 blind smoke；
-8. 仅在全部 gate 通过后进入 V3.3。
+在此之上仍需：收紧 opaque-handle identity、returned-borrow claimant 与 proof-layer 语义；扩展但不放宽同对象 `ObjectFlow` 与 release/use ordering；把 contract 消费推进为可审计的通用 registry；在 clean method commit 上执行完整 public regression 与约 100 crate 工程 pilot；冻结 scanner、Contract、feature profile 与 checksum；使用新的未 reveal sealed holdout 进行 blind smoke。仅在全部 gate 通过后进入 V3.3。
 
 详细状态见 [当前状态](current-status.md)，范围解释见 [范围与边界](scope-and-boundaries.md)，字段与概念见 [术语](terminology.md)。

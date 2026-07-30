@@ -1,75 +1,120 @@
-# Roadmap
+# 实现路线
 
-BoundaryWitness 的路线从 V2 的模板化生命周期候选，推进到 V3 的证据分层、ObjectFlow、动态验证和 blind gate。当前阶段固定为 **V3.2.x core-effect hardening**；V3.3 尚未通过。
+本文服从 [research thesis](../project/research-thesis.md)。每个阶段都标注它服务哪条创新点；不服务任何创新点的工作不排进路线。
 
-## 主线
+当前阶段是 **V3.2.x core-effect hardening**，V3.3 gate 未通过。本文是计划，不是已完成能力的声明。
 
-版本号（V2/V3.1/V3.2/V3.3）刻画的是工程成熟度。能力主线是另一条轴，两者不要混读：
+## 关键路径
 
 ```text
-最终目标：在 Rust 组件中自动发现未知（0-day）生命周期缺陷
-  ↑
-阶段 B：定义点分析——不读 API map 也能识别哪些 API 的回调 bound 过松
-  ↑
-阶段 A（当前）：给定已知不健全的组件，能否把它证明出来
-              （生成可编译、可触发的 witness；对已修复版本给出证据驱动的拒绝理由）
-  ↑
-仪器：n-day 数据集，用于度量阶段 A 的检出率与误报率
+P0 边界事实模型二元化
+ ├─→ P1 消除 API 清单 ─────┐
+ └─→ P2 外部侧有界分析 ────┴─→ P3 持有期维度闭环 → P4 定向见证
+                                                      ├─→ P5 别名/重入维度
+                                                      ├─→ P6 线程维度（可裁）
+                                                      └─→ P7 规模化与评估
 ```
 
-**阶段 A 与阶段 B 的分界就是 [范围与边界 §2.3](../project/scope-and-boundaries.md) 那张表**：返回借用类已有定义点自动分析，回调 bound 类仍靠人工 API map。阶段 B 的入口是照着已实现的 `unconstrained_return_lifetime_relation` 补一个回调 bound 的定义点检查。
+**P2 是关键路径。** P0/P1/P3 在现有骨架上推进，风险可控；P2 是从零起的新组件，且同时决定持有期维度的精度和别名维度能否成立。建议 P0 与 P2 并行起步，P2 先只针对单一库打通，尽早暴露可行性。
 
-阶段 B 的完成判据只有一条非循环的：**对已有的 n-day 正样本，在不读 API map 的前提下能重新发现其中若干条。** 在此之前，"扫描器"的说法不能用；n-day 上的检出成绩只能表述为验证能力，不能表述为发现能力。
+## P0 — 边界事实模型二元化
 
-先做扎实 A 再做 B 的理由：如果连已知有洞的组件都证明不出来，自动发现更多可疑 API 只会产出更多证明不了的候选。
+服务 N1。
 
-## V2：基础候选与运行闭环
+现有静态事实是单侧的，全部来自 Rust 侧观察。拆成三类记录：
 
-V2 建立了 callback-retention Contract、静态事实、runtime trace、oracle finding、D0/D1/D2 实验基础和 rusqlite 设计家族。该阶段证明受控样本上可以形成可审计闭环，但对象身份和静态链解释仍偏模板化。
+- `RustContractFact { hand_off_id, dimension, contract }`
+- `ForeignBehaviorFact { hand_off_id, dimension, behavior, evidence }`
+- `MismatchVerdict { hand_off_id, dimension, contract, behavior, decision, witness_plan }`
 
-## V3.1：匿名 N-day gate
+核心是引入 **`hand_off_id`** 作为两侧连接键，取 `(crate, version, foreign_symbol, call_site)`。当前用函数名作连接键是权宜之计。
 
-V3.1 引入 blind runner/curator、匿名 pack、receipt、reveal 和 gate decision。历史结果显示小规模非 rusqlite blind gate 可以闭环；样本规模和数据角色不支持泛化结论。
+- 复用：站点身份描述符、schema 验证器、事实信封
+- 风险：低，但必须一次做对，后续每一维都挂在这个键上
+- 完成谓词：任一维度的两侧事实可在不依赖候选切分的前提下联结
 
-## V3.2：工程化 intake 与 pilot
+## P1 — 消除 API 清单
 
-V3.2 把 corpus intake、buildability、boundary index、candidate partition、adapter effort 和 failure taxonomy 固定为公开 Schema。20-crate pilot 证明工程格式能运转，但不等于约 100 crate pilot 或动态效果结论。
+服务 N2。
 
-## V3.2.x：Core-effect hardening
+用 [research thesis §3](../project/research-thesis.md) 的三个结构信号替代人工声明：签名形状、可清空性、所有权交出。
 
-当前工作集中在：
+- 复用：注册分类骨架、参数形状判定
+- 风险：中。信号一会带误报，靠信号二三收紧
+- 完成谓词：**消融实验有数字**——关闭清单后的召回与精度，且漏报有归因
 
-- candidate-scoped lifecycle facts；
-- opaque handle generation key；
-- returned-borrow exact claimant；
-- mutation/reassignment barrier；
-- closure capture slot 与 use-side projection；
-- `identity_transport`、`lifecycle_ordering`、`complete_risk_chain` 三层 proof；
-- graph-v3、ranking-v2、pair delta 和 witness plan 的分层解释。
+## P2 — 外部侧有界分析
 
-该阶段目标是减少技术失真，明确缺证原因，并为 public regression 与 V3.3 gate 准备干净方法 commit。
+服务 N1，是 N1 成立的前提。
 
-## V3.3：进入条件
+不做全量 IR 翻译，只做四个有界查询：
 
-V3.3 不是单个 Schema 目录，也不是 scanner-freeze 文件存在。进入 V3.3 需要同时满足 [milestone gates](milestone-gates.md)：
+| 查询 | 回答 | 服务维度 |
+| --- | --- | --- |
+| Q1 逃逸 | 指针参数是否到达返回后仍存活的存储 | 持有期 |
+| Q2 写穿 | 是否被写 | 别名与可变性 |
+| Q3 调用与存储 | 函数指针是同步调用还是被存起来 | 持有期（核心判据） |
+| Q4 释放契约 | 有无配对 free 回调，控制流上是否真调 | 持有期、释放责任 |
 
-- clean method commit；
-- 完整 public regression；
-- ObjectFlow 与 proof-layer 回归；
-- 动态 bridge 的可执行最小闭环；
-- 约 100 crate 工程 pilot；
-- scanner/Contract/feature/config/checksum freeze；
-- 新 sealed holdout blind smoke。
+IR 获取按可行性分级：
 
-未满足这些条件前，路线图允许推进基础设施、fixtures、orchestrator 和诊断运行，但项目状态仍是 V3.2.x。
+1. 外部 C 源码随构建提供的 crate，直接编译出 IR。**先只支持这一级**
+2. 链接系统库的 crate，需单独获取源码，工程量大
+3. 仅有二进制，放弃并写入 limitation
 
-## 阶段 B：定义点分析
+- 风险：**高，全路线最大不确定性**
+- Plan B：把范围收为「外部源码随构建提供的 FFI crate」，作为明确 scope 而非失败
+- 纪律：查不出逃逸**不得判定为安全**，必须记缺证
+- 完成谓词：单一库上 Q1 与 Q3 端到端产出可回查证据
 
-V3.3 gate 是工程成熟度的门槛，阶段 B 是能力上的下一步，两者可以并行准备但不可互相替代。阶段 B 的内容：
+## P3 — 持有期维度闭环
 
-1. **（已完成）** 照 [`unconstrained_return_lifetime_relation`](../../compiler/bw-rustc/src/rustc_api/mir.rs) 的形式，新增从 HIR 签名判断「回调参数的生命周期 bound 是否绑在函数声明的 lifetime 而非 `'static`」的检查。产出 `callback_lifetime_bound` 静态事实，四个取值（`declared_receiver_lifetime` / `declared_free_lifetime` / `static_lifetime` / `no_lifetime_bound`）覆盖健全与不健全两侧——缺证与「已检查且健全」必须可区分；
-2. **（已完成）** 输出是**候选 API 列表**，不是结论——候选仍需经阶段 A 的证明链才能升级。`declared_receiver_lifetime` 只说明签名允许回调借用有限存活期的数据，要构成缺陷还需要另一半：外部持有期确实更长。`derive_v3_2_6_callback_bound_verdicts` 把这两半按**函数**关联起来（不是按候选——候选是按 boundary 切的，两半会落在不同候选里）。人工写的版本边界 `non_static_callback_max_version` 由此降为兜底与审计对照，两路结论不一致时一起留在产物里。rusqlite 0.26.1 上 `update_hook` / `commit_hook` / `rollback_hook` 三条已由事实判出 `non_static`，`verdict_source` 为 `derived_from_facts`；
-3. 用现有 n-day 正样本做非循环验证：关掉 API map，看能重新发现几条。**注意第 2 步只降格了版本边界这一个字段**：外部持有期的证据仍是 API map 分类出来的 register / unregister 事实，所以「不读 API map」这一条尚未成立；
-4. 只有第 3 步有结果之后，才允许把 API map 整体从「必需输入」降格为「审计加固」。
+服务 N1。
 
-在阶段 B 交付前，接入任一新组件都仍需先人工编写 API map。
+Rust 侧 bound 已可从签名判定。将外部侧证据从「注册事实推断」换成「Q1/Q3 逃逸证据」。人工版本边界保留为交叉验证。
+
+- 复用：现有 bound 判定与判定来源字段
+- 风险：低
+- 完成谓词：判定来源为外部侧证据，且与人工边界不一致时两路结论都留在产物中
+
+## P4 — 定向见证与动态确认
+
+服务 N3。
+
+每一维一个见证模板，oracle 判定契约违反而非仅崩溃。持有期维度的模板是：建立借用 → 交出 → 释放被借数据 → 触发 → 观察。
+
+oracle 选型依据 MiriLLI 的结论：外部函数内部不可被 Miri 观察，故对真实外部库采用 sanitizer；联合解释器路线更强但更重，写入 discussion。
+
+- 复用：runtime、oracle、fuzz observer、现有 harness 设施
+- 风险：中。难点是别名与重入维度的 oracle 如何判定「违反」而非「崩溃」
+- 完成谓词：至少一维上，静态候选可自动转为可编译可运行的见证，并产出可复现判定
+
+## P5 — 别名与重入维度
+
+服务 N1 的广度。
+
+- 别名：Rust 侧指针来源与 const 性 × Q2。错配即共享引用来源的指针被写
+- 重入：交出时持有可变借用 × Q3 判定为存储 × 回调体触达同一对象
+
+- 风险：重入需跨函数触达分析，是现有对象流分析的延伸，已知其只覆盖有限形状
+
+## P6 — 线程维度（可裁）
+
+服务 N1 的广度，优先级最低。
+
+外部侧线程分析难度高。缩到可做子集：外部符号是否把指针存入被线程入口读取的结构。做不到就诚实降为 future work，不硬做。
+
+## P7 — 规模化与评估
+
+见 [research thesis §5](../project/research-thesis.md)。评估设计不在本文重复。
+
+## 明确的非目标
+
+- 不做全程序任意深度 points-to
+- 不做外部库的完整语义建模
+- 不把静态候选表述为漏洞确认
+- 不因准备 V3.3 设施而声称 V3.3 已通过
+
+## 历史阶段
+
+V2 建立 Contract、静态事实、runtime trace、oracle 与实验基础。V3.1 引入匿名 n-day gate 设施。V3.2 把 corpus intake、buildability、boundary index、candidate partition 与 failure taxonomy 固定为公开 schema。这些阶段的结论不支持泛化，其价值是为本文路线提供可复用设施。
