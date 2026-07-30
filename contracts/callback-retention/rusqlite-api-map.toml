@@ -10,7 +10,14 @@ contract_api_id = "api:register"
 callback_family = "sqlite_update_hook"
 callback_arg_indices = [1]
 user_data_arg_indices = [2]
-notes = "Some(callback) 表示注册或替换 callback。"
+non_static_callback_max_version = "0.26.1"
+notes = """
+Some(callback) 表示注册或替换 callback。
+rusqlite 0.26.2 把这几个 hook 的 bound 从 `F: ... + 'c` 收紧到 `+ 'static`，borrowed capture \
+从此在类型层面就不成立。0.26.2 及以上版本上的注册仍然是注册，但按 borrowed capture 写的 \
+harness 在那里连编译都过不去——所以边界记在 non_static_callback_max_version 上，让拒绝理由 \
+指向"这个版本没有这个形状"，而不是"这个版本没 vendored"。
+"""
 
 [[apis]]
 api_id = "api:rusqlite:update_hook:unregister"
@@ -18,6 +25,7 @@ rust_path = "rusqlite::Connection::update_hook"
 contract_api_id = "api:unregister"
 callback_family = "sqlite_update_hook"
 callback_arg_indices = [1]
+non_static_callback_max_version = "0.26.1"
 notes = "None 表示清除当前 callback。"
 
 [[apis]]
@@ -27,6 +35,7 @@ contract_api_id = "api:register"
 callback_family = "sqlite_commit_hook"
 callback_arg_indices = [1]
 user_data_arg_indices = [2]
+non_static_callback_max_version = "0.26.1"
 notes = "Some(callback) 表示注册或替换 commit callback；SQLite 侧保留 callback 与 caller-provided user-data。"
 
 [[apis]]
@@ -35,6 +44,7 @@ rust_path = "rusqlite::Connection::commit_hook"
 contract_api_id = "api:unregister"
 callback_family = "sqlite_commit_hook"
 callback_arg_indices = [1]
+non_static_callback_max_version = "0.26.1"
 notes = "None 表示清除当前 commit callback。"
 
 [[apis]]
@@ -44,6 +54,7 @@ contract_api_id = "api:register"
 callback_family = "sqlite_rollback_hook"
 callback_arg_indices = [1]
 user_data_arg_indices = [2]
+non_static_callback_max_version = "0.26.1"
 notes = "Some(callback) 表示注册或替换 rollback callback；SQLite 侧保留 callback 与 caller-provided user-data。"
 
 [[apis]]
@@ -52,6 +63,7 @@ rust_path = "rusqlite::Connection::rollback_hook"
 contract_api_id = "api:unregister"
 callback_family = "sqlite_rollback_hook"
 callback_arg_indices = [1]
+non_static_callback_max_version = "0.26.1"
 notes = "None 表示清除当前 rollback callback。"
 
 [[apis]]
@@ -59,9 +71,17 @@ api_id = "api:rusqlite:create_scalar_function:register"
 rust_path = "rusqlite::Connection::create_scalar_function"
 contract_api_id = "api:register"
 callback_family = "sqlite_scalar_function"
-callback_arg_indices = [2]
+callback_arg_indices = [4]
 user_data_arg_indices = [4]
-notes = "注册 SQL scalar function callback。"
+non_static_callback_max_version = "0.26.1"
+notes = """
+注册 SQL scalar function callback。
+签名是 `create_scalar_function(&self, fn_name, n_arg, flags, x_func)`，MIR 调用实参把 receiver \
+算作 0，因此 callback 是 4；索引 2 是 `n_arg: c_int`，指到那里 callback 身份永远解析不出来。
+user_data 索引按 api_id 查，而这个 api_id 同时覆盖 FFI 形态 \
+`sqlite3_create_function_v2(db, name, nArg, eTextRep, pApp, xFunc, xStep, xFinal)`：4 是那边的 \
+`pApp`。安全封装这一侧第 4 个实参是闭包不是裸指针，取 user_data 时按类型过滤掉，不会误配。
+"""
 
 [[apis]]
 api_id = "api:rusqlite:set_callback_with_user_data:register"

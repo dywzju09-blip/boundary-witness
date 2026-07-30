@@ -280,8 +280,13 @@ impl Connection {
     {
     }
 
+    /// 形参顺序必须跟真 rusqlite 一致：`(&self, fn_name, n_arg, flags, x_func)`。
+    ///
+    /// 这个 fixture 之前只有 `(&self, name, callback)`，callback 落在实参 2 上；api map 就照着
+    /// fixture 写了 2，于是对真 rusqlite 永远解析不出 callback 身份，而 fixture 全绿。
+    /// fixture 与被建模 API 的形参形状一旦漂移，golden 测试就只在证明 fixture 自洽。
     #[inline(never)]
-    pub fn create_scalar_function<F>(&self, _name: &str, _callback: F)
+    pub fn create_scalar_function<F>(&self, _name: &str, _n_arg: i32, _flags: u32, _callback: F)
     where
         F: FnMut() -> i32 + 'static,
     {
@@ -1011,7 +1016,7 @@ pub fn closure_owner_drop_site() {
 
 pub fn scalar_registration_site() {
     let conn = Connection;
-    conn.create_scalar_function("value", || 1);
+    conn.create_scalar_function("value", 0, 1, || 1);
 }
 
 pub fn foreign_destructor_release_registration_site() {

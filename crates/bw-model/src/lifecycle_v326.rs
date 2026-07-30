@@ -1304,6 +1304,13 @@ pub struct V326WitnessTarget {
     /// 不可自动执行。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_crate: Option<V326WitnessApiCrate>,
+    /// 解析到的 API crate 版本上，这个 API 还接不接受非 `'static` 的 callback。
+    ///
+    /// 库把 bound 收紧到 `'static` 之后，borrowed capture 在该版本上不成立，按它写的
+    /// harness 编译都过不去。这条判定必须落在产物里而不是只影响生成结果：读 plan 的人
+    /// 要能看出"没生成"是因为形状不存在，还是因为版本没 vendored。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_bound_scope: Option<V326WitnessCallbackBoundScope>,
     /// 静态侧观察到的注册位置，供 receipt 回指与人工复核。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration_source_ref: Option<V326SourceRef>,
@@ -1318,6 +1325,33 @@ pub struct V326WitnessTarget {
 pub struct V326WitnessApiCrate {
     pub name: String,
     pub version: String,
+}
+
+/// 把 API map 记录的 `'static` 边界与实际解析到的版本比对后的结论。
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct V326WitnessCallbackBoundScope {
+    pub verdict: V326CallbackBoundVerdict,
+    /// API map 中记录的边界：callback bound 还不是 `'static` 的最后一个版本。
+    /// `None` 表示这个 api_id 根本没记录过边界。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub non_static_callback_max_version: Option<String>,
+    /// 参与比对的版本，即 [`V326WitnessTarget::api_crate`] 解析到的那个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_version: Option<String>,
+}
+
+/// callback bound 边界的判定结果。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum V326CallbackBoundVerdict {
+    /// 解析到的版本落在边界以内：该版本仍接受非 `'static` callback。
+    NonStatic,
+    /// 解析到的版本已越过边界：bound 是 `'static`，borrowed capture 不成立。
+    Static,
+    /// 判不了。缺边界记录、缺解析版本，或版本不是纯三段数字——都记成缺证，
+    /// 不当成"适用"也不当成"不适用"。
+    Undecided,
 }
 
 /// 静态侧对某个候选实际观察到的生命周期形状。

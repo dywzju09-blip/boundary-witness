@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{Cursor, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -16,7 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, read_to_string},
+    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, read_to_string, write_records},
     exit::{CliError, CommandStatus},
 };
 
@@ -77,7 +77,7 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
         Some(facts_path) => registration_api_by_candidate(facts_path, args.max_line_bytes)?,
         None => BTreeMap::new(),
     };
-    let api_declaring_crates = load_api_declaring_crates(&args.api_maps)?;
+    let api_maps = load_api_map_index(&args.api_maps)?;
     let resolved_dependencies = match &args.resolved_dependencies {
         Some(path) => resolved_dependencies_by_crate(path, args.max_line_bytes)?,
         None => BTreeMap::new(),
@@ -113,7 +113,7 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
             candidate,
             &graph,
             &registration_apis,
-            &api_declaring_crates,
+            &api_maps,
             &resolved_dependencies,
         );
         match &plan.target {
@@ -214,7 +214,7 @@ fn witness_target_for_candidate(
     candidate: &V326RankedCandidateRecord,
     graph: &V326LifecycleGraphV3Record,
     registration_apis: &BTreeMap<String, String>,
-    api_declaring_crates: &BTreeMap<String, BTreeSet<String>>,
+    api_maps: &ApiMapIndex,
     resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Option<bw_model::V326WitnessTarget> {
     let registration_source_ref = graph
@@ -226,7 +226,7 @@ fn witness_target_for_candidate(
         &candidate.candidate_id,
         &candidate.crate_id,
         registration_apis,
-        api_declaring_crates,
+        api_maps,
         resolved_dependencies,
         registration_source_ref,
         Some(observed_shape_for_candidate(candidate, graph)),
@@ -275,7 +275,7 @@ fn witness_target_from_parts(
     candidate_id: &str,
     crate_id: &str,
     registration_apis: &BTreeMap<String, String>,
-    api_declaring_crates: &BTreeMap<String, BTreeSet<String>>,
+    api_maps: &ApiMapIndex,
     resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
     registration_source_ref: Option<bw_model::V326SourceRef>,
     observed_shape: Option<bw_model::V326WitnessObservedShape>,
@@ -288,16 +288,24 @@ fn witness_target_from_parts(
     let api_crate = resolve_api_crate(
         api_id,
         crate_id,
-        api_declaring_crates,
+        &api_maps.declaring_crates,
         resolved_dependencies,
         &crate_name,
         &crate_version,
     );
+    // 判定始终写进产物，哪怕结论是 `Undecided`。缺这条记录，读 plan 的人分不清
+    // "没生成"是因为这个版本上根本没有这个形状，还是因为版本没 vendored。
+    let callback_bound_scope = Some(callback_bound_scope(
+        api_id,
+        api_crate.as_ref(),
+        &api_maps.non_static_callback_max_versions,
+    ));
     Some(bw_model::V326WitnessTarget {
         api_id: api_id.clone(),
         crate_name,
         crate_version,
         api_crate,
+        callback_bound_scope,
         registration_source_ref,
         observed_shape,
     })
@@ -339,11 +347,22 @@ fn resolve_api_crate(
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
-/// api_id → 声明它的 crate 名集合，取自 API map 里 `rust_path` 的首段。
-fn load_api_declaring_crates(
-    paths: &[PathBuf],
-) -> Result<BTreeMap<String, BTreeSet<String>>, CliError> {
-    let mut declaring = BTreeMap::<String, BTreeSet<String>>::new();
+/// API map 中与 witness 判定相关的索引。
+///
+/// 两张表合并成一个结构体而不是并列传两个 map：它们必须来自同一批 map 文件，
+/// 分开传就可能一处更新、另一处没更新，而这种错配没有任何编译期提示，
+/// 表现出来只是某个 api_id 查不到边界，被静默记成"不可判定"。
+#[derive(Debug, Default)]
+struct ApiMapIndex {
+    /// api_id → 声明它的 crate 名集合，取自 API map 里 `rust_path` 的首段。
+    declaring_crates: BTreeMap<String, BTreeSet<String>>,
+    /// api_id → callback bound 还**不是** `'static` 的最后一个声明方版本。
+    non_static_callback_max_versions: BTreeMap<String, String>,
+}
+
+/// 读取 API map，建立 [`ApiMapIndex`]。
+fn load_api_map_index(paths: &[PathBuf]) -> Result<ApiMapIndex, CliError> {
+    let mut index = ApiMapIndex::default();
     for path in paths {
         let text = fs::read_to_string(path).map_err(|error| {
             CliError::input(
@@ -358,17 +377,53 @@ fn load_api_declaring_crates(
             )
         })?;
         for entry in api_map.apis {
+            if let Some(boundary) = entry.non_static_callback_max_version.clone() {
+                index
+                    .non_static_callback_max_versions
+                    .insert(entry.api_id.clone(), boundary);
+            }
             // `rust_path` 首段是 crate 名。没有 `::` 的条目（裸外部符号）说明不出提供方。
             let Some((krate, _)) = entry.rust_path.split_once("::") else {
                 continue;
             };
-            declaring
+            index
+                .declaring_crates
                 .entry(entry.api_id)
                 .or_default()
                 .insert(krate.to_owned());
         }
     }
-    Ok(declaring)
+    Ok(index)
+}
+
+/// 把 API map 记录的 `'static` 边界与实际解析到的版本比对。
+///
+/// 三种情况都收敛到 `Undecided`：没记过边界、没解析出版本、版本不是纯三段数字。
+/// 它们都是缺证，不能当成"这个版本适用"，也不能当成"不适用"——库把 bound 收紧到
+/// `'static` 之后 borrowed capture 在类型层就不成立，猜错任一方向都会让下游拿到
+/// 一条错误的拒绝理由。
+fn callback_bound_scope(
+    api_id: &str,
+    api_crate: Option<&bw_model::V326WitnessApiCrate>,
+    non_static_callback_max_versions: &BTreeMap<String, String>,
+) -> bw_model::V326WitnessCallbackBoundScope {
+    let boundary = non_static_callback_max_versions.get(api_id);
+    let resolved = api_crate.map(|api_crate| api_crate.version.as_str());
+    let verdict = match (boundary, resolved) {
+        (Some(boundary), Some(resolved)) => {
+            match bw_model::plain_version_at_most(resolved, boundary) {
+                Some(true) => bw_model::V326CallbackBoundVerdict::NonStatic,
+                Some(false) => bw_model::V326CallbackBoundVerdict::Static,
+                None => bw_model::V326CallbackBoundVerdict::Undecided,
+            }
+        }
+        _ => bw_model::V326CallbackBoundVerdict::Undecided,
+    };
+    bw_model::V326WitnessCallbackBoundScope {
+        verdict,
+        non_static_callback_max_version: boundary.cloned(),
+        resolved_version: resolved.map(str::to_owned),
+    }
 }
 
 /// crate_id → {依赖包名: 版本}。同名多版本共存时不猜，整条丢弃留给缺证记录。
@@ -911,27 +966,6 @@ fn edge_refs(graph: &V326LifecycleGraphV3Record, relation: &str) -> Vec<String> 
     }
 }
 
-fn write_records<T: Serialize>(path: &Path, records: &[T]) -> Result<(), CliError> {
-    let mut bytes = Vec::<u8>::new();
-    for record in records {
-        serde_json::to_writer(&mut bytes, record)
-            .map_err(|error| CliError::internal(error.to_string()))?;
-        bytes.push(b'\n');
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = File::create(path)?;
-    if path.extension().is_some_and(|extension| extension == "zst") {
-        zstd::stream::copy_encode(Cursor::new(bytes), file, 0)
-            .map_err(|error| CliError::input("BW-IO", error.to_string()))?;
-    } else {
-        let mut file = file;
-        file.write_all(&bytes)?;
-    }
-    Ok(())
-}
-
 fn write_json_file(path: &Path, value: &impl Serialize) -> Result<(), CliError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -1030,7 +1064,7 @@ mod witness_target_tests {
             "candidate:a",
             "crate:rusqlite:0.31.0",
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
-            &BTreeMap::new(),
+            &ApiMapIndex::default(),
             &BTreeMap::new(),
             None,
             None,
@@ -1048,7 +1082,7 @@ mod witness_target_tests {
                 "candidate:a",
                 "crate:rusqlite:0.31.0",
                 &BTreeMap::new(),
-                &BTreeMap::new(),
+                &ApiMapIndex::default(),
                 &BTreeMap::new(),
                 None,
                 None
@@ -1065,7 +1099,7 @@ mod witness_target_tests {
                 "candidate:a",
                 "crate:rusqlite:0.31.0",
                 &apis(&[("candidate:a", "")]),
-                &BTreeMap::new(),
+                &ApiMapIndex::default(),
                 &BTreeMap::new(),
                 None,
                 None
@@ -1082,7 +1116,7 @@ mod witness_target_tests {
                 "candidate:a",
                 "crate:rusqlite",
                 &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
-                &BTreeMap::new(),
+                &ApiMapIndex::default(),
                 &BTreeMap::new(),
                 None,
                 None
@@ -1092,16 +1126,30 @@ mod witness_target_tests {
         );
     }
 
-    fn declaring(entries: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
-        entries
-            .iter()
-            .map(|(api_id, crates)| {
-                (
-                    (*api_id).to_owned(),
-                    crates.iter().map(|name| (*name).to_owned()).collect(),
-                )
-            })
-            .collect()
+    fn declaring(entries: &[(&str, &[&str])]) -> ApiMapIndex {
+        ApiMapIndex {
+            declaring_crates: entries
+                .iter()
+                .map(|(api_id, crates)| {
+                    (
+                        (*api_id).to_owned(),
+                        crates.iter().map(|name| (*name).to_owned()).collect(),
+                    )
+                })
+                .collect(),
+            non_static_callback_max_versions: BTreeMap::new(),
+        }
+    }
+
+    /// 同 [`declaring`]，另外记录 callback bound 还不是 `'static` 的最后一个版本。
+    fn declaring_with_bound(entries: &[(&str, &[&str])], bounds: &[(&str, &str)]) -> ApiMapIndex {
+        ApiMapIndex {
+            non_static_callback_max_versions: bounds
+                .iter()
+                .map(|(api_id, version)| ((*api_id).to_owned(), (*version).to_owned()))
+                .collect(),
+            ..declaring(entries)
+        }
     }
 
     fn resolved(entries: &[(&str, &[(&str, &str)])]) -> BTreeMap<String, BTreeMap<String, String>> {
@@ -1225,19 +1273,129 @@ api_id = "api:openssl:ssl_set_ex_data:register"
 rust_path = "openssl_sys::SSL_set_ex_data"
 contract_api_id = "api:register"
 callback_family = "openssl_ex_data"
+
+[[apis]]
+api_id = "api:rusqlite:update_hook:register"
+rust_path = "rusqlite::Connection::update_hook"
+contract_api_id = "api:register"
+callback_family = "sqlite_update_hook"
+non_static_callback_max_version = "0.26.1"
 "#,
         )
         .expect("temp api map should be written");
 
-        let declaring = load_api_declaring_crates(&[temp.clone()]).expect("api map should load");
+        let index = load_api_map_index(&[temp.clone()]).expect("api map should load");
         fs::remove_file(&temp).ok();
 
         assert_eq!(
-            declaring
+            index
+                .declaring_crates
                 .get("api:openssl:ssl_set_ex_data:register")
                 .map(|crates| crates.iter().cloned().collect::<Vec<_>>()),
             Some(vec!["openssl_sys".to_owned()]),
             "the provider crate is the rust_path's first segment"
         );
+        // 两张索引必须来自同一次读取。边界漏读时下游只会静默退回"不可判定"。
+        assert_eq!(
+            index
+                .non_static_callback_max_versions
+                .get("api:rusqlite:update_hook:register")
+                .map(String::as_str),
+            Some("0.26.1"),
+            "the api map's callback bound boundary must reach the index"
+        );
+        assert!(
+            !index
+                .non_static_callback_max_versions
+                .contains_key("api:openssl:ssl_set_ex_data:register"),
+            "an entry without a declared boundary must not gain one"
+        );
+    }
+
+    #[test]
+    fn scopes_the_callback_bound_against_the_resolved_api_crate_version() {
+        let api_id = "api:rusqlite:update_hook:register";
+        let bound = |version: &str| {
+            witness_target_from_parts(
+                "candidate:a",
+                "crate:bw_app:0.1.0",
+                &apis(&[("candidate:a", api_id)]),
+                &declaring_with_bound(&[(api_id, &["rusqlite"])], &[(api_id, "0.26.1")]),
+                &resolved(&[("crate:bw_app:0.1.0", &[("rusqlite", version)])]),
+                None,
+                None,
+            )
+            .expect("the plan must bind")
+            .callback_bound_scope
+            .expect("the bound verdict is always recorded")
+        };
+
+        let non_static = bound("0.26.1");
+        assert_eq!(
+            non_static.verdict,
+            bw_model::V326CallbackBoundVerdict::NonStatic
+        );
+        assert_eq!(
+            non_static.non_static_callback_max_version.as_deref(),
+            Some("0.26.1")
+        );
+        assert_eq!(non_static.resolved_version.as_deref(), Some("0.26.1"));
+
+        // 0.26.2 起 bound 收紧为 `'static`，borrowed capture 在类型层就不成立。
+        assert_eq!(
+            bound("0.26.2").verdict,
+            bw_model::V326CallbackBoundVerdict::Static
+        );
+        assert_eq!(
+            bound("0.31.0").verdict,
+            bw_model::V326CallbackBoundVerdict::Static
+        );
+        // 非纯三段数字版本排序规则不是逐段比较，猜一个方向会让判定悄悄出错。
+        assert_eq!(
+            bound("0.26.2-rc.1").verdict,
+            bw_model::V326CallbackBoundVerdict::Undecided
+        );
+    }
+
+    #[test]
+    fn leaves_the_callback_bound_undecided_without_a_boundary_or_a_version() {
+        let api_id = "api:rusqlite:update_hook:register";
+        // 没记过边界：不能当成"处处适用"，也不能当成"处处不适用"。
+        let no_boundary = witness_target_from_parts(
+            "candidate:a",
+            "crate:bw_app:0.1.0",
+            &apis(&[("candidate:a", api_id)]),
+            &declaring(&[(api_id, &["rusqlite"])]),
+            &resolved(&[("crate:bw_app:0.1.0", &[("rusqlite", "0.26.1")])]),
+            None,
+            None,
+        )
+        .expect("the plan must bind")
+        .callback_bound_scope
+        .expect("the bound verdict is always recorded");
+        assert_eq!(
+            no_boundary.verdict,
+            bw_model::V326CallbackBoundVerdict::Undecided
+        );
+        assert_eq!(no_boundary.non_static_callback_max_version, None);
+
+        // 提供方版本没解析出来：同样是缺证，不是"不适用"。
+        let no_version = witness_target_from_parts(
+            "candidate:a",
+            "crate:bw_app:0.1.0",
+            &apis(&[("candidate:a", api_id)]),
+            &declaring_with_bound(&[(api_id, &["rusqlite"])], &[(api_id, "0.26.1")]),
+            &BTreeMap::new(),
+            None,
+            None,
+        )
+        .expect("the plan must bind")
+        .callback_bound_scope
+        .expect("the bound verdict is always recorded");
+        assert_eq!(
+            no_version.verdict,
+            bw_model::V326CallbackBoundVerdict::Undecided
+        );
+        assert_eq!(no_version.resolved_version, None);
     }
 }

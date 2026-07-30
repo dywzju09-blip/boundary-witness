@@ -72,6 +72,61 @@ fn callback_retention_api_map_rejects_unknown_fields_and_invalid_schema() {
     assert!(CallbackRetentionApiMap::from_toml_str(&invalid_schema).is_err());
 }
 
+/// 写了却解析不出来的边界比没写更糟：下游会把它当成一条已知边界去比较，比不出来就
+/// 静默退回"不可判定"，而 map 作者以为自己已经声明过了。
+#[test]
+fn callback_retention_api_map_rejects_an_unparseable_callback_bound_boundary() {
+    let api_map = fixture_api_map();
+    assert!(
+        api_map.contains("non_static_callback_max_version = \"0.26.1\""),
+        "the rusqlite map is expected to declare the callback bound boundary"
+    );
+
+    for bad in ["0.26", "0.26.1.2", "0.26.1-rc.1", "v0.26.1", "latest"] {
+        let invalid = api_map.replacen(
+            "non_static_callback_max_version = \"0.26.1\"",
+            &format!("non_static_callback_max_version = \"{bad}\""),
+            1,
+        );
+        assert!(
+            CallbackRetentionApiMap::from_toml_str(&invalid).is_err(),
+            "{bad} is not a plain three-part version and must be rejected at load time"
+        );
+    }
+}
+
+/// 边界与实际版本的比较必须逐段按数字，不能按字符串——`"0.9.0" > "0.26.1"` 按字典序成立，
+/// 按版本序不成立。方向搞反会让已修复版本被判成仍不健全。
+#[test]
+fn plain_version_comparison_is_numeric_per_segment() {
+    use bw_model::{parse_plain_version, plain_version_at_most};
+
+    assert_eq!(parse_plain_version("0.26.1"), Some((0, 26, 1)));
+    assert_eq!(parse_plain_version("1.0.0"), Some((1, 0, 0)));
+
+    // 段数不对、带符号、带 pre-release/build 后缀都必须拒绝：那些版本的排序规则不是
+    // 逐段数字比较，猜一个顺序会让"在不在范围内"悄悄出错。
+    for bad in [
+        "0.26",
+        "0.26.1.2",
+        "0.26.1-rc.1",
+        "0.26.1+deadbeef",
+        "0.+7.1",
+    ] {
+        assert_eq!(parse_plain_version(bad), None, "{bad} must not parse");
+    }
+
+    assert_eq!(plain_version_at_most("0.26.1", "0.26.1"), Some(true));
+    assert_eq!(plain_version_at_most("0.26.0", "0.26.1"), Some(true));
+    assert_eq!(plain_version_at_most("0.25.3", "0.26.1"), Some(true));
+    assert_eq!(plain_version_at_most("0.26.2", "0.26.1"), Some(false));
+    assert_eq!(plain_version_at_most("0.9.0", "0.26.1"), Some(true));
+    assert_eq!(plain_version_at_most("0.40.1", "0.26.1"), Some(false));
+    // 任一侧解析不出来时返回 None，由调用方记成缺证。
+    assert_eq!(plain_version_at_most("0.26.2-rc.1", "0.26.1"), None);
+    assert_eq!(plain_version_at_most("0.26.1", "0.26"), None);
+}
+
 #[test]
 fn callback_retention_contract_rejects_unresolved_clause_reference() {
     let invalid = fixture_contract().replacen(
@@ -551,6 +606,67 @@ fn v3_2_x_schemas_cover_static_lifecycle_candidate_shapes() {
         &freeze_schema,
         "schemas/v3-3/scanner-freeze.schema.json",
         "ranked_candidates_sha256",
+    );
+}
+
+/// schema 与模型脱节时，`additionalProperties: false` 会让真实产物校验失败，而单元
+/// 测试仍然全绿——`api_crate` 与 `observed_shape` 就是这样漏了两轮才被发现。
+///
+/// 这里不维护手写字段清单：把模型**序列化出来的每个键**与 schema 声明的属性双向比对，
+/// 任何一侧新增字段而另一侧没跟上都会当场失败。
+#[test]
+fn witness_plan_schema_declares_exactly_the_serialized_target_fields() {
+    let target = bw_model::V326WitnessTarget {
+        api_id: "api:rusqlite:update_hook:register".to_owned(),
+        crate_name: "some_app".to_owned(),
+        crate_version: "0.1.0".to_owned(),
+        api_crate: Some(bw_model::V326WitnessApiCrate {
+            name: "rusqlite".to_owned(),
+            version: "0.26.1".to_owned(),
+        }),
+        callback_bound_scope: Some(bw_model::V326WitnessCallbackBoundScope {
+            verdict: bw_model::V326CallbackBoundVerdict::NonStatic,
+            non_static_callback_max_version: Some("0.26.1".to_owned()),
+            resolved_version: Some("0.26.1".to_owned()),
+        }),
+        registration_source_ref: Some(bw_model::V326SourceRef {
+            path: "src/lib.rs".to_owned(),
+            line_start: None,
+            line_end: None,
+            symbol_path: None,
+            text_sha256: None,
+        }),
+        observed_shape: Some(bw_model::V326WitnessObservedShape {
+            pattern_family: bw_model::V32PatternFamily::RetainedBorrowedCallback,
+            release_observed: true,
+            release_before_callback_use: false,
+            callback_use_after_release: false,
+            unproven: Vec::new(),
+        }),
+    };
+
+    let serialized = serde_json::to_value(&target).expect("target should serialize");
+    let serialized_keys = serialized
+        .as_object()
+        .expect("a target serializes to an object")
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let schema = read_schema(&root, "schemas/v3-2-6/witness-plan.schema.json");
+    let declared_keys = schema["$defs"]["target"]["properties"]
+        .as_object()
+        .expect("the target definition declares properties")
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(
+        serialized_keys, declared_keys,
+        "witness-plan.schema.json's target must declare exactly the fields \
+         V326WitnessTarget serializes; additionalProperties is false, so a missing \
+         declaration rejects real output while every unit test stays green"
     );
 }
 

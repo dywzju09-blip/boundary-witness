@@ -98,6 +98,24 @@ fn callback_site_fixture_emits_mir_site_facts() {
         )),
         "create_scalar_function registration should be classified"
     );
+    // 分类出 registration 还不够。callback 实参索引指错时 registration 照样成立，只是
+    // callback_site_id 恒为 None，下游按 callback 身份串链的层全部静默断掉。
+    assert!(
+        facts.iter().any(|fact| matches!(
+            fact,
+            StaticFactEnvelope {
+                source_ref: Some(source_ref),
+                payload: StaticFact::RegistrationSite(registration),
+                ..
+            } if registration.api_id == "api:rusqlite:create_scalar_function:register"
+                && source_ref
+                    .symbol_path
+                    .as_deref()
+                    .is_some_and(|path| path.ends_with("scalar_registration_site"))
+                && registration.callback_site_id.is_some()
+        )),
+        "create_scalar_function registration must resolve the callback it registers"
+    );
     let foreign_destructor_user_data_site_ids = facts
         .iter()
         .filter_map(|fact| match fact {

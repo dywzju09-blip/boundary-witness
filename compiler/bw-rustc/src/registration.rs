@@ -309,8 +309,11 @@ pub fn callback_argument_indices_with_api_maps(
     if rusqlite_set_callback_with_user_data_call_path(&canonical, context) {
         return vec![1];
     }
+    // `create_scalar_function(&self, fn_name, n_arg, flags, x_func)`：MIR 实参把 receiver 算作 0，
+    // 所以 callback 是 4。指到 2 会落在 `n_arg: c_int` 上，registration 仍然分类得出来，
+    // 但 callback 身份恒为 None——下游按 callback 身份串链的层就全部断掉且不报错。
     if rusqlite_create_scalar_function_call_path(&canonical, context) {
-        return vec![2];
+        return vec![4];
     }
     if rusqlite_sqlite3_update_hook_ffi_path(&canonical) {
         return vec![1];

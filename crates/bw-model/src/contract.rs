@@ -150,6 +150,14 @@ pub struct CallbackRetentionApiMapEntry {
     pub callback_arg_indices: Vec<usize>,
     #[serde(default)]
     pub user_data_arg_indices: Vec<usize>,
+    /// 该 API 的 callback bound 还**不是** `'static` 的最后一个声明方版本。
+    ///
+    /// 库把 bound 收紧到 `'static` 之后，borrowed capture 这一形状在该版本上根本不成立，
+    /// 按它写的 harness 连编译都过不去。没有这个字段时，任何版本上的注册都会被当成
+    /// "模板适用"，拒绝理由于是退化成"这个版本没 vendored"——那是错的引导：vendored 了
+    /// 也生成不出来。缺省 `None` 表示没记录过这条边界，判定为不可判定而不是"处处适用"。
+    #[serde(default)]
+    pub non_static_callback_max_version: Option<String>,
     #[serde(default)]
     pub notes: String,
 }
@@ -206,6 +214,19 @@ impl CallbackRetentionApiMap {
                 return Err(ModelError::validation(
                     "BW-CONTRACT-API-MAP-API-ID-DUPLICATE",
                     format!("api map 中 api_id {} 重复", entry.api_id),
+                ));
+            }
+            // 写了却解析不出来的边界比没写更糟：下游会把它当成一条已知边界去比较，
+            // 比不出来就静默退回"不可判定"，而 map 作者以为自己已经声明过了。
+            if let Some(boundary) = &entry.non_static_callback_max_version
+                && parse_plain_version(boundary).is_none()
+            {
+                return Err(ModelError::validation(
+                    "BW-CONTRACT-API-MAP-NON-STATIC-CALLBACK-MAX-VERSION",
+                    format!(
+                        "API {} 的 non_static_callback_max_version 必须是纯三段数字版本，实际是 {boundary}",
+                        entry.api_id
+                    ),
                 ));
             }
             let has_opaque_metadata = entry.opaque_handle_role.is_some()
@@ -430,4 +451,30 @@ fn require_nonempty(field: &str, value: &str) -> Result<(), ModelError> {
         ));
     }
     Ok(())
+}
+
+/// 解析 `x.y.z` 形式的纯三段数字版本。
+///
+/// 只接受三段十进制数字。带 pre-release / build 后缀（`1.0.0-rc.1`、`1.0.0+deadbeef`）时
+/// 返回 `None`：那些版本的排序规则不是逐段数字比较，猜一个顺序会让"在不在范围内"
+/// 这种判定悄悄出错，宁可让调用方记成不可判定。
+pub fn parse_plain_version(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.');
+    let mut next = || -> Option<u64> {
+        let part = parts.next()?;
+        // `parse::<u64>` 会接受 `+7`；版本段不允许符号。
+        part.bytes()
+            .all(|byte| byte.is_ascii_digit())
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
+    };
+    let major = next()?;
+    let minor = next()?;
+    let patch = next()?;
+    parts.next().is_none().then_some((major, minor, patch))
+}
+
+/// `version` 是否落在 `max_version`（含）以内。任一侧解析不出来时返回 `None`。
+pub fn plain_version_at_most(version: &str, max_version: &str) -> Option<bool> {
+    Some(parse_plain_version(version)? <= parse_plain_version(max_version)?)
 }

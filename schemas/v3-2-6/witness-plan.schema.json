@@ -133,8 +133,59 @@
           "type": "string",
           "minLength": 1
         },
+        "api_crate": {
+          "$ref": "#/$defs/api_crate"
+        },
+        "callback_bound_scope": {
+          "$ref": "#/$defs/callback_bound_scope"
+        },
         "registration_source_ref": {
           "type": "object"
+        },
+        "observed_shape": {
+          "type": "object"
+        }
+      }
+    },
+    "api_crate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "callback_bound_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict"
+      ],
+      "properties": {
+        "verdict": {
+          "enum": [
+            "non_static",
+            "static",
+            "undecided"
+          ]
+        },
+        "non_static_callback_max_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resolved_version": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

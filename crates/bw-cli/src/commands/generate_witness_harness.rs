@@ -144,6 +144,12 @@ const REASON_NO_OBSERVED_SHAPE: &str = "no_observed_shape_to_reproduce";
 const REASON_PATTERN_NOT_REPRODUCIBLE: &str = "pattern_family_not_reproducible";
 /// 静态侧没观察到"owner 在 callback 仍注册时释放"，harness 结构上造不出要见证的序列。
 const REASON_NO_RELEASE_ORDERING: &str = "no_release_ordering_observed";
+/// 解析到的版本上 callback bound 已经是 `'static`，borrowed capture 在类型层就不成立。
+///
+/// 这条必须先于 vendoring 检查判定。顺序反了会报成"这个版本没 vendored"，暗示
+/// "补上 vendor 就能验证"——而真相是补了也生成不出来，那个形状在该版本上不存在。
+/// 拒绝理由指错方向，比不给理由更浪费人。
+const REASON_CALLBACK_BOUND_IS_STATIC: &str = "callback_bound_tightened_to_static";
 
 pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> {
     let plans = read_jsonl::<V326WitnessPlanRecord>(&args.plans, args.max_line_bytes)?;
@@ -247,6 +253,27 @@ fn generate_one(
         return Err(refusal(
             REASON_UNSUPPORTED_VERSION,
             format!("no harness links against {}", api_crate.name),
+        ));
+    }
+    // 先判形状是否存在，再判能不能链接。库把 bound 收紧到 `'static` 之后，borrowed
+    // capture 连编译都过不去；此时报"没 vendored"会把人引向"补个 vendor 再试"，
+    // 而那条路是死的。两个检查的顺序本身就是结论的一部分。
+    if let Some(scope) = &target.callback_bound_scope
+        && scope.verdict == bw_model::V326CallbackBoundVerdict::Static
+    {
+        return Err(refusal(
+            REASON_CALLBACK_BOUND_IS_STATIC,
+            format!(
+                "{} {} bounds the callback by 'static (the bound is non-'static only through {}), \
+                 so a borrowed-capture harness cannot type-check there; vendoring the version \
+                 would not change this",
+                api_crate.name,
+                api_crate.version,
+                scope
+                    .non_static_callback_max_version
+                    .as_deref()
+                    .unwrap_or("an unrecorded version"),
+            ),
         ));
     }
     // 能链接哪些版本由 vendor 目录决定。声明一个没 vendored 的版本时 patch 不生效，
@@ -702,6 +729,9 @@ mod tests {
         }
     }
 
+    /// 默认不带 bound 判定，其余检查因此保持原有行为。要测 bound 这条路径的用
+    /// [`target_with_bound_verdict`]，不要给这里加默认值——那会让其他测试的拒绝
+    /// 理由悄悄换成 bound，掩盖它们本来要断言的东西。
     fn target(api_id: &str, version: &str) -> V326WitnessTarget {
         V326WitnessTarget {
             api_id: api_id.to_owned(),
@@ -711,8 +741,24 @@ mod tests {
                 name: "rusqlite".to_owned(),
                 version: version.to_owned(),
             }),
+            callback_bound_scope: None,
             registration_source_ref: None,
             observed_shape: Some(shape(true, true)),
+        }
+    }
+
+    fn target_with_bound_verdict(
+        api_id: &str,
+        version: &str,
+        verdict: bw_model::V326CallbackBoundVerdict,
+    ) -> V326WitnessTarget {
+        V326WitnessTarget {
+            callback_bound_scope: Some(bw_model::V326WitnessCallbackBoundScope {
+                verdict,
+                non_static_callback_max_version: Some("0.26.1".to_owned()),
+                resolved_version: Some(version.to_owned()),
+            }),
+            ..target(api_id, version)
         }
     }
 
@@ -970,6 +1016,90 @@ mod tests {
             "the refusal must say what can be linked instead: {}",
             refusal.detail
         );
+    }
+
+    /// 判定顺序本身就是结论。这个版本**同时**满足两个拒绝条件：bound 已收紧，且没
+    /// vendored。必须报 bound——报"没 vendored"会把人引向"补个 vendor 再试"，而那条
+    /// 路是死的：0.26.2 起 borrowed capture 连编译都过不去。
+    ///
+    /// 把 `REASON_CALLBACK_BOUND_IS_STATIC` 的检查挪到 vendoring 检查之后，本测试必须失败。
+    #[test]
+    fn a_tightened_callback_bound_is_reported_before_the_vendoring_gap() {
+        let temp = tempfile::tempdir().unwrap();
+        let unvendored_and_static = "0.99.0";
+        assert!(
+            !vendored_rusqlite_versions(&repo_root()).contains(unvendored_and_static),
+            "this test needs a version that also fails the vendoring check"
+        );
+
+        let plan = plan(
+            "witness-plan:candidate:bound-tightened",
+            Some(target_with_bound_verdict(
+                "api:rusqlite:update_hook:register",
+                unvendored_and_static,
+                bw_model::V326CallbackBoundVerdict::Static,
+            )),
+        );
+        let refusal = generate_one(
+            temp.path(),
+            &repo_root(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect_err("a 'static-bounded callback cannot host a borrowed capture");
+
+        assert_eq!(
+            refusal.reason, REASON_CALLBACK_BOUND_IS_STATIC,
+            "the shape is absent on this version; vendoring it would not help, so the vendoring \
+             gap must not be the reported reason"
+        );
+        assert!(
+            refusal.detail.contains("0.26.1"),
+            "the refusal must name the boundary it compared against: {}",
+            refusal.detail
+        );
+    }
+
+    /// 边界以内的版本不该被这条检查拦下，否则它就退化成"永远拒绝"。
+    #[test]
+    fn a_non_static_callback_bound_does_not_refuse_the_plan() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan(
+            "witness-plan:candidate:bound-non-static",
+            Some(target_with_bound_verdict(
+                "api:rusqlite:update_hook:register",
+                "0.26.1",
+                bw_model::V326CallbackBoundVerdict::NonStatic,
+            )),
+        );
+        generate_one(
+            temp.path(),
+            &repo_root(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect("0.26.1 still accepts a non-'static callback and is vendored");
+    }
+
+    /// 判不了就不是拒绝理由。缺边界记录时按"不适用"拒绝会凭空造出一条结论。
+    #[test]
+    fn an_undecided_callback_bound_does_not_refuse_the_plan() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan(
+            "witness-plan:candidate:bound-undecided",
+            Some(target_with_bound_verdict(
+                "api:rusqlite:update_hook:register",
+                "0.26.1",
+                bw_model::V326CallbackBoundVerdict::Undecided,
+            )),
+        );
+        generate_one(
+            temp.path(),
+            &repo_root(),
+            &plan,
+            plan.target.as_ref().unwrap(),
+        )
+        .expect("an undecided bound is missing evidence, not a refusal");
     }
 
     #[test]
