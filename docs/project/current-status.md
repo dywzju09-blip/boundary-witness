@@ -15,6 +15,8 @@
 | `Implemented` | returned-borrow exact claimant | 共享事实只接受唯一 exact anchor；迁移后仍需完整回归复验 |
 | `Implemented` | object-chain proof-layer split | identity、ordering、complete risk chain 已分层；迁移后仍需完整回归复验 |
 | `Implemented` | runtime、oracle 与 fuzz observer 基础 | 组件测试通过；不是任意候选 executor |
+| `Implemented` | 返回借用寿命不受输入约束的定义点识别 | `unconstrained_return_lifetime_relation` 从 HIR 签名判定，无需 API map |
+| `Planned` | 回调注册 API 的自动识别（阶段 B） | 当前依赖人工 API map 声明哪些 API 属于回调注册及其 bound 版本边界；接入新组件必须先手写 map。见 [范围与边界 §2.3](scope-and-boundaries.md) |
 | `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状，尚未达到普遍能力 |
 | `Planned` | 通用 dynamic witness executor | witness plan 到自动 harness/executor/receipt 的闭环不完整 |
 | `Blocked` | V3.3、约 100 crate pilot、sealed holdout | clean method commit、完整 public regression、pilot、freeze 与新 sealed smoke 尚未全部完成 |

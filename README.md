@@ -4,7 +4,9 @@
 
 BoundaryWitness 是面向 Rust-C 生命周期边界的可审计分析与验证工程。它从源码、MIR、Contract 和运行事件中提取中性证据，组织 candidate-scoped 对象链、排序和 witness plan，并为受控动态验证提供可回查输入。
 
-项目当前定位是 **V3.2.x core-effect hardening**。公开仓库用于保存源码、Schema、Contract、小型 fixtures、公开实验配置和正式文档；大型数据、sealed holdout、私有 run 和未披露候选不进入 Git。
+**最终目标是在 Rust 组件中自动发现未知（0-day）生命周期缺陷。** 扫描对象是 Rust 组件（crate + 版本）本身，不是使用该组件的应用——缺陷在于组件的安全 API 允许 UB，与是否已有应用踩中无关；需要具体触发实例时由 witness harness 生成。已知 n-day 在本项目中是**度量检出与证明能力的仪器**，不是交付目标。
+
+项目当前定位是 **V3.2.x core-effect hardening**，处于通往上述目标的第一阶段：先把「已知不健全的组件能否被证明出来」做扎实。公开仓库用于保存源码、Schema、Contract、小型 fixtures、公开实验配置和正式文档；大型数据、sealed holdout、私有 run 和未披露候选不进入 Git。
 
 ## 当前状态
 
@@ -14,9 +16,9 @@ V3.3 gate 未通过。当前工作树中的静态主链、proof-layer split、op
 
 ## 能力与非目标
 
-BoundaryWitness 当前能定位 Rust-C 边界，生成生命周期敏感候选，提取 compiler/static facts，构建 graph-v3 proof layers，执行 ranking/pair comparison，并为动态验证生成 witness plan。
+BoundaryWitness 当前能定位 Rust-C 边界，生成生命周期敏感候选，提取 compiler/static facts，构建 graph-v3 proof layers，执行 ranking/pair comparison，并为动态验证生成 witness plan。其中候选定位在回调家族上**仅覆盖 API map 已声明的 API**；返回借用寿命不受约束这一类则可从签名自动识别，无需 API map。
 
-它当前不承诺通用 0-day 自动发现、静态候选直接确认漏洞、任意深度全程序 points-to、任意候选自动 harness、可利用性评估或 V3.3 已通过。范围边界见 [scope and boundaries](docs/project/scope-and-boundaries.md)。
+它当前不承诺通用 0-day 自动发现、自动识别未经 API map 声明的回调注册 API、静态候选直接确认漏洞、任意深度全程序 points-to、任意候选自动 harness、可利用性评估或 V3.3 已通过。其中前两项是路线上的目标而非放弃的方向，其余是范围之外。范围边界见 [scope and boundaries](docs/project/scope-and-boundaries.md)，能力主线见 [roadmap](docs/roadmap/roadmap.md)。
 
 ## 工作原理
 
@@ -49,8 +51,7 @@ source / fixture
 | `bw-blind-model` | 匿名 N-day public pack、policy、observation 和 receipt 模型 |
 | `bw-blind-curator` | curator-only pack、ground truth、reveal 和 gate decision |
 | `bw-blind-runner` | 匿名 pack 审计、隔离执行、输出扫描和 provenance |
-| `bw-rusqlite-v3-adapter` | rusqlite 匿名 N-day observation adapter |
-| `bw-v3-nday-adapter` | 通用 V3 N-day observation adapter |
+| `bw-v3-nday-adapter` | 匿名 N-day observation adapter；两个 bin 分别是通用形态 `bw-v3-nday-adapter` 与 rusqlite 形态 `bw-rusqlite-v3-adapter`，差别只有一组身份常量 |
 | `compiler/bw-rustc` | 基于 rustc_private/MIR 的静态事实和 ObjectFlow 提取 |
 
 详细目录职责见 [repository layout](docs/development/repository-layout.md)。

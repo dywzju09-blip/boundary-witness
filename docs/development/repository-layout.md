@@ -31,8 +31,7 @@
 | `bw-blind-model` | 匿名 N-day public pack、policy、observation 和 receipt 模型 |
 | `bw-blind-curator` | curator-only pack、ground truth、reveal 和 gate decision |
 | `bw-blind-runner` | 匿名 pack 审计、隔离执行、输出扫描和 provenance |
-| `bw-rusqlite-v3-adapter` | rusqlite 匿名 N-day observation adapter |
-| `bw-v3-nday-adapter` | 通用 V3 N-day observation adapter |
+| `bw-v3-nday-adapter` | 匿名 N-day observation adapter。两个 bin：`bw-v3-nday-adapter`（通用）与 `bw-rusqlite-v3-adapter`（rusqlite）。两者共用同一份实现，差别仅是 `AdapterIdentity` 一组常量（公开签名域、case root 环境变量、witness schema_version）；这三个值进入 checksum 与产物，由 `tests/identity_pinning.rs` 钉死 |
 | `compiler/bw-rustc` | 基于 rustc_private/MIR 的静态事实和 ObjectFlow 提取 |
 
 ## 目录约束
