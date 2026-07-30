@@ -188,6 +188,9 @@ fn pattern_family_from_boundary(kind: V32BoundaryKind) -> Option<V32PatternFamil
         V32BoundaryKind::NativeLibrary => Some(V32PatternFamily::NativeLibraryBoundary),
         V32BoundaryKind::ReturnedBorrow => Some(V32PatternFamily::ReturnedBorrowView),
         V32BoundaryKind::ExternalBuffer => Some(V32PatternFamily::ExternalBufferView),
+        // 覆盖缺口不产生候选。把它变成候选等于凭空造出一个"值得分析的位置"，
+        // 而我们恰恰不知道那里是什么形状。
+        V32BoundaryKind::UnsupportedCallbackShape => None,
         V32BoundaryKind::NegativeSummary => None,
     }
 }
@@ -221,7 +224,9 @@ fn confidence_from_boundary(
                 V32CandidateConfidence::StaticOnly
             }
         }
-        V32BoundaryKind::NegativeSummary => V32CandidateConfidence::LowPriority,
+        V32BoundaryKind::UnsupportedCallbackShape | V32BoundaryKind::NegativeSummary => {
+            V32CandidateConfidence::LowPriority
+        }
     }
 }
 
@@ -254,6 +259,7 @@ fn boundary_kind_slug(kind: V32BoundaryKind) -> &'static str {
         V32BoundaryKind::OpaqueHandleTransfer => "opaque_handle_transfer",
         V32BoundaryKind::ReturnedBorrow => "returned_borrow",
         V32BoundaryKind::ExternalBuffer => "external_buffer",
+        V32BoundaryKind::UnsupportedCallbackShape => "unsupported_callback_shape",
         V32BoundaryKind::NegativeSummary => "negative_summary",
     }
 }

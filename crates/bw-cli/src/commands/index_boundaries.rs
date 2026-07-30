@@ -50,6 +50,11 @@ struct ContractApiMethod {
     method: String,
     api_path: String,
     role: bw_model::RegistrationRole,
+    /// callback 形参是否是 `Option<F>`，取自 API map。
+    ///
+    /// 只有这类 API 才能靠实参文本区分注册与注销（`Some(f)` / `None`）。对不用
+    /// `Option` 的 API 强求 `Some(`，调用点永远匹配不上。
+    callback_argument_is_optional: bool,
 }
 
 #[derive(Serialize)]
@@ -58,6 +63,8 @@ struct IndexBoundariesOutput {
     crate_count: u64,
     boundary_count: u64,
     negative_count: u64,
+    /// 调用了声明的 API 但形状分类不出来的次数。覆盖缺口，不计入 `boundary_count`。
+    unsupported_shape_count: u64,
     skipped_count: u64,
     output: String,
 }
@@ -130,16 +137,23 @@ pub fn run(args: IndexBoundariesArgs) -> Result<CommandStatus, CliError> {
     }))?;
     write_records(&args.output, &records)?;
 
-    let boundary_count = records
+    // 覆盖缺口单独计数，不并进 boundary_count。把"看不懂的调用点"算成"找到的边界"
+    // 会让摘要虚高，而缺口恰恰是需要被看见的那个数。
+    let unsupported_shape_count = records
         .iter()
-        .filter(|record| record.boundary_kind != V32BoundaryKind::NegativeSummary)
+        .filter(|record| record.boundary_kind == V32BoundaryKind::UnsupportedCallbackShape)
         .count() as u64;
-    let negative_count = records.len() as u64 - boundary_count;
+    let negative_count = records
+        .iter()
+        .filter(|record| record.boundary_kind == V32BoundaryKind::NegativeSummary)
+        .count() as u64;
+    let boundary_count = records.len() as u64 - negative_count - unsupported_shape_count;
     let summary = IndexBoundariesOutput {
         kind: "v3-2-boundary-index",
         crate_count,
         boundary_count,
         negative_count,
+        unsupported_shape_count,
         skipped_count,
         output: args.output.display().to_string(),
     };
@@ -368,16 +382,31 @@ fn load_contract_apis(paths: &[PathBuf]) -> Result<Vec<ContractApiMethod>, CliEr
                 method,
                 api_path: entry.rust_path.clone(),
                 role,
+                callback_argument_is_optional: entry.callback_argument_is_optional,
             });
         }
     }
+    // role 必须参与排序与去重。`update_hook` 的注册与注销条目 `rust_path` 相同，
+    // 只按 (api_path, method) 去重会丢掉其中一个角色，于是该方法的另一半调用
+    // 永远分类不出来。
     methods.sort_by(|left, right| {
         left.api_path
             .cmp(&right.api_path)
             .then(left.method.cmp(&right.method))
+            .then_with(|| registration_role_slug(left.role).cmp(registration_role_slug(right.role)))
     });
-    methods.dedup_by(|left, right| left.api_path == right.api_path && left.method == right.method);
+    methods.dedup_by(|left, right| {
+        left.api_path == right.api_path && left.method == right.method && left.role == right.role
+    });
     Ok(methods)
+}
+
+fn registration_role_slug(role: bw_model::RegistrationRole) -> &'static str {
+    match role {
+        bw_model::RegistrationRole::Register => "register",
+        bw_model::RegistrationRole::Unregister => "unregister",
+        bw_model::RegistrationRole::Replace => "replace",
+    }
 }
 
 fn scan_source_lines(
@@ -395,7 +424,7 @@ fn scan_source_lines(
             );
             hits.entry(key).or_insert(hit);
         }
-        for hit in classify_contract_api_call(line, contract_apis) {
+        for hit in classify_contract_api_call(lines, index, contract_apis) {
             let key = (
                 hit.kind,
                 hit.evidence.path.clone(),
@@ -422,32 +451,72 @@ fn scan_source_lines(
 /// 只按方法名匹配（`rust_path` 的最后一段），因此是 source-level 启发式，confidence
 /// 记为 medium：候选不是结论，后续 compiler 事实与 contract 审计才决定是否成链。
 /// 匹配面被 API map 限定，未声明的方法一律不产生 hit。
+///
+/// 实参取自 [`foreign_call_context`] 的多行窗口，不是单行。`create_scalar_function(`
+/// 后面就换行，实参在下一行——只看调用所在那一行的话，实参是空串，判别式必然落空。
+///
+/// 判别式只对 `Option<F>` 形状的 API 生效。这类 API（rusqlite 的三个 hook）同一个
+/// 方法既是注册又是注销，只能靠 `Some(` / `None` 分辨；直接收闭包的 API 没有也不需要
+/// 这个判别式。声明了却分类不出来时产出 [`V32BoundaryKind::UnsupportedCallbackShape`]
+/// ——这是覆盖缺口，必须记录，不能一路落到 negative summary 变成"这个 crate 干净"。
 fn classify_contract_api_call(
-    line: &SourceLine,
+    lines: &[SourceLine],
+    index: usize,
     contract_apis: &[ContractApiMethod],
 ) -> Vec<BoundaryHit> {
-    let text = &line.text;
+    let line = &lines[index];
     let mut hits = Vec::new();
     for api in contract_apis {
         let needle = format!(".{}(", api.method);
-        let Some(position) = text.find(&needle) else {
+        let Some(position) = line.text.find(&needle) else {
             continue;
         };
-        let arguments = &text[position + needle.len()..];
-        let kind = match api.role {
-            bw_model::RegistrationRole::Register | bw_model::RegistrationRole::Replace => {
-                // 注册必须带一个 callback；`None` 是注销而不是注册。
-                if !arguments.contains("Some(") {
-                    continue;
+        // 单行窗口先看本行剩余部分；调用跨行时补上配平括号为止的后续行。
+        let same_line_arguments = &line.text[position + needle.len()..];
+        let context = foreign_call_context(lines, index);
+        let arguments = match context.find(&needle) {
+            Some(context_position) => context[context_position + needle.len()..].to_owned(),
+            None => same_line_arguments.to_owned(),
+        };
+
+        let kind = if api.callback_argument_is_optional {
+            let registers = arguments.contains("Some(");
+            let unregisters = arguments.contains("None");
+            match (api.role, registers, unregisters) {
+                (
+                    bw_model::RegistrationRole::Register | bw_model::RegistrationRole::Replace,
+                    true,
+                    _,
+                ) => V32BoundaryKind::CallbackRegistration,
+                (bw_model::RegistrationRole::Unregister, _, true) => {
+                    V32BoundaryKind::CallbackUnregistration
                 }
-                V32BoundaryKind::CallbackRegistration
+                // 该角色的判别式不成立：这个调用属于同一方法的另一个角色，由那一条
+                // 条目分类。不是缺口。
+                (
+                    bw_model::RegistrationRole::Register | bw_model::RegistrationRole::Replace,
+                    ..,
+                )
+                | (bw_model::RegistrationRole::Unregister, ..) => continue,
             }
-            bw_model::RegistrationRole::Unregister => {
-                if !arguments.contains("None") {
-                    continue;
+        } else if arguments.trim().is_empty() {
+            // 声明了这个 API，但连实参窗口都取不到（跨行超出窗口上限、或宏展开）。
+            // 记成缺口而不是丢弃。
+            V32BoundaryKind::UnsupportedCallbackShape
+        } else {
+            match api.role {
+                bw_model::RegistrationRole::Register | bw_model::RegistrationRole::Replace => {
+                    V32BoundaryKind::CallbackRegistration
                 }
-                V32BoundaryKind::CallbackUnregistration
+                bw_model::RegistrationRole::Unregister => V32BoundaryKind::CallbackUnregistration,
             }
+        };
+
+        let note = if kind == V32BoundaryKind::UnsupportedCallbackShape {
+            "call to a declared API whose call-site shape could not be classified; \
+             recorded as a coverage gap rather than a clean result"
+        } else {
+            "call to an API declared by the callback-retention contract map"
         };
         hits.push(BoundaryHit {
             kind,
@@ -459,7 +528,7 @@ fn classify_contract_api_call(
                 line_end: Some(line.line_number),
             },
             confidence: "medium",
-            note: "call to an API declared by the callback-retention contract map",
+            note,
         });
     }
     hits
@@ -708,6 +777,7 @@ fn boundary_kind_slug(kind: V32BoundaryKind) -> &'static str {
         V32BoundaryKind::OpaqueHandleTransfer => "opaque-handle-transfer",
         V32BoundaryKind::ReturnedBorrow => "returned-borrow",
         V32BoundaryKind::ExternalBuffer => "external-buffer",
+        V32BoundaryKind::UnsupportedCallbackShape => "unsupported-callback-shape",
         V32BoundaryKind::NegativeSummary => "negative-summary",
     }
 }
@@ -746,4 +816,147 @@ fn write_log(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod contract_api_call_tests {
+    use super::*;
+
+    fn lines(source: &str) -> Vec<SourceLine> {
+        source
+            .lines()
+            .enumerate()
+            .map(|(index, text)| SourceLine {
+                path: "src/main.rs".to_owned(),
+                line_number: index as u64 + 1,
+                text: text.to_owned(),
+                enclosing_symbol: None,
+            })
+            .collect()
+    }
+
+    fn api(method: &str, role: bw_model::RegistrationRole, optional: bool) -> ContractApiMethod {
+        ContractApiMethod {
+            method: method.to_owned(),
+            api_path: format!("rusqlite::Connection::{method}"),
+            role,
+            callback_argument_is_optional: optional,
+        }
+    }
+
+    fn kinds(source: &str, apis: &[ContractApiMethod]) -> Vec<V32BoundaryKind> {
+        let lines = lines(source);
+        let mut kinds = (0..lines.len())
+            .flat_map(|index| classify_contract_api_call(&lines, index, apis))
+            .map(|hit| hit.kind)
+            .collect::<Vec<_>>();
+        kinds.sort_by_key(|kind| boundary_kind_slug(*kind));
+        kinds
+    }
+
+    /// `create_scalar_function` 直接收闭包，实参在下一行。此前 register 分支一律要求
+    /// `Some(`，且匹配器逐行工作——两条都会让这个调用消失，而且失败形态是"没发现
+    /// 边界"，读起来像干净。
+    #[test]
+    fn a_multi_line_call_without_option_is_still_a_registration() {
+        let source = r#"    connection.create_scalar_function(
+        "bw_counter",
+        0,
+        FunctionFlags::SQLITE_UTF8,
+        move |_| Ok(1),
+    )?;
+"#;
+        assert_eq!(
+            kinds(
+                source,
+                &[api(
+                    "create_scalar_function",
+                    bw_model::RegistrationRole::Register,
+                    false
+                )]
+            ),
+            vec![V32BoundaryKind::CallbackRegistration],
+            "a declared registration API that takes the closure directly must be indexed"
+        );
+    }
+
+    /// `Option<F>` 形状的 API 仍然要靠实参文本区分注册与注销，否则同一个调用会同时
+    /// 算成两者。
+    #[test]
+    fn an_optional_callback_argument_still_separates_register_from_unregister() {
+        let apis = [
+            api("update_hook", bw_model::RegistrationRole::Register, true),
+            api("update_hook", bw_model::RegistrationRole::Unregister, true),
+        ];
+        assert_eq!(
+            kinds(
+                "    conn.update_hook(Some(move |a| { drop(a); }));\n",
+                &apis
+            ),
+            vec![V32BoundaryKind::CallbackRegistration]
+        );
+        assert_eq!(
+            kinds(
+                "    conn.update_hook(None::<fn(Action, &str, &str, i64)>);\n",
+                &apis
+            ),
+            vec![V32BoundaryKind::CallbackUnregistration]
+        );
+    }
+
+    /// 注册与注销条目的 `rust_path` 相同。去重若不比 role，其中一个角色会被丢掉，
+    /// 该方法的另一半调用就永远分类不出来。
+    #[test]
+    fn both_roles_of_one_method_survive_deduplication() {
+        let mut methods = vec![
+            api("update_hook", bw_model::RegistrationRole::Unregister, true),
+            api("update_hook", bw_model::RegistrationRole::Register, true),
+            api("update_hook", bw_model::RegistrationRole::Register, true),
+        ];
+        methods.sort_by(|left, right| {
+            left.api_path
+                .cmp(&right.api_path)
+                .then(left.method.cmp(&right.method))
+                .then_with(|| {
+                    registration_role_slug(left.role).cmp(registration_role_slug(right.role))
+                })
+        });
+        methods.dedup_by(|left, right| {
+            left.api_path == right.api_path
+                && left.method == right.method
+                && left.role == right.role
+        });
+        assert_eq!(
+            methods.len(),
+            2,
+            "register and unregister must both survive"
+        );
+    }
+
+    /// 声明了这个 API 但取不到实参窗口时，必须记成覆盖缺口。返回空向量会让这个 crate
+    /// 一路落到 negative summary，产出"no supported boundary pattern found"——把
+    /// "看不懂"报成"没问题"。
+    #[test]
+    fn an_unclassifiable_shape_is_recorded_as_a_gap_not_dropped() {
+        // 调用后紧跟未配平的括号且无实参文本：窗口取不到东西。
+        let source = "    connection.create_scalar_function(\n";
+        assert_eq!(
+            kinds(
+                source,
+                &[api(
+                    "create_scalar_function",
+                    bw_model::RegistrationRole::Register,
+                    false
+                )]
+            ),
+            vec![V32BoundaryKind::UnsupportedCallbackShape],
+            "an unreadable call site is a coverage gap, not a clean result"
+        );
+    }
+
+    /// 未声明的方法不产生 hit：匹配面由 API map 限定，不是按名字猜。
+    #[test]
+    fn an_undeclared_method_produces_no_hit() {
+        assert!(kinds("    conn.some_other_method(Some(1));\n", &[]).is_empty());
+    }
 }

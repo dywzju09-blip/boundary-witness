@@ -158,6 +158,17 @@ pub struct CallbackRetentionApiMapEntry {
     /// 也生成不出来。缺省 `None` 表示没记录过这条边界，判定为不可判定而不是"处处适用"。
     #[serde(default)]
     pub non_static_callback_max_version: Option<String>,
+    /// callback 形参是否是 `Option<F>`。
+    ///
+    /// 决定调用点如何区分注册与注销。`rusqlite::Connection::update_hook` 收 `Option<F>`，
+    /// 同一个方法既是注册（`Some(f)`）又是注销（`None`），只能靠实参文本分辨；
+    /// `create_scalar_function` 直接收闭包，没有也不需要这个判别式。
+    ///
+    /// 缺省 `false`。把它当成对所有注册 API 一律成立的规则，会让不用 `Option` 的
+    /// API 在调用点永远匹配不上——而且失败形态是"没发现边界"，读起来像这个 crate
+    /// 干净，不像扫描器看不懂。
+    #[serde(default)]
+    pub callback_argument_is_optional: bool,
     #[serde(default)]
     pub notes: String,
 }

@@ -42,6 +42,7 @@
         "opaque_handle_transfer",
         "returned_borrow",
         "external_buffer",
+        "unsupported_callback_shape",
         "negative_summary"
       ]
     },

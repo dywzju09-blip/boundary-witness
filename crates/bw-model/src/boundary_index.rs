@@ -33,6 +33,13 @@ pub enum V32BoundaryKind {
     OpaqueHandleTransfer,
     ReturnedBorrow,
     ExternalBuffer,
+    /// 调用了 API map 声明的注册 API，但调用点的形状分类不出来。
+    ///
+    /// 这是**覆盖缺口**，不是候选，也不是"这里没问题"。缺这个类别时，扫描器看不懂
+    /// 的形状会一路落到 `NegativeSummary`，产出"no supported boundary pattern found"
+    /// ——读起来像这个 crate 干净。把"我看不懂"报成"没问题"是最坏的失败形态：结果
+    /// 显示正常，没人会去追。
+    UnsupportedCallbackShape,
     NegativeSummary,
 }
 
