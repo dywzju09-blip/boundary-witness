@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, strip_rust_comments, write_records},
+    commands::{
+        DEFAULT_MAX_LINE_BYTES, load_candidates, read_jsonl, strip_rust_comments, write_records,
+    },
     exit::{CliError, CommandStatus},
 };
 
@@ -2377,65 +2379,6 @@ fn coverage_gap_reason_from_mir(reason: &str) -> V326CoverageGapReason {
         "static_facts_missing" => V326CoverageGapReason::StaticFactsMissing,
         _ => V326CoverageGapReason::SourceOnlyFallback,
     }
-}
-
-fn load_candidates(
-    path: &Path,
-    max_line_bytes: usize,
-) -> Result<Vec<V32CandidateRecord>, CliError> {
-    if path.is_file() {
-        return Ok(read_jsonl::<V32CandidateRecord>(path, max_line_bytes)?
-            .into_iter()
-            .map(|located| located.value)
-            .collect());
-    }
-    if path.is_dir() {
-        let candidates_dir = if path.join("candidates").is_dir() {
-            path.join("candidates")
-        } else {
-            path.to_path_buf()
-        };
-        let mut files = fs::read_dir(&candidates_dir)
-            .map_err(|error| {
-                CliError::input("BW-IO", format!("{}: {}", candidates_dir.display(), error))
-            })?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        (name.starts_with("part-")
-                            && (name.ends_with(".jsonl.zst") || name.ends_with(".jsonl")))
-                            || name.ends_with(".jsonl")
-                            || name.ends_with(".jsonl.zst")
-                    })
-            })
-            .collect::<Vec<_>>();
-        files.sort();
-        if files.is_empty() {
-            return Err(CliError::input(
-                "BW-V326-CANDIDATES-EMPTY",
-                format!(
-                    "目录 {} 中没有找到 candidate JSONL 分片",
-                    candidates_dir.display()
-                ),
-            ));
-        }
-        let mut records = Vec::new();
-        for file in files {
-            records.extend(
-                read_jsonl::<V32CandidateRecord>(&file, max_line_bytes)?
-                    .into_iter()
-                    .map(|located| located.value),
-            );
-        }
-        return Ok(records);
-    }
-    Err(CliError::input(
-        "BW-IO",
-        format!("candidates 路径不存在: {}", path.display()),
-    ))
 }
 
 fn resolve_local_source(

@@ -224,10 +224,14 @@ pub(crate) fn write_json_stdout<T: serde::Serialize>(value: &T) -> Result<(), Cl
 
 /// 读取候选：接受单个 JSONL 文件，或 emit-candidates 写出的分片目录。
 ///
-/// 分片布局是 emit-candidates 与其消费方之间的契约。之前
-/// `build_lifecycle_graph_v3` 与 `compare_anonymous_pairs` 各带一份逐字节相同的
-/// 实现，两处对"哪些文件算分片"的判断一旦漂移，同一批候选在两条路径上就会
-/// 变成不同的集合，而且不会有任何报错。
+/// 分片布局是 emit-candidates 与其消费方之间的契约，而唯一的生产者只写
+/// `candidates/part-NNNNN.jsonl.zst`。这里按扩展名收，不按 `part-` 前缀收：前缀
+/// 判断在扩展名判断之外不增加任何区分力，只会让五个消费方的谓词看起来各不相同。
+///
+/// 漂移已经真实发生过。`rank_lifecycle` 曾经写成
+/// `(part- 且 .jsonl.zst) 或 .jsonl`，于是它**不收**非 `part-` 前缀的 `.jsonl.zst`，
+/// 而其余消费方收——同一批候选在不同 stage 上会成为不同的集合，且没有任何报错。
+/// 空目录的错误码当时也各不相同。
 pub(crate) fn load_candidates(
     path: &Path,
     max_line_bytes: usize,
@@ -255,12 +259,7 @@ pub(crate) fn load_candidates(
             .filter(|path| {
                 path.file_name()
                     .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        name.ends_with(".jsonl")
-                            || name.ends_with(".jsonl.zst")
-                            || (name.starts_with("part-")
-                                && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")))
-                    })
+                    .is_some_and(|name| name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
             })
             .collect::<Vec<_>>();
         files.sort();
