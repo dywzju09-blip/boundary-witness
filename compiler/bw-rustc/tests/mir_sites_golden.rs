@@ -7056,6 +7056,106 @@ fn arena_iterator_fixture_emits_unconstrained_into_iter_lifetime_only_when_missi
 }
 
 #[test]
+fn callback_lifetime_bound_fixture_separates_receiver_scoped_bounds_from_static_bounds() {
+    let repo = repo_root();
+    let fixture = repo.join("benchmarks/compiler-fixtures/callback-lifetime-bound/Cargo.toml");
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let analysis_dir = temp.path().join("analysis");
+    let target_dir = temp.path().join("target");
+    fs::create_dir(&analysis_dir).expect("analysis dir should be created");
+    let config = temp.path().join("bw-rustc-config.json");
+    fs::write(
+        &config,
+        serde_json::json!({
+            "output_dir": analysis_dir,
+            "allowlist": [
+                { "crate_name": "callback_lifetime_bound", "target": "lib" }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("config should be written");
+
+    let status = Command::new("cargo")
+        .args(["check", "--manifest-path"])
+        .arg(&fixture)
+        .env("RUSTC_WRAPPER", env!("CARGO_BIN_EXE_bw-rustc"))
+        .env("BW_RUSTC_CONFIG", &config)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .status()
+        .expect("cargo check should run");
+    assert!(status.success(), "fixture cargo check failed: {status}");
+
+    let facts = read_static_facts(&analysis_dir.join("static-facts.jsonl"));
+    let bounds = facts
+        .iter()
+        .filter_map(|fact| match &fact.payload {
+            StaticFact::CallbackLifetimeBound(bound) => Some(bound),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let scope_of = |method: &str| {
+        bounds
+            .iter()
+            .find(|bound| bound.api_id.ends_with(&format!("::{method}")))
+            .map(|bound| (bound.bound_scope, bound.bound_lifetime.clone()))
+    };
+
+    // 这四条断言是判据本身。任何一条反了，`update_hook` 那个缺陷就会被判成健全，或者
+    // 修好的版本会被误报。
+    assert_eq!(
+        scope_of("receiver_scoped"),
+        Some((
+            bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime,
+            Some("'c".to_owned())
+        )),
+        "`F: FnMut() + 'c` on `&'c mut self` is the rusqlite 0.26.1 shape"
+    );
+    assert_eq!(
+        scope_of("static_scoped"),
+        Some((
+            bw_model::CallbackLifetimeBoundScope::StaticLifetime,
+            Some("'static".to_owned())
+        )),
+        "`F: FnMut() + 'static` is the tightened 0.26.2 shape and must not read as receiver-scoped"
+    );
+    assert_eq!(
+        scope_of("free_scoped"),
+        Some((
+            bw_model::CallbackLifetimeBoundScope::DeclaredFreeLifetime,
+            Some("'other".to_owned())
+        )),
+        "a declared lifetime that is not the receiver's is still shorter than 'static"
+    );
+    assert_eq!(
+        scope_of("unbounded"),
+        Some((bw_model::CallbackLifetimeBoundScope::NoLifetimeBound, None)),
+        "an Fn bound with no outlives bound must be recorded, not silently dropped"
+    );
+
+    // 内联 bound 与 where 子句必须同判。rustc 把两者都降到 `generics.predicates`，
+    // 这条锁住那个假设。
+    assert_eq!(
+        scope_of("receiver_scoped_inline").map(|(scope, _)| scope),
+        Some(bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime),
+        "inline `F: FnMut() + 'c` must be judged the same as the where-clause form"
+    );
+    // 同一个参数的 bound 拆在两条 predicate 里也必须同判。逐条判定会给出
+    // `no_lifetime_bound`——一个看起来正常的结果，缺陷就此静默漏掉。
+    assert_eq!(
+        scope_of("receiver_scoped_split_predicates").map(|(scope, _)| scope),
+        Some(bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime),
+        "`F: FnMut()` and `F: 'c` as separate predicates must aggregate to one verdict"
+    );
+
+    // 负控：判据是"回调参数"，不是"任何被声明 lifetime 约束的泛型参数"。
+    assert!(
+        scope_of("not_a_callback").is_none(),
+        "`T: Clone + 'c` carries no Fn bound and must not produce a callback bound fact"
+    );
+}
+
+#[test]
 fn atomic_ordering_fixture_emits_pointer_iterator_loads_but_not_counter_loads() {
     let repo = repo_root();
     let fixture = repo.join("benchmarks/compiler-fixtures/atomic-ordering-lifecycle/Cargo.toml");

@@ -10,16 +10,17 @@ use std::{
 
 use bw_model::{
     AtomicOperationKind, AtomicOrderingFact, AtomicOrderingKind, BuildId, CallbackCaptureFact,
-    CallbackReleaseUseOrderFact, CallbackReleaseUseOrdering, CallbackSiteFact,
-    CallbackUserDataReconstructionFact, CallbackUserDataReconstructionKind, CaptureMode, DropKind,
-    DropPreventionFact, DropPreventionKind, DropSiteFact, ExternalBufferBindingFact,
-    ExternalCallRole, ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind,
-    ObjectFlowFact, ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact,
-    PersistedReturnedBorrowFact, RawPointerTransferFact, RawPointerTransferKind, RecordId,
-    RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
-    ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
-    ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, STATIC_SCHEMA_V02, SiteId,
-    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef,
+    CallbackLifetimeBoundFact, CallbackLifetimeBoundScope, CallbackReleaseUseOrderFact,
+    CallbackReleaseUseOrdering, CallbackSiteFact, CallbackUserDataReconstructionFact,
+    CallbackUserDataReconstructionKind, CaptureMode, DropKind, DropPreventionFact,
+    DropPreventionKind, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
+    ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
+    ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
+    RawPointerTransferFact, RawPointerTransferKind, RecordId, RegistrationRole,
+    RegistrationSiteFact, ReleasePathProofFact, ReturnedBorrowInvalidationOrderFact,
+    ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationFact, ReturnedBorrowRelationKind,
+    STATIC_SCHEMA_V02, SiteId, StaticArtifactIdentity, StaticFact, StaticFactEnvelope,
+    StaticSourceRef,
 };
 use bw_rustc::{SiteDescriptor, SiteIdentityError, SiteRole, stable_relative_path};
 use serde::Serialize;
@@ -165,6 +166,22 @@ pub struct ExternalCallObservation {
     pub mir_location: String,
     pub api_id: String,
     pub role: ExternalCallRole,
+}
+
+/// 一个回调泛型参数在定义点上的生命周期 bound。
+///
+/// 只来自 HIR 签名，没有 MIR location 之外的对象——这是**定义点**观察，不需要任何调用
+/// 代码。它记录的是"这个安全 API 的签名允许回调借用什么"，也就是组件级缺陷的本体。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackLifetimeBoundObservation {
+    pub owner_def_path: String,
+    pub source_path: PathBuf,
+    pub span: String,
+    pub mir_location: String,
+    pub api_id: String,
+    pub callback_param: String,
+    pub bound_lifetime: Option<String>,
+    pub bound_scope: CallbackLifetimeBoundScope,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -481,6 +498,7 @@ pub fn facts_from_mir_sites(
     release_path_proofs: &[ReleasePathProofObservation],
     callback_release_use_orders: &[CallbackReleaseUseOrderObservation],
     external_calls: &[ExternalCallObservation],
+    callback_lifetime_bounds: &[CallbackLifetimeBoundObservation],
     returned_borrow_relations: &[ReturnedBorrowRelationObservation],
     persisted_returned_borrows: &[PersistedReturnedBorrowObservation],
     returned_borrow_invalidation_orders: &[ReturnedBorrowInvalidationOrderObservation],
@@ -827,6 +845,42 @@ pub fn facts_from_mir_sites(
                     callback_site_id: None,
                     api_id: external_call.api_id.clone(),
                     role: external_call.role,
+                }),
+            )?,
+        );
+    }
+
+    for bound in callback_lifetime_bounds {
+        if !source_is_stable(context, &bound.source_path) {
+            continue;
+        }
+        let descriptor = SiteDescriptor::new(
+            &context.package,
+            &context.target,
+            &bound.owner_def_path,
+            SiteRole::CallbackLifetimeBound,
+            source_path(context, &bound.source_path),
+        )
+        .with_repo_root(&context.repo_root)
+        .with_mir_location(&bound.mir_location)
+        .with_span(&bound.span);
+        let site_id = descriptor.try_site_id()?;
+        insert_fact(
+            &mut facts,
+            envelope_with_source(
+                context,
+                "callback_lifetime_bound",
+                &site_id,
+                &bound.source_path,
+                &bound.span,
+                Some(&bound.owner_def_path),
+                StaticFact::CallbackLifetimeBound(CallbackLifetimeBoundFact {
+                    site_id: site_id.clone(),
+                    semantic_site_key: descriptor.semantic_key(),
+                    api_id: bound.api_id.clone(),
+                    callback_param: bound.callback_param.clone(),
+                    bound_lifetime: bound.bound_lifetime.clone(),
+                    bound_scope: bound.bound_scope,
                 }),
             )?,
         );

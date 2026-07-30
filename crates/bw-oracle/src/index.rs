@@ -110,6 +110,11 @@ impl StaticFactIndex {
                         .site_semantics
                         .insert(fact.site_id.clone(), fact.semantic_site_key.clone());
                 }
+                StaticFact::CallbackLifetimeBound(fact) => {
+                    index
+                        .site_semantics
+                        .insert(fact.site_id.clone(), fact.semantic_site_key.clone());
+                }
                 StaticFact::ReturnedBorrowRelation(fact) => {
                     index
                         .site_semantics

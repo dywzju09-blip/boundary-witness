@@ -16,9 +16,9 @@ use super::rustc_middle::mir::{
 use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor};
 use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
 use bw_model::{
-    AtomicOperationKind, AtomicOrderingKind, CallbackReleaseUseOrdering,
-    CallbackUserDataReconstructionKind, DropKind, DropPreventionKind, ObjectBindingGapKind,
-    ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
+    AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
+    CallbackReleaseUseOrdering, CallbackUserDataReconstructionKind, DropKind, DropPreventionKind,
+    ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
     ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
 };
 use sha2::{Digest, Sha256};
@@ -26,13 +26,13 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::CollectionLookupContract,
     domain::{
-        AtomicOrderingObservation, BorrowReference, CallbackReference,
-        CallbackReleaseUseOrderObservation, CallbackUserDataReconstructionObservation,
-        CaptureObservation, DropObservation, DropPreventionObservation,
-        ExternalBufferBindingObservation, ExternalCallObservation, ObjectBindingGapObservation,
-        ObjectFlowEndpointObservation, ObjectFlowObservation, ObjectFlowStaticSiteObservation,
-        PersistedReturnedBorrowObservation, RawPointerReference, RawPointerTransferObservation,
-        RegistrationObservation, ReleasePathProofObservation,
+        AtomicOrderingObservation, BorrowReference, CallbackLifetimeBoundObservation,
+        CallbackReference, CallbackReleaseUseOrderObservation,
+        CallbackUserDataReconstructionObservation, CaptureObservation, DropObservation,
+        DropPreventionObservation, ExternalBufferBindingObservation, ExternalCallObservation,
+        ObjectBindingGapObservation, ObjectFlowEndpointObservation, ObjectFlowObservation,
+        ObjectFlowStaticSiteObservation, PersistedReturnedBorrowObservation, RawPointerReference,
+        RawPointerTransferObservation, RegistrationObservation, ReleasePathProofObservation,
         ReturnedBorrowInvalidationOrderObservation, ReturnedBorrowRelationObservation,
         closure_capture_object_flow_field_path,
     },
@@ -50,6 +50,7 @@ pub struct MirSiteObservations {
     pub release_path_proofs: Vec<ReleasePathProofObservation>,
     pub callback_release_use_orders: Vec<CallbackReleaseUseOrderObservation>,
     pub external_calls: Vec<ExternalCallObservation>,
+    pub callback_lifetime_bounds: Vec<CallbackLifetimeBoundObservation>,
     pub returned_borrow_relations: Vec<ReturnedBorrowRelationObservation>,
     pub persisted_returned_borrows: Vec<PersistedReturnedBorrowObservation>,
     pub returned_borrow_invalidation_orders: Vec<ReturnedBorrowInvalidationOrderObservation>,
@@ -196,6 +197,9 @@ pub fn collect_mir_sites<'tcx>(
         {
             observations.returned_borrow_relations.push(relation);
         }
+        observations
+            .callback_lifetime_bounds
+            .extend(callback_lifetime_bounds(tcx, def_id, &owner_def_path));
         let mut visitor = MirSiteVisitor {
             tcx,
             body,
@@ -20968,6 +20972,183 @@ fn arena_into_iter_unconstrained_lifetime_relation<'tcx>(
     })
 }
 
+/// 从 HIR 签名读出每个回调泛型参数的生命周期 bound。
+///
+/// 形状（`rusqlite` 0.26.1 `hooks.rs`）：
+///
+/// ```ignore
+/// fn update_hook<'c, F>(&'c mut self, hook: Option<F>)
+/// where F: FnMut(..) + Send + 'c,        // ← 'c 来自 receiver，不是 'static
+/// { .. ffi::sqlite3_update_hook(.., Some(trampoline::<F>), boxed as *mut c_void) }
+/// ```
+///
+/// 0.26.2 把这里改成 `+ 'static` 就修好了，所以判据必须是"bound 指向本函数声明的某个
+/// lifetime 参数"，而不是"存在 lifetime bound"——`'static` 不是声明的参数，因此
+/// [`hir_lifetime_param_index`] 对它返回 `None`，收紧后的版本自然落到
+/// [`CallbackLifetimeBoundScope::StaticLifetime`]。
+///
+/// 与 [`unconstrained_return_lifetime_relation`] 是同一族分析：都只读 HIR 签名，不需要
+/// 任何调用代码。区别在于那个看**返回值**的 lifetime 是否被输入约束，这个看**回调参数**
+/// 的存活期是否短于外部持有期。**不要把它并进 `ReturnedBorrowRelationKind`**——那是
+/// "返回借用"家族，混进去就是又一次"读了相邻属性"。
+///
+/// 健全的两种 scope 也照样产出事实：缺证（没有事实）与"已检查且健全"必须可区分，这正是
+/// `callback_bound_scope` 的 `Undecided` 存在的同一个理由。
+fn callback_lifetime_bounds<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+    owner_def_path: &str,
+) -> Vec<CallbackLifetimeBoundObservation> {
+    let node = tcx.hir_node_by_def_id(def_id);
+    let Some(sig) = node.fn_sig() else {
+        return Vec::new();
+    };
+    let Some(generics) = node.generics() else {
+        return Vec::new();
+    };
+    let Ok(source_path) = source_path(tcx, sig.span) else {
+        return Vec::new();
+    };
+    let Ok(stable_span) = stable_span(tcx, sig.span) else {
+        return Vec::new();
+    };
+
+    let declared_lifetimes = function_declared_lifetime_params(generics);
+    // receiver 上出现的 lifetime。回调 bound 落在其中之一时，它的存活期就被绑在一次
+    // 借用上，而外部持有方并不受那次借用约束。
+    let mut receiver_lifetimes = BTreeSet::<usize>::new();
+    if let Some(receiver) = sig.decl.inputs.first() {
+        collect_hir_lifetime_params_from_ty(receiver, &mut receiver_lifetimes);
+    }
+
+    // 同一个泛型参数的 bound 可能散在多条 predicate 里：`where F: FnMut(), F: 'c` 是
+    // 合法写法，rustc 也会把内联 bound 和 where 子句降成各自的 predicate。逐条判定会
+    // 让前一条读成 `NoLifetimeBound`——一个看起来完全正常的结果，正是这类缺陷最难发现
+    // 的失败方式。所以先按参数名把 bound 全部聚起来，再判一次。
+    let mut bounds_by_param = BTreeMap::<String, Vec<&hir::GenericBound<'_>>>::new();
+    for predicate in generics.predicates {
+        let hir::WherePredicateKind::BoundPredicate(bound_predicate) = predicate.kind else {
+            continue;
+        };
+        let Some(param_name) = declared_type_param_name(generics, bound_predicate.bounded_ty)
+        else {
+            continue;
+        };
+        bounds_by_param
+            .entry(param_name)
+            .or_default()
+            .extend(bound_predicate.bounds);
+    }
+
+    bounds_by_param
+        .into_iter()
+        // 判据是"回调参数"，不是"任何被约束的泛型参数"：没有 `Fn` 家族 bound 的一律不出
+        // 事实，否则 `T: Clone + 'c` 也会被当成回调。
+        .filter(|(_, bounds)| {
+            bounds
+                .iter()
+                .any(|bound| hir_bound_is_callable_trait(bound))
+        })
+        .map(|(callback_param, bounds)| {
+            let (bound_lifetime, bound_scope) =
+                callback_bound_scope_from_bounds(&bounds, &declared_lifetimes, &receiver_lifetimes);
+            CallbackLifetimeBoundObservation {
+                owner_def_path: owner_def_path.to_owned(),
+                source_path: source_path.clone(),
+                span: stable_span.clone(),
+                mir_location: format!("hir_signature:callback_lifetime_bound:{callback_param}"),
+                api_id: owner_def_path.to_owned(),
+                callback_param,
+                bound_lifetime,
+                bound_scope,
+            }
+        })
+        .collect()
+}
+
+/// 被约束的类型是不是本函数声明的一个泛型类型参数。
+///
+/// 只认 `F` 这种裸参数路径，`Vec<F>` 或关联类型都不算——那些的 bound 约束的不是回调
+/// 本身。
+fn declared_type_param_name(
+    generics: &hir::Generics<'_>,
+    bounded_ty: &hir::Ty<'_>,
+) -> Option<String> {
+    let hir::TyKind::Path(hir::QPath::Resolved(None, path)) = bounded_ty.kind else {
+        return None;
+    };
+    let [segment] = path.segments else {
+        return None;
+    };
+    if !generics.params.iter().any(|param| {
+        matches!(param.kind, hir::GenericParamKind::Type { .. })
+            && param.name.ident().name == segment.ident.name
+    }) {
+        return None;
+    }
+    Some(segment.ident.name.to_string())
+}
+
+/// 把一组 bound 归到四个 scope 之一。
+///
+/// 顺序有意义：先找本函数声明的 lifetime（不健全的那两种），再看 `'static`。反过来写会
+/// 让 `F: FnMut(..) + 'c + 'static` 这种被判成健全。
+fn callback_bound_scope_from_bounds(
+    bounds: &[&hir::GenericBound<'_>],
+    declared_lifetimes: &BTreeSet<usize>,
+    receiver_lifetimes: &BTreeSet<usize>,
+) -> (Option<String>, CallbackLifetimeBoundScope) {
+    let outlives = bounds
+        .iter()
+        .filter_map(|bound| match bound {
+            hir::GenericBound::Outlives(lifetime) => Some(*lifetime),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for lifetime in &outlives {
+        let Some(index) = hir_lifetime_param_index(lifetime) else {
+            continue;
+        };
+        if !declared_lifetimes.contains(&index) {
+            continue;
+        }
+        let scope = if receiver_lifetimes.contains(&index) {
+            CallbackLifetimeBoundScope::DeclaredReceiverLifetime
+        } else {
+            CallbackLifetimeBoundScope::DeclaredFreeLifetime
+        };
+        return (Some(lifetime.ident.name.to_string()), scope);
+    }
+    for lifetime in &outlives {
+        if hir_lifetime_is_static(lifetime) {
+            return (
+                Some(lifetime.ident.name.to_string()),
+                CallbackLifetimeBoundScope::StaticLifetime,
+            );
+        }
+    }
+    (None, CallbackLifetimeBoundScope::NoLifetimeBound)
+}
+
+/// bound 是否是 `Fn` / `FnMut` / `FnOnce`。用来把回调参数和普通泛型参数分开。
+fn hir_bound_is_callable_trait(bound: &hir::GenericBound<'_>) -> bool {
+    let hir::GenericBound::Trait(poly_trait_ref) = bound else {
+        return false;
+    };
+    poly_trait_ref
+        .trait_ref
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| {
+            matches!(
+                segment.ident.name.as_str(),
+                "Fn" | "FnMut" | "FnOnce" | "AsyncFn" | "AsyncFnMut" | "AsyncFnOnce"
+            )
+        })
+}
+
 fn function_declared_lifetime_params(generics: &hir::Generics<'_>) -> BTreeSet<usize> {
     generics
         .params
@@ -21110,9 +21291,22 @@ fn collect_hir_lifetime_params_from_poly_trait_ref(
 }
 
 fn collect_hir_lifetime_param(lifetime: &hir::Lifetime, lifetimes: &mut BTreeSet<usize>) {
-    if let hir::LifetimeKind::Param(def_id) = lifetime.kind {
-        lifetimes.insert(def_id.index());
+    if let Some(index) = hir_lifetime_param_index(lifetime) {
+        lifetimes.insert(index);
     }
+}
+
+/// 具名 lifetime 参数的 def index。`'static` 与被擦除的 lifetime 返回 `None`——它们不是
+/// 本函数声明的参数，这个区别正是回调 bound 判定的全部依据。
+fn hir_lifetime_param_index(lifetime: &hir::Lifetime) -> Option<usize> {
+    match lifetime.kind {
+        hir::LifetimeKind::Param(def_id) => Some(def_id.index()),
+        _ => None,
+    }
+}
+
+fn hir_lifetime_is_static(lifetime: &hir::Lifetime) -> bool {
+    matches!(lifetime.kind, hir::LifetimeKind::Static)
 }
 
 fn hir_ty_contains_reference(ty: &hir::Ty<'_>) -> bool {

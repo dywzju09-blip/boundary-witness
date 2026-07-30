@@ -4699,6 +4699,129 @@ fn returned_borrow_static_fact_maps_to_candidate_scoped_lifecycle_fact() {
     ));
 }
 
+/// 四个 scope 都要能走完 static fact → lifecycle fact → 验证器这条链。
+///
+/// 健全的两种（`static_lifetime` / `no_lifetime_bound`）也必须产出事实：缺证与"已检查且
+/// 健全"必须可区分，这与 `callback_bound_scope` 的 `Undecided` 是同一条纪律。
+///
+/// 这条测试同时是 object_id 白名单的非空性检查——`callback_lifetime_bound_scope:` 漏在
+/// `BW-V326-FACT-OBJECT-ID` 那张表里的话，`validate_v3_2_6_lifecycle_facts` 会直接拒掉。
+#[test]
+fn callback_lifetime_bound_static_fact_carries_every_scope_through_validation() {
+    for (scope, bound_lifetime, expected_token) in [
+        (
+            bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime,
+            Some("'c".to_owned()),
+            "declared_receiver_lifetime",
+        ),
+        (
+            bw_model::CallbackLifetimeBoundScope::DeclaredFreeLifetime,
+            Some("'other".to_owned()),
+            "declared_free_lifetime",
+        ),
+        (
+            bw_model::CallbackLifetimeBoundScope::StaticLifetime,
+            Some("'static".to_owned()),
+            "static_lifetime",
+        ),
+        (
+            bw_model::CallbackLifetimeBoundScope::NoLifetimeBound,
+            None,
+            "no_lifetime_bound",
+        ),
+    ] {
+        let mut candidate = sample_candidate("candidate:bound:001", "crate:bound");
+        candidate.api_path = Some("fixture::Handle::<T>::register".to_owned());
+        candidate.evidence_refs[0].line_start = Some(21);
+        candidate.evidence_refs[0].line_end = Some(21);
+        let static_fact = bw_model::StaticFactEnvelope {
+            schema_version: bw_model::STATIC_SCHEMA_V02.to_owned(),
+            record_id: bw_model::RecordId(format!("static:bound:{expected_token}")),
+            producer: "fixture".to_owned(),
+            build_id: bw_model::BuildId("build:bound".to_owned()),
+            artifact: Some(bw_model::StaticArtifactIdentity {
+                crate_id: "crate:bound".to_owned(),
+                package_name: "bound".to_owned(),
+                package_version: "0.1.0".to_owned(),
+                target: "lib".to_owned(),
+            }),
+            source_ref: Some(bw_model::StaticSourceRef {
+                path: "src/lib.rs".to_owned(),
+                line_start: 21,
+                line_end: 21,
+                symbol_path: Some("fixture::Handle::<T>::register".to_owned()),
+            }),
+            payload: bw_model::StaticFact::CallbackLifetimeBound(
+                bw_model::CallbackLifetimeBoundFact {
+                    site_id: bw_model::SiteId(format!("site:bound:{expected_token}")),
+                    semantic_site_key: bw_model::SemanticSiteKey(
+                        "semantic:bound:register".to_owned(),
+                    ),
+                    api_id: "fixture::Handle::<T>::register".to_owned(),
+                    callback_param: "F".to_owned(),
+                    bound_lifetime,
+                    bound_scope: scope,
+                },
+            ),
+        };
+
+        let mut fact = bw_model::lifecycle_fact_from_static_fact(
+            "run:v326",
+            &candidate,
+            &static_fact,
+            V326SourceRef {
+                path: "src/lib.rs".to_owned(),
+                line_start: Some(21),
+                line_end: Some(21),
+                symbol_path: Some("fixture::Handle::<T>::register".to_owned()),
+                text_sha256: None,
+            },
+            vec!["evidence:bound:0001".to_owned()],
+        )
+        .unwrap_or_else(|| panic!("{expected_token} should produce a lifecycle fact"));
+        fact.provenance.static_anchor_record_ids = vec![static_fact.record_id.to_string()];
+
+        assert_eq!(
+            fact.fact_kind,
+            bw_model::V326LifecycleFactKind::CallbackLifetimeBound
+        );
+        assert_eq!(
+            fact.object_ids,
+            vec![
+                format!("static_site:site:bound:{expected_token}"),
+                format!("callback_lifetime_bound_scope:{expected_token}"),
+            ],
+            "the scope must be readable off the fact for {expected_token}"
+        );
+        assert!(bw_model::verify_v3_2_6_lifecycle_fact_static_provenance(
+            &mut fact,
+            &candidate,
+            std::slice::from_ref(&static_fact),
+        ));
+
+        bw_model::validate_v3_2_6_lifecycle_facts([Located {
+            path: PathBuf::from("lifecycle-facts.jsonl"),
+            line: 1,
+            value: fact,
+        }])
+        .unwrap_or_else(|error| {
+            panic!("{expected_token} must pass the static_artifact object_id allowlist: {error}")
+        });
+    }
+}
+
+/// `is_shorter_than_static` 是第 3 步判定"bound 是否弱于 C 侧持有期"的入口谓词。
+/// 它必须只对声明 lifetime 那两种为真——反了就会把修好的版本报成缺陷。
+#[test]
+fn only_declared_lifetime_scopes_are_shorter_than_static() {
+    assert!(
+        bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime.is_shorter_than_static()
+    );
+    assert!(bw_model::CallbackLifetimeBoundScope::DeclaredFreeLifetime.is_shorter_than_static());
+    assert!(!bw_model::CallbackLifetimeBoundScope::StaticLifetime.is_shorter_than_static());
+    assert!(!bw_model::CallbackLifetimeBoundScope::NoLifetimeBound.is_shorter_than_static());
+}
+
 #[test]
 fn atomic_ordering_static_fact_maps_to_candidate_scoped_lifecycle_fact() {
     let mut candidate = sample_candidate("candidate:atomic:001", "crate:atomic");

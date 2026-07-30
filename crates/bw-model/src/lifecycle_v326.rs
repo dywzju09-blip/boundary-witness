@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AtomicOperationKind, AtomicOrderingKind, Located, ModelError, ObjectBindingGapKind,
-    ObjectFlowKind, ObjectFlowObjectKind, ReturnedBorrowInvalidationOrdering,
+    AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope, Located, ModelError,
+    ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, ReturnedBorrowInvalidationOrdering,
     ReturnedBorrowRelationKind, StaticFact, StaticFactEnvelope, V32BoundaryEvidenceKind,
     V32CandidateRecord, V32PatternFamily,
 };
@@ -815,6 +815,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         StaticFact::CallbackSite(fact) => Some(fact.def_path.clone()),
         StaticFact::RegistrationSite(fact) => Some(fact.api_id.clone()),
         StaticFact::ExternalCallSite(fact) => Some(fact.api_id.clone()),
+        StaticFact::CallbackLifetimeBound(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowRelation(fact) => Some(fact.api_id.clone()),
         StaticFact::PersistedReturnedBorrow(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowInvalidationOrder(fact) => Some(fact.api_id.clone()),
@@ -882,6 +883,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<String> {
             .map(ToString::to_string)
             .chain(std::iter::once(fact.site_id.to_string()))
             .collect(),
+        StaticFact::CallbackLifetimeBound(fact) => vec![fact.site_id.to_string()],
         StaticFact::ReturnedBorrowRelation(fact) => vec![
             fact.site_id.to_string(),
             fact.source_site_id.to_string(),
@@ -1010,6 +1012,7 @@ pub enum V326LifecycleFactKind {
     ReleasePathProof,
     CallbackReleaseUseOrder,
     ContractRetention,
+    CallbackLifetimeBound,
     ReturnedBorrowRelation,
     PersistedReturnedBorrow,
     ReturnedBorrowInvalidationOrder,
@@ -1017,6 +1020,77 @@ pub enum V326LifecycleFactKind {
     AtomicOrdering,
     ObjectBindingGap,
     ObjectFlow,
+}
+
+impl V326LifecycleFactKind {
+    /// 全部取值，供"模型与 JSON schema 一致"的双向测试使用。
+    ///
+    /// `callback_release_use_order` 曾经只存在于本枚举、没进 schema 的 `fact_kind`
+    /// 白名单，而它是真实会被产出的事实类别：旧测试逐条手写
+    /// `assert_schema_enum_contains`，漏写就没人发现。下面的 [`Self::schema_token`] 是
+    /// 穷尽 match，新增变体时编译失败，会把作者带到这张表上。
+    ///
+    /// `contract_retention` 是**有意**不进公开 schema 的例外，别把它当成漏项补上去；
+    /// 例外显式写在 `lifecycle_fact_schema_declares_exactly_the_public_fact_kinds` 里。
+    pub const ALL: &'static [Self] = &[
+        Self::CallbackDefinition,
+        Self::BorrowedCapture,
+        Self::OwnedMoveCapture,
+        Self::DropImpl,
+        Self::DropSite,
+        Self::DropPrevention,
+        Self::CallbackUserDataReconstruction,
+        Self::RawPointerEscape,
+        Self::UnsafeCast,
+        Self::TraitImpl,
+        Self::RegisterCall,
+        Self::UnregisterCall,
+        Self::ReplaceCall,
+        Self::ReleaseCall,
+        Self::ReleasePathProof,
+        Self::CallbackReleaseUseOrder,
+        Self::ContractRetention,
+        Self::CallbackLifetimeBound,
+        Self::ReturnedBorrowRelation,
+        Self::PersistedReturnedBorrow,
+        Self::ReturnedBorrowInvalidationOrder,
+        Self::ExternalBufferBinding,
+        Self::AtomicOrdering,
+        Self::ObjectBindingGap,
+        Self::ObjectFlow,
+    ];
+
+    /// 该取值在 JSON 里的字面量，必须与 `#[serde(rename_all = "snake_case")]` 一致。
+    #[must_use]
+    pub fn schema_token(self) -> &'static str {
+        match self {
+            Self::CallbackDefinition => "callback_definition",
+            Self::BorrowedCapture => "borrowed_capture",
+            Self::OwnedMoveCapture => "owned_move_capture",
+            Self::DropImpl => "drop_impl",
+            Self::DropSite => "drop_site",
+            Self::DropPrevention => "drop_prevention",
+            Self::CallbackUserDataReconstruction => "callback_user_data_reconstruction",
+            Self::RawPointerEscape => "raw_pointer_escape",
+            Self::UnsafeCast => "unsafe_cast",
+            Self::TraitImpl => "trait_impl",
+            Self::RegisterCall => "register_call",
+            Self::UnregisterCall => "unregister_call",
+            Self::ReplaceCall => "replace_call",
+            Self::ReleaseCall => "release_call",
+            Self::ReleasePathProof => "release_path_proof",
+            Self::CallbackReleaseUseOrder => "callback_release_use_order",
+            Self::ContractRetention => "contract_retention",
+            Self::CallbackLifetimeBound => "callback_lifetime_bound",
+            Self::ReturnedBorrowRelation => "returned_borrow_relation",
+            Self::PersistedReturnedBorrow => "persisted_returned_borrow",
+            Self::ReturnedBorrowInvalidationOrder => "returned_borrow_invalidation_order",
+            Self::ExternalBufferBinding => "external_buffer_binding",
+            Self::AtomicOrdering => "atomic_ordering",
+            Self::ObjectBindingGap => "object_binding_gap",
+            Self::ObjectFlow => "object_flow",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -5672,6 +5746,7 @@ fn lifecycle_fact_endpoint_object_ids(fact: &V326LifecycleFactRecord) -> BTreeSe
         .filter(|object_id| !object_id.starts_with("adapter:"))
         .filter(|object_id| !object_id.starts_with("returned_borrow_order:"))
         .filter(|object_id| !object_id.starts_with("callback_release_use_order:"))
+        .filter(|object_id| !object_id.starts_with("callback_lifetime_bound_scope:"))
         .filter(|object_id| !object_id.starts_with("atomic_operation:"))
         .filter(|object_id| !object_id.starts_with("atomic_ordering:"))
         .cloned()
@@ -5690,6 +5765,7 @@ fn object_flow_endpoint_object_ids_in_order(fact: &V326LifecycleFactRecord) -> V
         .filter(|object_id| !object_id.starts_with("adapter:"))
         .filter(|object_id| !object_id.starts_with("returned_borrow_order:"))
         .filter(|object_id| !object_id.starts_with("callback_release_use_order:"))
+        .filter(|object_id| !object_id.starts_with("callback_lifetime_bound_scope:"))
         .filter(|object_id| !object_id.starts_with("atomic_operation:"))
         .filter(|object_id| !object_id.starts_with("atomic_ordering:"))
         .take(2)
@@ -6005,6 +6081,17 @@ fn lifecycle_static_fact_fields(
         // external call to ReleaseCall would invent release coverage. Without an exact
         // unregister/release RegistrationRole or contract-backed release endpoint, skip.
         StaticFact::ExternalCallSite(_) => return None,
+        // 定义点事实：只描述签名，不描述任何对象在站点之间的流动，因此除了自身站点
+        // 之外没有 endpoint。scope 作为注解 object_id 带出，供第 3 步与 C 侧持有期
+        // 对照使用。
+        StaticFact::CallbackLifetimeBound(fact) => (
+            V326LifecycleFactKind::CallbackLifetimeBound,
+            Some(fact.api_id.clone()),
+            vec![
+                static_site_object_id("static_site", &fact.site_id.to_string()),
+                callback_lifetime_bound_scope_object_id(fact.bound_scope),
+            ],
+        ),
         StaticFact::ReturnedBorrowRelation(fact) => {
             let mut object_ids = vec![
                 static_site_object_id("rust_owner", &fact.source_site_id.to_string()),
@@ -6303,6 +6390,20 @@ fn object_flow_binding_prefix_object_id(scope: &str, value: &str) -> String {
 
 fn object_flow_binding_kind_object_id(binding_kind: &str) -> String {
     format!("object_flow_binding_kind:{binding_kind}")
+}
+
+/// 把回调 bound 的 scope 编成注解 object_id。
+///
+/// 四个取值都要能编出来：`static_lifetime` 与 `no_lifetime_bound` 是"已检查且不构成
+/// 该缺陷"的正面记录，和"根本没有这条事实"必须可区分。
+fn callback_lifetime_bound_scope_object_id(scope: CallbackLifetimeBoundScope) -> String {
+    let token = match scope {
+        CallbackLifetimeBoundScope::DeclaredReceiverLifetime => "declared_receiver_lifetime",
+        CallbackLifetimeBoundScope::DeclaredFreeLifetime => "declared_free_lifetime",
+        CallbackLifetimeBoundScope::StaticLifetime => "static_lifetime",
+        CallbackLifetimeBoundScope::NoLifetimeBound => "no_lifetime_bound",
+    };
+    format!("callback_lifetime_bound_scope:{token}")
 }
 
 fn object_flow_field_path_is_hook_release_slot(field_path: &str) -> bool {
@@ -8508,7 +8609,9 @@ fn fact_edge_shape(
         | V326LifecycleFactKind::AtomicOrdering
         | V326LifecycleFactKind::UnsafeCast
         | V326LifecycleFactKind::TraitImpl
-        | V326LifecycleFactKind::ContractRetention => None,
+        | V326LifecycleFactKind::ContractRetention
+        // 定义点事实描述签名，不描述对象流动，因此不产出生命周期图上的边。
+        | V326LifecycleFactKind::CallbackLifetimeBound => None,
     }
 }
 
@@ -8577,6 +8680,7 @@ fn object_flow_auxiliary_object_id(object_id: &str) -> bool {
         || object_id.starts_with("object_flow_binding_prefix:")
         || object_id.starts_with("object_flow_binding_kind:")
         || object_id.starts_with("callback_release_use_order:")
+        || object_id.starts_with("callback_lifetime_bound_scope:")
 }
 
 fn relation_from_object_flow_kind(flow_kind: &str) -> V326LifecycleRelation {
@@ -8727,6 +8831,7 @@ fn object_kind_from_id(object_id: &str) -> V326LifecycleObjectKind {
         || lower.starts_with("adapter:")
         || lower.starts_with("atomic_operation:")
         || lower.starts_with("atomic_ordering:")
+        || lower.starts_with("callback_lifetime_bound_scope:")
     {
         V326LifecycleObjectKind::StaticSite
     } else if lower.starts_with("foreign_owner:") {
@@ -9036,6 +9141,13 @@ fn validate_lifecycle_fact_object_ids<T>(
                     || object_id.starts_with("adapter:")
                     || object_id.starts_with("atomic_operation:")
                     || object_id.starts_with("atomic_ordering:")
+                    // 与 `object_flow_binding_kind:` 完全同类的漏项：
+                    // `callback_release_use_order:` 由 :6003 产出、
+                    // `callback_lifetime_bound_scope:` 由 :6350 产出，两者都被
+                    // `object_flow_auxiliary_object_id` 接受，却漏在这张表里。
+                    // 后果一致：真的走到那条事实时整个 stage 被验证器拒掉。
+                    || object_id.starts_with("callback_release_use_order:")
+                    || object_id.starts_with("callback_lifetime_bound_scope:")
                     || object_id.starts_with("static_site:")
                     || object_id.starts_with("release_endpoint:")
                     || object_id.starts_with("foreign_owner:")

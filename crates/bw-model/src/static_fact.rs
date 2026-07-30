@@ -197,6 +197,57 @@ pub struct ExternalCallSiteFact {
     pub role: ExternalCallRole,
 }
 
+/// 一个回调泛型参数的存活期被什么约束住。
+///
+/// 这是**定义点**属性：只读函数签名，不需要任何调用代码。它是"安全 API 允许 UB"这类
+/// 组件级缺陷的本体形状——`rusqlite` 0.26.1 的 `update_hook` 用 `F: FnMut(..) + 'c`
+/// 把回调绑在 `&'c mut self` 这一次借用上，而真正持有回调的是 C 侧的 sqlite3 句柄，
+/// 它不受那次借用约束；0.26.2 把 bound 收紧成 `'static` 就修好了。
+///
+/// 四个取值都会产出事实，包括健全的那两个。缺证与"已检查且健全"必须可区分：没有事实
+/// 只说明这条签名没被分析到，不等于它安全。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallbackLifetimeBoundScope {
+    /// bound 指向本函数声明的某个 lifetime 参数，且该 lifetime 也出现在 receiver 上。
+    /// 回调的存活期被绑在一次 `&'a self` 借用上——外部持有方并不受这个借用约束。
+    DeclaredReceiverLifetime,
+    /// bound 指向本函数声明的某个 lifetime 参数，但该 lifetime 不来自 receiver
+    /// （例如由另一个参数或返回值引入）。仍然短于 `'static`。
+    DeclaredFreeLifetime,
+    /// bound 是 `'static`。回调不能借用任何有限存活期的数据。
+    StaticLifetime,
+    /// 有 `Fn` 家族 bound 但完全没有 outlives bound。存活期由推断决定，签名本身不表态。
+    NoLifetimeBound,
+}
+
+impl CallbackLifetimeBoundScope {
+    /// bound 是否短于 `'static`，即签名允许回调借用有限存活期的数据。
+    #[must_use]
+    pub fn is_shorter_than_static(self) -> bool {
+        matches!(
+            self,
+            Self::DeclaredReceiverLifetime | Self::DeclaredFreeLifetime
+        )
+    }
+}
+
+/// 回调参数在定义点上的生命周期 bound。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallbackLifetimeBoundFact {
+    pub site_id: SiteId,
+    pub semantic_site_key: SemanticSiteKey,
+    pub api_id: String,
+    /// 回调那个泛型类型参数的名字，例如 `F`。
+    pub callback_param: String,
+    /// 约束它的 lifetime 名字，例如 `'c` 或 `'static`。
+    /// [`CallbackLifetimeBoundScope::NoLifetimeBound`] 时为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_lifetime: Option<String>,
+    pub bound_scope: CallbackLifetimeBoundScope,
+}
+
 /// 返回值借用关系：API 返回的引用可追溯到输入或本地 owner。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -396,6 +447,7 @@ pub enum StaticFact {
     ReleasePathProof(ReleasePathProofFact),
     CallbackReleaseUseOrder(CallbackReleaseUseOrderFact),
     ExternalCallSite(ExternalCallSiteFact),
+    CallbackLifetimeBound(CallbackLifetimeBoundFact),
     ReturnedBorrowRelation(ReturnedBorrowRelationFact),
     PersistedReturnedBorrow(PersistedReturnedBorrowFact),
     ReturnedBorrowInvalidationOrder(ReturnedBorrowInvalidationOrderFact),
@@ -545,6 +597,13 @@ impl StaticFact {
                         .callback_site_id
                         .as_ref()
                         .is_none_or(|site_id| has_required_text(site_id.as_str()))
+            }
+            Self::CallbackLifetimeBound(fact) => {
+                has_required_text(fact.site_id.as_str())
+                    && has_required_text(fact.semantic_site_key.as_str())
+                    && has_required_text(&fact.api_id)
+                    && has_required_text(&fact.callback_param)
+                    && fact.bound_lifetime.as_deref().is_none_or(has_required_text)
             }
             Self::ReturnedBorrowRelation(fact) => {
                 has_required_text(fact.site_id.as_str())

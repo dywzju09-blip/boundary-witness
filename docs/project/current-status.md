@@ -16,7 +16,8 @@
 | `Implemented` | object-chain proof-layer split | identity、ordering、complete risk chain 已分层；迁移后仍需完整回归复验 |
 | `Implemented` | runtime、oracle 与 fuzz observer 基础 | 组件测试通过；不是任意候选 executor |
 | `Implemented` | 返回借用寿命不受输入约束的定义点识别 | `unconstrained_return_lifetime_relation` 从 HIR 签名判定，无需 API map |
-| `Planned` | 回调注册 API 的自动识别（阶段 B） | 当前依赖人工 API map 声明哪些 API 属于回调注册及其 bound 版本边界；接入新组件必须先手写 map。见 [范围与边界 §2.3](scope-and-boundaries.md) |
+| `Implemented` | 回调参数生命周期 bound 的定义点识别 | `callback_lifetime_bounds` 从 HIR 签名判定 bound 绑在函数声明的 lifetime 还是 `'static`，无需 API map；健全与不健全两侧都产出事实 |
+| `Planned` | 判定回调 bound 弱于 C 侧持有期（阶段 B 下一步） | bound 的形状已自动读出，但「哪些 API 把回调交给外部长期持有、bound 从哪个版本收紧」仍由人工 API map 声明；接入新组件仍必须先手写 map。见 [范围与边界 §2.3](scope-and-boundaries.md) |
 | `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状，尚未达到普遍能力 |
 | `Planned` | 通用 dynamic witness executor | witness plan 到自动 harness/executor/receipt 的闭环不完整 |
 | `Blocked` | V3.3、约 100 crate pilot、sealed holdout | clean method commit、完整 public regression、pilot、freeze 与新 sealed smoke 尚未全部完成 |

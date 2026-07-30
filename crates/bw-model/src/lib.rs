@@ -119,15 +119,16 @@ pub use schema::{
 };
 pub use static_fact::{
     AtomicOperationKind, AtomicOrderingFact, AtomicOrderingKind, CallbackCaptureFact,
-    CallbackReleaseUseOrderFact, CallbackReleaseUseOrdering, CallbackSiteFact,
-    CallbackUserDataReconstructionFact, CallbackUserDataReconstructionKind, CaptureMode, DropKind,
-    DropPreventionFact, DropPreventionKind, DropSiteFact, ExternalBufferBindingFact,
-    ExternalCallRole, ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind,
-    ObjectFlowFact, ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact,
-    PersistedReturnedBorrowFact, RawPointerTransferFact, RawPointerTransferKind, RegistrationRole,
-    RegistrationSiteFact, ReleasePathProofFact, ReturnedBorrowInvalidationOrderFact,
-    ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationFact, ReturnedBorrowRelationKind,
-    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef,
+    CallbackLifetimeBoundFact, CallbackLifetimeBoundScope, CallbackReleaseUseOrderFact,
+    CallbackReleaseUseOrdering, CallbackSiteFact, CallbackUserDataReconstructionFact,
+    CallbackUserDataReconstructionKind, CaptureMode, DropKind, DropPreventionFact,
+    DropPreventionKind, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
+    ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
+    ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
+    RawPointerTransferFact, RawPointerTransferKind, RegistrationRole, RegistrationSiteFact,
+    ReleasePathProofFact, ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
+    ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, StaticArtifactIdentity, StaticFact,
+    StaticFactEnvelope, StaticSourceRef,
 };
 pub use static_ranking_reveal::{
     RevealStaticRankingInput, V3_2_5_PRIVATE_GROUND_TRUTH_SCHEMA_V1,

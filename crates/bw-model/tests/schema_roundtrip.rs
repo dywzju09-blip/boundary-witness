@@ -718,6 +718,56 @@ fn scanner_freeze_fixture() -> String {
     .to_owned()
 }
 
+/// `V326LifecycleFactKind` 与 schema 的 `fact_kind` 白名单必须逐个对应。
+///
+/// 旧写法是逐条手写 `assert_schema_enum_contains`，漏写就没有任何信号：
+/// `callback_release_use_order` 由 `StaticFact::CallbackReleaseUseOrder` 的转换真实产出，
+/// 却一直不在 schema 白名单里，只要被扫组件真的走到那条事实，stage 就会被验证器拒掉。
+/// 这条测试双向比对，把那类漏项变成编译期 + 测试期都拦得住的问题。
+#[test]
+fn lifecycle_fact_schema_declares_exactly_the_public_fact_kinds() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let schema = read_schema(&root, "schemas/v3-2-6/lifecycle-fact.schema.json");
+    let declared = schema["properties"]["fact_kind"]["enum"]
+        .as_array()
+        .expect("fact_kind enum should exist")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("fact_kind enum values should be strings")
+                .to_owned()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    // 唯一的有意例外：`contract_retention` 是 api map 内部的保留类别，公开 schema 刻意
+    // 不暴露它（见 `v3_2_x_schemas_cover_static_lifecycle_candidate_shapes` 里的负断言）。
+    // 例外必须写在这里而不是靠"忘了加"来实现。
+    const SCHEMA_WITHHELD: &[bw_model::V326LifecycleFactKind] =
+        &[bw_model::V326LifecycleFactKind::ContractRetention];
+
+    let expected = bw_model::V326LifecycleFactKind::ALL
+        .iter()
+        .filter(|kind| !SCHEMA_WITHHELD.contains(kind))
+        .map(|kind| kind.schema_token().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        declared, expected,
+        "lifecycle-fact.schema.json fact_kind must match V326LifecycleFactKind::ALL minus the withheld kinds"
+    );
+
+    // `schema_token` 与 serde 的 rename_all 必须给出同一个字面量，否则上面的比对会用
+    // 一个不存在于 JSON 里的名字去对齐。
+    for kind in bw_model::V326LifecycleFactKind::ALL {
+        let serialized = serde_json::to_value(kind).expect("fact kind should serialize");
+        assert_eq!(
+            serialized.as_str(),
+            Some(kind.schema_token()),
+            "schema_token must equal the serde representation for {kind:?}"
+        );
+    }
+}
+
 fn read_schema(root: &std::path::Path, path: &str) -> serde_json::Value {
     let text = std::fs::read_to_string(root.join(path)).unwrap();
     serde_json::from_str(&text).unwrap()

@@ -39,6 +39,8 @@
         "replace_call",
         "release_call",
         "release_path_proof",
+        "callback_release_use_order",
+        "callback_lifetime_bound",
         "returned_borrow_relation",
         "persisted_returned_borrow",
         "returned_borrow_invalidation_order",

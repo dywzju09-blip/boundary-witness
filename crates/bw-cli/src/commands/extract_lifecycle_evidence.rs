@@ -989,6 +989,7 @@ fn source_fact_suffix(kind: V326LifecycleFactKind) -> &'static str {
         V326LifecycleFactKind::ReleaseCall => "release_call",
         V326LifecycleFactKind::ReleasePathProof => "release_path_proof",
         V326LifecycleFactKind::CallbackReleaseUseOrder => "callback_release_use_order",
+        V326LifecycleFactKind::CallbackLifetimeBound => "callback_lifetime_bound",
         V326LifecycleFactKind::TraitImpl => "trait_impl",
         V326LifecycleFactKind::ContractRetention => "contract_retention",
         V326LifecycleFactKind::ReturnedBorrowRelation => "returned_borrow_relation",
@@ -1054,6 +1055,7 @@ fn static_fact_symbol_path(envelope: &StaticFactEnvelope) -> Option<String> {
         bw_model::StaticFact::ObjectBindingGap(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::ObjectFlow(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::CallbackReleaseUseOrder(fact) => Some(fact.api_id.clone()),
+        bw_model::StaticFact::CallbackLifetimeBound(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::CallbackCapture(_)
         | bw_model::StaticFact::DropSite(_)
         | bw_model::StaticFact::DropPrevention(_)
@@ -1616,6 +1618,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<(String, String)> 
             fact.buffer_site_id.to_string(),
         ],
         bw_model::StaticFact::AtomicOrdering(fact) => vec![fact.site_id.to_string()],
+        bw_model::StaticFact::CallbackLifetimeBound(fact) => vec![fact.site_id.to_string()],
         bw_model::StaticFact::ObjectBindingGap(fact) => vec![fact.site_id.to_string()],
         bw_model::StaticFact::ObjectFlow(fact) => vec![
             fact.site_id.to_string(),
@@ -1643,6 +1646,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         bw_model::StaticFact::ObjectBindingGap(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::ObjectFlow(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::CallbackReleaseUseOrder(fact) => Some(fact.api_id.clone()),
+        bw_model::StaticFact::CallbackLifetimeBound(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::CallbackCapture(_)
         | bw_model::StaticFact::DropSite(_)
         | bw_model::StaticFact::DropPrevention(_)

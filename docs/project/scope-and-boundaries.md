@@ -49,11 +49,16 @@
 | 缺陷类别 | 识别方式 | 现状 |
 | --- | --- | --- |
 | 返回借用寿命不受输入约束（`fn f<'a>(&self) -> &'a T`） | 定义点、类型层自动分析 | 已实现：[`unconstrained_return_lifetime_relation`](../../compiler/bw-rustc/src/rustc_api/mir.rs) 读 HIR 签名，比较输入与输出的生命周期参数集合 |
-| 回调参数 bound 过松（`F: ... + 'c` 绑定在 `&'c self` 上） | **人工写入 API map** | 未自动化。哪些 API 属于回调注册、bound 边界在哪个版本，均由 `contracts/callback-retention/*.toml` 声明 |
+| 回调参数的 bound 绑在函数声明的 lifetime 上（`F: ... + 'c`，而非 `+ 'static`） | 定义点、类型层自动分析 | 已实现：[`callback_lifetime_bounds`](../../compiler/bw-rustc/src/rustc_api/mir.rs) 读 HIR 签名，产出 `callback_lifetime_bound` 静态事实，取值为 `declared_receiver_lifetime` / `declared_free_lifetime` / `static_lifetime` / `no_lifetime_bound` |
+| 该 bound 是否**弱于 C 侧持有期**，即是否构成缺陷 | **人工写入 API map** | 未自动化。哪些 API 属于回调注册、bound 从哪个版本收紧，仍由 `contracts/callback-retention/*.toml` 声明 |
+
+两行的差别是本节的要点：**读出 bound 已经是自动的，判断 bound 不够长仍然不是。**
+
+`declared_receiver_lifetime` 本身不是缺陷——把回调绑在 `&'c mut self` 上，只要回调没被交给一个不受该借用约束的持有方，就完全健全。缺陷需要两半：签名允许的存活期（已自动），以及外部实际持有的时长（仍靠 API map 告知）。
 
 这条边界的直接推论必须写明：
 
-- **接入一个新组件，必须先有人手写 API map，工具才能对它工作。** API map registry 目前也不是「所有组件无需改 compiler 即可扩展」的统一语义注册层。
+- **接入一个新组件，仍然必须先有人手写 API map，工具才能判定缺陷。** 现在少的是后半段而不是全部：bound 的形状不再需要人工声明。API map registry 目前也不是「所有组件无需改 compiler 即可扩展」的统一语义注册层。
 - 因此在回调家族上，工具当前的能力是**验证已知**，不是**发现未知**。用已知 n-day 评测这一层时，"版本边界"部分是循环的——边界是我们写进 map 的。真正非循环的评测只有一种：在**不读 API map** 的前提下重新发现这些 API。
 - 这正是通往 0-day 的主要障碍，也是路线图上阶段 B 要攻的目标。
 
