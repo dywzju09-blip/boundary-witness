@@ -626,6 +626,13 @@ fn witness_plan_schema_declares_exactly_the_serialized_target_fields() {
         }),
         callback_bound_scope: Some(bw_model::V326WitnessCallbackBoundScope {
             verdict: bw_model::V326CallbackBoundVerdict::NonStatic,
+            verdict_source: bw_model::V326CallbackBoundVerdictSource::DerivedFromFacts,
+            derived_verdict: Some(bw_model::V326CallbackBoundVerdict::NonStatic),
+            derived_evidence: vec![
+                "hooks::<impl InnerConnection>::update_hook|declared_receiver_lifetime|unregister_call"
+                    .to_owned(),
+            ],
+            api_map_verdict: Some(bw_model::V326CallbackBoundVerdict::NonStatic),
             non_static_callback_max_version: Some("0.26.1".to_owned()),
             resolved_version: Some("0.26.1".to_owned()),
         }),

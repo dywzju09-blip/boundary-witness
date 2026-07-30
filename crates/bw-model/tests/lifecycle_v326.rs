@@ -7724,6 +7724,188 @@ fn witness_plan_accepts_neutral_controlled_actions() {
     assert_eq!(summary.record_count, 1);
 }
 
+/// 一条最小的静态来源生命周期事实，用于 callback bound 推导的输入。
+fn bound_derivation_fact(
+    candidate_id: &str,
+    fact_kind: bw_model::V326LifecycleFactKind,
+    enclosing_fn: &str,
+    object_ids: Vec<String>,
+) -> bw_model::V326LifecycleFactRecord {
+    bw_model::V326LifecycleFactRecord {
+        schema_version: bw_model::V3_2_6_LIFECYCLE_FACT_SCHEMA_V1.to_owned(),
+        run_id: "run:v326".to_owned(),
+        candidate_id: candidate_id.to_owned(),
+        crate_id: "crate:alpha".to_owned(),
+        fact_id: format!("fact:{candidate_id}:{}", enclosing_fn.len()),
+        fact_kind,
+        source_ref: V326SourceRef {
+            path: "src/hooks.rs".to_owned(),
+            line_start: Some(378),
+            line_end: Some(382),
+            symbol_path: Some(enclosing_fn.to_owned()),
+            text_sha256: None,
+        },
+        // 注册类事实的顶层 symbol_path 是 api_id 而不是函数，推导必须优先读
+        // source_ref.symbol_path；这里刻意填成 api_id 形状把那个顺序钉住。
+        symbol_path: Some("api:alpha:register_callback:register".to_owned()),
+        confidence: V326EvidenceConfidence::High,
+        coverage_state: bw_model::V326CoverageState::Covered,
+        provenance: bw_model::V326LifecycleFactProvenance::source_observation(),
+        object_ids,
+        evidence_refs: vec!["evidence:alpha:0001".to_owned()],
+        notes: Vec::new(),
+    }
+}
+
+fn bound_fact(
+    candidate_id: &str,
+    enclosing_fn: &str,
+    scope_token: &str,
+) -> bw_model::V326LifecycleFactRecord {
+    bound_derivation_fact(
+        candidate_id,
+        bw_model::V326LifecycleFactKind::CallbackLifetimeBound,
+        enclosing_fn,
+        vec![format!("callback_lifetime_bound_scope:{scope_token}")],
+    )
+}
+
+/// **候选不是 join key，enclosing fn 才是。**
+///
+/// 实测 rusqlite 0.26.1：`hooks::<impl InnerConnection>::update_hook` 上的
+/// `callback_lifetime_bound` 与同一函数的 `unregister_call` 落在**不同候选**里（候选是按
+/// boundary 切的）。按候选归组会让 76 个候选全部判成 `Undecided`——一个看起来完全正常、
+/// 实际什么都没判出来的结果。这条测试就是那个回归的守卫。
+#[test]
+fn callback_bound_verdict_joins_on_the_enclosing_fn_not_the_candidate() {
+    let enclosing = "hooks::<impl inner_connection::InnerConnection>::update_hook";
+    let facts = vec![
+        bound_fact(
+            "candidate:alpha:bound",
+            enclosing,
+            "declared_receiver_lifetime",
+        ),
+        // 边界证据在另一个候选里，同一个函数上。
+        bound_derivation_fact(
+            "candidate:alpha:sibling",
+            bw_model::V326LifecycleFactKind::UnregisterCall,
+            enclosing,
+            vec!["callback:alpha".to_owned()],
+        ),
+    ];
+
+    let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
+    let bound = derived
+        .get("candidate:alpha:bound")
+        .expect("the candidate carrying the bound fact must get a verdict");
+    assert_eq!(
+        bound.verdict,
+        bw_model::V326CallbackBoundVerdict::NonStatic,
+        "a sibling candidate's unregister call on the same fn still proves foreign retention"
+    );
+    assert_eq!(
+        bound.evidence,
+        vec![format!(
+            "{enclosing}|declared_receiver_lifetime|unregister_call"
+        )],
+        "evidence must name the fn, the bound and what proved the retention"
+    );
+}
+
+/// 签名松但没有任何外部边界事实 → `Undecided`，不是 `NonStatic`。
+///
+/// 把回调绑在 `&'c mut self` 上完全可以是健全的；缺的是"它确实被交给了 C 侧"那一半。
+/// 这条测试防的是把第 2 步的产出直接当成结论。
+#[test]
+fn a_loose_callback_bound_without_foreign_retention_evidence_stays_undecided() {
+    let facts = vec![bound_fact(
+        "candidate:alpha:bound",
+        "functions::<impl Connection>::create_scalar_function",
+        "declared_receiver_lifetime",
+    )];
+
+    let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
+    let bound = derived
+        .get("candidate:alpha:bound")
+        .expect("verdict exists");
+    assert_eq!(bound.verdict, bw_model::V326CallbackBoundVerdict::Undecided);
+    assert!(
+        bound.evidence.is_empty(),
+        "a fn with no foreign boundary fact contributes no evidence"
+    );
+}
+
+#[test]
+fn a_static_callback_bound_with_retention_evidence_reads_as_static() {
+    let enclosing = "hooks::<impl Connection>::progress_handler";
+    let facts = vec![
+        bound_fact("candidate:alpha:tight", enclosing, "static_lifetime"),
+        bound_derivation_fact(
+            "candidate:alpha:tight",
+            bw_model::V326LifecycleFactKind::RegisterCall,
+            enclosing,
+            vec!["callback:alpha".to_owned()],
+        ),
+    ];
+
+    let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
+    assert_eq!(
+        derived["candidate:alpha:tight"].verdict,
+        bw_model::V326CallbackBoundVerdict::Static,
+        "a tightened bound plus a hand-off is a checked-and-sound result, not missing evidence"
+    );
+}
+
+/// `no_lifetime_bound` 是"签名不表态"，不能倒向任一结论。
+#[test]
+fn a_callback_bound_that_states_nothing_is_undecided_even_with_retention_evidence() {
+    let enclosing = "alpha::register";
+    let facts = vec![
+        bound_fact("candidate:alpha:silent", enclosing, "no_lifetime_bound"),
+        bound_derivation_fact(
+            "candidate:alpha:silent",
+            bw_model::V326LifecycleFactKind::UnregisterCall,
+            enclosing,
+            vec!["callback:alpha".to_owned()],
+        ),
+    ];
+
+    let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
+    assert_eq!(
+        derived["candidate:alpha:silent"].verdict,
+        bw_model::V326CallbackBoundVerdict::Undecided
+    );
+}
+
+/// 一个候选里既有松 bound 又有 `'static` bound 时按松的判：一个不健全的入口就够了。
+#[test]
+fn a_mixed_candidate_takes_the_loosest_callback_bound() {
+    let loose = "hooks::<impl inner_connection::InnerConnection>::update_hook";
+    let tight = "hooks::<impl inner_connection::InnerConnection>::progress_handler";
+    let facts = vec![
+        bound_fact("candidate:alpha:mixed", loose, "declared_free_lifetime"),
+        bound_fact("candidate:alpha:mixed", tight, "static_lifetime"),
+        bound_derivation_fact(
+            "candidate:alpha:mixed",
+            bw_model::V326LifecycleFactKind::UnregisterCall,
+            loose,
+            vec!["callback:alpha".to_owned()],
+        ),
+        bound_derivation_fact(
+            "candidate:alpha:mixed",
+            bw_model::V326LifecycleFactKind::RegisterCall,
+            tight,
+            vec!["callback:alpha".to_owned()],
+        ),
+    ];
+
+    let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
+    assert_eq!(
+        derived["candidate:alpha:mixed"].verdict,
+        bw_model::V326CallbackBoundVerdict::NonStatic
+    );
+}
+
 fn sample_candidate(candidate_id: &str, crate_id: &str) -> bw_model::V32CandidateRecord {
     bw_model::V32CandidateRecord {
         schema_version: bw_model::V3_2_CANDIDATE_SCHEMA_V1.to_owned(),

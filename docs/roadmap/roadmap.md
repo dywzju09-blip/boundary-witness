@@ -68,8 +68,8 @@ V3.3 不是单个 Schema 目录，也不是 scanner-freeze 文件存在。进入
 V3.3 gate 是工程成熟度的门槛，阶段 B 是能力上的下一步，两者可以并行准备但不可互相替代。阶段 B 的内容：
 
 1. **（已完成）** 照 [`unconstrained_return_lifetime_relation`](../../compiler/bw-rustc/src/rustc_api/mir.rs) 的形式，新增从 HIR 签名判断「回调参数的生命周期 bound 是否绑在函数声明的 lifetime 而非 `'static`」的检查。产出 `callback_lifetime_bound` 静态事实，四个取值（`declared_receiver_lifetime` / `declared_free_lifetime` / `static_lifetime` / `no_lifetime_bound`）覆盖健全与不健全两侧——缺证与「已检查且健全」必须可区分；
-2. 输出是**候选 API 列表**，不是结论——候选仍需经阶段 A 的证明链才能升级。`declared_receiver_lifetime` 只说明签名允许回调借用有限存活期的数据，要构成缺陷还需要另一半：外部持有期确实更长。这一半仍来自 API map，是阶段 B 的下一步；
-3. 用现有 n-day 正样本做非循环验证：关掉 API map，看能重新发现几条；
-4. 只有第 3 步有结果之后，才允许把 API map 从「必需输入」降格为「审计加固」。
+2. **（已完成）** 输出是**候选 API 列表**，不是结论——候选仍需经阶段 A 的证明链才能升级。`declared_receiver_lifetime` 只说明签名允许回调借用有限存活期的数据，要构成缺陷还需要另一半：外部持有期确实更长。`derive_v3_2_6_callback_bound_verdicts` 把这两半按**函数**关联起来（不是按候选——候选是按 boundary 切的，两半会落在不同候选里）。人工写的版本边界 `non_static_callback_max_version` 由此降为兜底与审计对照，两路结论不一致时一起留在产物里；
+3. 用现有 n-day 正样本做非循环验证：关掉 API map，看能重新发现几条。**注意第 2 步只降格了版本边界这一个字段**：外部持有期的证据仍是 API map 分类出来的 register / unregister 事实，所以「不读 API map」这一条尚未成立；
+4. 只有第 3 步有结果之后，才允许把 API map 整体从「必需输入」降格为「审计加固」。
 
 在阶段 B 交付前，接入任一新组件都仍需先人工编写 API map。

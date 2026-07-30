@@ -73,9 +73,19 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
         .take(args.limit)
         .collect::<Vec<_>>();
 
-    let registration_apis = match &args.facts {
-        Some(facts_path) => registration_api_by_candidate(facts_path, args.max_line_bytes)?,
-        None => BTreeMap::new(),
+    let (registration_apis, derived_bounds) = match &args.facts {
+        Some(facts_path) => {
+            let facts =
+                read_jsonl::<bw_model::V326LifecycleFactRecord>(facts_path, args.max_line_bytes)?
+                    .into_iter()
+                    .map(|located| located.value)
+                    .collect::<Vec<_>>();
+            (
+                registration_api_by_candidate(&facts),
+                bw_model::derive_v3_2_6_callback_bound_verdicts(&facts),
+            )
+        }
+        None => (BTreeMap::new(), BTreeMap::new()),
     };
     let api_maps = load_api_map_index(&args.api_maps)?;
     let resolved_dependencies = match &args.resolved_dependencies {
@@ -115,6 +125,7 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
             &registration_apis,
             &api_maps,
             &resolved_dependencies,
+            &derived_bounds,
         );
         match &plan.target {
             None => plan.notes.push(
@@ -169,13 +180,10 @@ pub fn run(args: BuildWitnessPlanArgs) -> Result<CommandStatus, CliError> {
 /// api_id 只存在于事实的 `symbol_path` 上，graph 与 ranked candidate 都不携带它，
 /// 因此没有事实输入时 plan 无法绑定到具体 API。
 fn registration_api_by_candidate(
-    facts_path: &std::path::Path,
-    max_line_bytes: usize,
-) -> Result<BTreeMap<String, String>, CliError> {
-    let facts = read_jsonl::<bw_model::V326LifecycleFactRecord>(facts_path, max_line_bytes)?;
+    facts: &[bw_model::V326LifecycleFactRecord],
+) -> BTreeMap<String, String> {
     let mut apis = BTreeMap::<String, String>::new();
-    for located in facts {
-        let fact = located.value;
+    for fact in facts {
         if fact.fact_kind != bw_model::V326LifecycleFactKind::RegisterCall {
             continue;
         }
@@ -197,7 +205,7 @@ fn registration_api_by_candidate(
             }
         }
     }
-    Ok(apis)
+    apis
 }
 
 /// `crate:rusqlite:0.31.0` -> `("rusqlite", "0.31.0")`。
@@ -216,6 +224,7 @@ fn witness_target_for_candidate(
     registration_apis: &BTreeMap<String, String>,
     api_maps: &ApiMapIndex,
     resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
+    derived_bounds: &BTreeMap<String, bw_model::V326DerivedCallbackBound>,
 ) -> Option<bw_model::V326WitnessTarget> {
     let registration_source_ref = graph
         .objects
@@ -228,6 +237,7 @@ fn witness_target_for_candidate(
         registration_apis,
         api_maps,
         resolved_dependencies,
+        derived_bounds,
         registration_source_ref,
         Some(observed_shape_for_candidate(candidate, graph)),
     )
@@ -277,6 +287,7 @@ fn witness_target_from_parts(
     registration_apis: &BTreeMap<String, String>,
     api_maps: &ApiMapIndex,
     resolved_dependencies: &BTreeMap<String, BTreeMap<String, String>>,
+    derived_bounds: &BTreeMap<String, bw_model::V326DerivedCallbackBound>,
     registration_source_ref: Option<bw_model::V326SourceRef>,
     observed_shape: Option<bw_model::V326WitnessObservedShape>,
 ) -> Option<bw_model::V326WitnessTarget> {
@@ -299,6 +310,7 @@ fn witness_target_from_parts(
         api_id,
         api_crate.as_ref(),
         &api_maps.non_static_callback_max_versions,
+        derived_bounds.get(candidate_id),
     ));
     Some(bw_model::V326WitnessTarget {
         api_id: api_id.clone(),
@@ -396,31 +408,63 @@ fn load_api_map_index(paths: &[PathBuf]) -> Result<ApiMapIndex, CliError> {
     Ok(index)
 }
 
-/// 把 API map 记录的 `'static` 边界与实际解析到的版本比对。
+/// 合出生效的 callback bound 判定：事实优先，API map 兜底。
 ///
-/// 三种情况都收敛到 `Undecided`：没记过边界、没解析出版本、版本不是纯三段数字。
-/// 它们都是缺证，不能当成"这个版本适用"，也不能当成"不适用"——库把 bound 收紧到
-/// `'static` 之后 borrowed capture 在类型层就不成立，猜错任一方向都会让下游拿到
-/// 一条错误的拒绝理由。
+/// 事实推导读的是**被扫版本自己的签名**，不需要有人先把版本边界写进 map，所以它能判的
+/// 时候就该由它判——这正是 API map 从"必需输入"降格为"审计加固"的那一步。
+///
+/// API map 的版本比对仍然保留并一起写进产物。两路结论不一致时谁也不覆盖谁：不一致本身
+/// 就是要被看见的信息（要么 map 的边界写错了，要么事实覆盖不全），静默取一个会把这条
+/// 线索抹掉。
+///
+/// API map 侧三种情况都收敛到 `Undecided`：没记过边界、没解析出版本、版本不是纯三段
+/// 数字。它们都是缺证，不能当成"这个版本适用"，也不能当成"不适用"——库把 bound 收紧到
+/// `'static` 之后 borrowed capture 在类型层就不成立，猜错任一方向都会让下游拿到一条
+/// 错误的拒绝理由。
 fn callback_bound_scope(
     api_id: &str,
     api_crate: Option<&bw_model::V326WitnessApiCrate>,
     non_static_callback_max_versions: &BTreeMap<String, String>,
+    derived: Option<&bw_model::V326DerivedCallbackBound>,
 ) -> bw_model::V326WitnessCallbackBoundScope {
     let boundary = non_static_callback_max_versions.get(api_id);
     let resolved = api_crate.map(|api_crate| api_crate.version.as_str());
-    let verdict = match (boundary, resolved) {
+    let api_map_verdict = match (boundary, resolved) {
         (Some(boundary), Some(resolved)) => {
             match bw_model::plain_version_at_most(resolved, boundary) {
-                Some(true) => bw_model::V326CallbackBoundVerdict::NonStatic,
-                Some(false) => bw_model::V326CallbackBoundVerdict::Static,
-                None => bw_model::V326CallbackBoundVerdict::Undecided,
+                Some(true) => Some(bw_model::V326CallbackBoundVerdict::NonStatic),
+                Some(false) => Some(bw_model::V326CallbackBoundVerdict::Static),
+                None => None,
             }
         }
-        _ => bw_model::V326CallbackBoundVerdict::Undecided,
+        _ => None,
+    };
+    let derived_verdict = derived
+        .map(|derived| derived.verdict)
+        .filter(|verdict| *verdict != bw_model::V326CallbackBoundVerdict::Undecided);
+
+    let (verdict, verdict_source) = match (derived_verdict, api_map_verdict) {
+        (Some(verdict), _) => (
+            verdict,
+            bw_model::V326CallbackBoundVerdictSource::DerivedFromFacts,
+        ),
+        (None, Some(verdict)) => (
+            verdict,
+            bw_model::V326CallbackBoundVerdictSource::ApiMapVersionBoundary,
+        ),
+        (None, None) => (
+            bw_model::V326CallbackBoundVerdict::Undecided,
+            bw_model::V326CallbackBoundVerdictSource::Undecided,
+        ),
     };
     bw_model::V326WitnessCallbackBoundScope {
         verdict,
+        verdict_source,
+        derived_verdict,
+        derived_evidence: derived
+            .map(|derived| derived.evidence.clone())
+            .unwrap_or_default(),
+        api_map_verdict,
         non_static_callback_max_version: boundary.cloned(),
         resolved_version: resolved.map(str::to_owned),
     }
@@ -1066,6 +1110,7 @@ mod witness_target_tests {
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
             &ApiMapIndex::default(),
             &BTreeMap::new(),
+            &BTreeMap::new(),
             None,
             None,
         )
@@ -1084,6 +1129,7 @@ mod witness_target_tests {
                 &BTreeMap::new(),
                 &ApiMapIndex::default(),
                 &BTreeMap::new(),
+                &BTreeMap::new(),
                 None,
                 None
             )
@@ -1101,6 +1147,7 @@ mod witness_target_tests {
                 &apis(&[("candidate:a", "")]),
                 &ApiMapIndex::default(),
                 &BTreeMap::new(),
+                &BTreeMap::new(),
                 None,
                 None
             )
@@ -1117,6 +1164,7 @@ mod witness_target_tests {
                 "crate:rusqlite",
                 &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
                 &ApiMapIndex::default(),
+                &BTreeMap::new(),
                 &BTreeMap::new(),
                 None,
                 None
@@ -1177,6 +1225,7 @@ mod witness_target_tests {
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
             &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
             &resolved(&[("crate:some_app:0.1.0", &[("rusqlite", "0.26.1")])]),
+            &BTreeMap::new(),
             None,
             None,
         )
@@ -1201,6 +1250,7 @@ mod witness_target_tests {
             "crate:rusqlite:0.26.1",
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
             &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
+            &BTreeMap::new(),
             &BTreeMap::new(),
             None,
             None,
@@ -1228,6 +1278,7 @@ mod witness_target_tests {
                 "crate:some_app:0.1.0",
                 &[("openssl", "0.10.66"), ("openssl_sys", "0.9.103")],
             )]),
+            &BTreeMap::new(),
             None,
             None,
         )
@@ -1246,6 +1297,7 @@ mod witness_target_tests {
             "crate:some_app:0.1.0",
             &apis(&[("candidate:a", "api:rusqlite:update_hook:register")]),
             &declaring(&[("api:rusqlite:update_hook:register", &["rusqlite"])]),
+            &BTreeMap::new(),
             &BTreeMap::new(),
             None,
             None,
@@ -1322,6 +1374,7 @@ non_static_callback_max_version = "0.26.1"
                 &apis(&[("candidate:a", api_id)]),
                 &declaring_with_bound(&[(api_id, &["rusqlite"])], &[(api_id, "0.26.1")]),
                 &resolved(&[("crate:bw_app:0.1.0", &[("rusqlite", version)])]),
+                &BTreeMap::new(),
                 None,
                 None,
             )
@@ -1355,6 +1408,95 @@ non_static_callback_max_version = "0.26.1"
             bound("0.26.2-rc.1").verdict,
             bw_model::V326CallbackBoundVerdict::Undecided
         );
+        // 没有事实推导时，生效结论只能来自 API map 的版本比对。
+        assert_eq!(
+            non_static.verdict_source,
+            bw_model::V326CallbackBoundVerdictSource::ApiMapVersionBoundary
+        );
+        assert!(non_static.derived_verdict.is_none());
+    }
+
+    /// 事实能判就由事实判：API map 从"必需输入"降格为"审计加固"就是这一条。
+    ///
+    /// 两路结论都留在产物里。不一致时谁也不覆盖谁——那意味着要么 map 的版本边界写错了，
+    /// 要么事实覆盖不全，静默取一个会把这条线索抹掉。
+    #[test]
+    fn a_fact_derived_callback_bound_verdict_outranks_the_api_map_version_boundary() {
+        let api_id = "api:rusqlite:update_hook:register";
+        let evidence = "hooks::<impl inner_connection::InnerConnection>::update_hook|declared_receiver_lifetime|unregister_call";
+        let derived = BTreeMap::from([(
+            "candidate:a".to_owned(),
+            bw_model::V326DerivedCallbackBound {
+                verdict: bw_model::V326CallbackBoundVerdict::NonStatic,
+                evidence: vec![evidence.to_owned()],
+            },
+        )]);
+        // API map 说这个版本已经越过边界（Static），事实说签名仍是 receiver-scoped。
+        let scope = witness_target_from_parts(
+            "candidate:a",
+            "crate:bw_app:0.1.0",
+            &apis(&[("candidate:a", api_id)]),
+            &declaring_with_bound(&[(api_id, &["rusqlite"])], &[(api_id, "0.26.1")]),
+            &resolved(&[("crate:bw_app:0.1.0", &[("rusqlite", "0.31.0")])]),
+            &derived,
+            None,
+            None,
+        )
+        .expect("the plan must bind")
+        .callback_bound_scope
+        .expect("the bound verdict is always recorded");
+
+        assert_eq!(
+            scope.verdict,
+            bw_model::V326CallbackBoundVerdict::NonStatic,
+            "the signature of the scanned version outranks a hand-written version boundary"
+        );
+        assert_eq!(
+            scope.verdict_source,
+            bw_model::V326CallbackBoundVerdictSource::DerivedFromFacts
+        );
+        assert_eq!(scope.derived_evidence, vec![evidence.to_owned()]);
+        assert_eq!(
+            scope.api_map_verdict,
+            Some(bw_model::V326CallbackBoundVerdict::Static),
+            "the disagreeing api-map verdict must stay visible instead of being overwritten"
+        );
+    }
+
+    /// 事实判不出来时退回 API map，而不是直接记成缺证。
+    #[test]
+    fn an_undecided_derivation_falls_back_to_the_api_map_version_boundary() {
+        let api_id = "api:rusqlite:update_hook:register";
+        let derived = BTreeMap::from([(
+            "candidate:a".to_owned(),
+            bw_model::V326DerivedCallbackBound {
+                verdict: bw_model::V326CallbackBoundVerdict::Undecided,
+                evidence: Vec::new(),
+            },
+        )]);
+        let scope = witness_target_from_parts(
+            "candidate:a",
+            "crate:bw_app:0.1.0",
+            &apis(&[("candidate:a", api_id)]),
+            &declaring_with_bound(&[(api_id, &["rusqlite"])], &[(api_id, "0.26.1")]),
+            &resolved(&[("crate:bw_app:0.1.0", &[("rusqlite", "0.26.1")])]),
+            &derived,
+            None,
+            None,
+        )
+        .expect("the plan must bind")
+        .callback_bound_scope
+        .expect("the bound verdict is always recorded");
+
+        assert_eq!(scope.verdict, bw_model::V326CallbackBoundVerdict::NonStatic);
+        assert_eq!(
+            scope.verdict_source,
+            bw_model::V326CallbackBoundVerdictSource::ApiMapVersionBoundary
+        );
+        assert!(
+            scope.derived_verdict.is_none(),
+            "an undecided derivation must not be recorded as a derived verdict"
+        );
     }
 
     #[test]
@@ -1367,6 +1509,7 @@ non_static_callback_max_version = "0.26.1"
             &apis(&[("candidate:a", api_id)]),
             &declaring(&[(api_id, &["rusqlite"])]),
             &resolved(&[("crate:bw_app:0.1.0", &[("rusqlite", "0.26.1")])]),
+            &BTreeMap::new(),
             None,
             None,
         )
@@ -1385,6 +1528,7 @@ non_static_callback_max_version = "0.26.1"
             "crate:bw_app:0.1.0",
             &apis(&[("candidate:a", api_id)]),
             &declaring_with_bound(&[(api_id, &["rusqlite"])], &[(api_id, "0.26.1")]),
+            &BTreeMap::new(),
             &BTreeMap::new(),
             None,
             None,

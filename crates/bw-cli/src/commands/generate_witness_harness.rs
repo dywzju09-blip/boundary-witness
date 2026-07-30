@@ -755,6 +755,10 @@ mod tests {
         V326WitnessTarget {
             callback_bound_scope: Some(bw_model::V326WitnessCallbackBoundScope {
                 verdict,
+                verdict_source: bw_model::V326CallbackBoundVerdictSource::ApiMapVersionBoundary,
+                derived_verdict: None,
+                derived_evidence: Vec::new(),
+                api_map_verdict: Some(verdict),
                 non_static_callback_max_version: Some("0.26.1".to_owned()),
                 resolved_version: Some(version.to_owned()),
             }),

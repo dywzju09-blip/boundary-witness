@@ -169,10 +169,39 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "verdict"
+        "verdict",
+        "verdict_source"
       ],
       "properties": {
         "verdict": {
+          "enum": [
+            "non_static",
+            "static",
+            "undecided"
+          ]
+        },
+        "verdict_source": {
+          "enum": [
+            "derived_from_facts",
+            "api_map_version_boundary",
+            "undecided"
+          ]
+        },
+        "derived_verdict": {
+          "enum": [
+            "non_static",
+            "static",
+            "undecided"
+          ]
+        },
+        "derived_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "api_map_verdict": {
           "enum": [
             "non_static",
             "static",

@@ -1401,11 +1401,25 @@ pub struct V326WitnessApiCrate {
     pub version: String,
 }
 
-/// 把 API map 记录的 `'static` 边界与实际解析到的版本比对后的结论。
+/// callback bound 的判定结论，以及它是靠什么判出来的。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct V326WitnessCallbackBoundScope {
+    /// 生效结论。事实能判就用事实，判不了才退回 API map 的版本比对。
     pub verdict: V326CallbackBoundVerdict,
+    /// 生效结论出自哪一半。API map 从"必需输入"降格为"审计加固"的可见标志就是这个字段
+    /// 变成 `derived_from_facts`。
+    pub verdict_source: V326CallbackBoundVerdictSource,
+    /// 从事实推导的结论。`None` 表示这一路没有产出。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_verdict: Option<V326CallbackBoundVerdict>,
+    /// 支撑推导结论的可回查依据。空表示没有推导依据。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_evidence: Vec<String>,
+    /// API map 版本比对给出的结论。两路都有结论时必须一起留下，谁也不覆盖谁——
+    /// 不一致本身就是要被看见的信息。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_map_verdict: Option<V326CallbackBoundVerdict>,
     /// API map 中记录的边界：callback bound 还不是 `'static` 的最后一个版本。
     /// `None` 表示这个 api_id 根本没记录过边界。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1413,6 +1427,150 @@ pub struct V326WitnessCallbackBoundScope {
     /// 参与比对的版本，即 [`V326WitnessTarget::api_crate`] 解析到的那个。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_version: Option<String>,
+}
+
+/// 生效的 callback bound 结论出自哪一半。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum V326CallbackBoundVerdictSource {
+    /// 从被扫版本自己的签名事实推导。不需要 API map。
+    DerivedFromFacts,
+    /// 靠 API map 里人工写的 `non_static_callback_max_version` 与解析版本比对。
+    ApiMapVersionBoundary,
+    /// 两路都判不了。
+    Undecided,
+}
+
+/// 从事实推导出的 callback bound 判定。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct V326DerivedCallbackBound {
+    pub verdict: V326CallbackBoundVerdict,
+    /// 每条形如 `<enclosing fn>|<scope token>|<boundary fact kinds>`，让结论可回查到
+    /// 具体是哪个函数、哪种 bound、被哪类外部边界事实支撑。
+    pub evidence: Vec<String>,
+}
+
+/// 能证明"外部持有期长于一次借用"的事实类别。
+///
+/// `unregister_call` / `replace_call` / `release_call` / `release_path_proof` 是最强的：
+/// 存在一个要显式清除才会消失的槽位，本身就说明 C 侧一直握着那个指针。
+/// `register_call` 与 `raw_pointer_escape` 证明交出动作发生过。
+/// 具体命中哪几类会写进 evidence，审计时能看出结论靠的是哪一种。
+const FOREIGN_RETENTION_FACT_KINDS: &[V326LifecycleFactKind] = &[
+    V326LifecycleFactKind::RegisterCall,
+    V326LifecycleFactKind::UnregisterCall,
+    V326LifecycleFactKind::ReplaceCall,
+    V326LifecycleFactKind::ReleaseCall,
+    V326LifecycleFactKind::ReleasePathProof,
+    V326LifecycleFactKind::RawPointerEscape,
+];
+
+/// 判定「回调 bound 是否弱于 C 侧持有期」，只用事实，不读 API map。
+///
+/// 两半合起来才构成缺陷：
+///
+/// 1. `callback_lifetime_bound` 事实说出**签名允许回调活多久**（阶段 B 第 2 步的产出）；
+/// 2. 同一个**函数**里出现外部边界事实，说明这个回调确实被交给了 C 侧，而且那边的槽位
+///    要显式清除才消失——即外部持有期不受那次借用约束。
+///
+/// 只有第 1 半不是缺陷：把回调绑在 `&'c mut self` 上，只要没交出去就完全健全。
+///
+/// **join key 必须是 enclosing fn，不能是 candidate。** 候选是按 boundary 切的，实测
+/// rusqlite 0.26.1：`hooks::<impl InnerConnection>::update_hook` 上的
+/// `callback_lifetime_bound` 与同一函数的 `unregister_call` **落在不同候选里**。按
+/// candidate 归组的话 76 个候选全部判成 `Undecided`——一个看起来完全正常、实际什么都没
+/// 判出来的结果。按 enclosing fn 归组得到 update_hook / commit_hook / rollback_hook
+/// 三条 `NonStatic`。
+///
+/// 返回值按 candidate_id 索引：结论要落到候选上，但证据是跨候选按函数聚起来的。
+#[must_use]
+pub fn derive_v3_2_6_callback_bound_verdicts(
+    facts: &[V326LifecycleFactRecord],
+) -> BTreeMap<String, V326DerivedCallbackBound> {
+    // enclosing fn → 该函数上观察到的外部边界事实类别
+    let mut retention_by_fn = BTreeMap::<String, BTreeSet<&'static str>>::new();
+    for fact in facts {
+        if !FOREIGN_RETENTION_FACT_KINDS.contains(&fact.fact_kind) {
+            continue;
+        }
+        let Some(symbol) = lifecycle_fact_enclosing_symbol(fact) else {
+            continue;
+        };
+        retention_by_fn
+            .entry(symbol)
+            .or_default()
+            .insert(fact.fact_kind.schema_token());
+    }
+
+    // candidate → enclosing fn → 该函数签名给出的 scope token
+    let mut bounds_by_candidate = BTreeMap::<String, BTreeMap<String, BTreeSet<String>>>::new();
+    for fact in facts {
+        if fact.fact_kind != V326LifecycleFactKind::CallbackLifetimeBound {
+            continue;
+        }
+        let Some(symbol) = lifecycle_fact_enclosing_symbol(fact) else {
+            continue;
+        };
+        let tokens = fact.object_ids.iter().filter_map(|object_id| {
+            object_id
+                .strip_prefix("callback_lifetime_bound_scope:")
+                .map(str::to_owned)
+        });
+        bounds_by_candidate
+            .entry(fact.candidate_id.clone())
+            .or_default()
+            .entry(symbol)
+            .or_default()
+            .extend(tokens);
+    }
+
+    let mut derived = BTreeMap::new();
+    for (candidate_id, by_fn) in bounds_by_candidate {
+        let mut evidence = Vec::new();
+        let mut shorter_than_static = false;
+        let mut static_bound = false;
+        for (symbol, tokens) in by_fn {
+            // 没有外部边界事实的函数不参与判定：签名松本身不是缺陷。
+            let Some(retention) = retention_by_fn.get(&symbol) else {
+                continue;
+            };
+            let retention_kinds = retention.iter().copied().collect::<Vec<_>>().join(",");
+            for token in &tokens {
+                evidence.push(format!("{symbol}|{token}|{retention_kinds}"));
+                match token.as_str() {
+                    "declared_receiver_lifetime" | "declared_free_lifetime" => {
+                        shorter_than_static = true;
+                    }
+                    "static_lifetime" => static_bound = true,
+                    // `no_lifetime_bound`：签名不表态，不能当成任一方向的结论。
+                    _ => {}
+                }
+            }
+        }
+        let verdict = if shorter_than_static {
+            V326CallbackBoundVerdict::NonStatic
+        } else if static_bound {
+            V326CallbackBoundVerdict::Static
+        } else {
+            V326CallbackBoundVerdict::Undecided
+        };
+        derived.insert(candidate_id, V326DerivedCallbackBound { verdict, evidence });
+    }
+    derived
+}
+
+/// 事实所属的那个函数。
+///
+/// `source_ref.symbol_path` 是 enclosing fn；顶层 `symbol_path` 对注册类事实是 api_id
+/// （形如 `api:rusqlite:update_hook:unregister`），不是函数，所以顺序不能反。
+fn lifecycle_fact_enclosing_symbol(fact: &V326LifecycleFactRecord) -> Option<String> {
+    fact.source_ref
+        .symbol_path
+        .as_deref()
+        .or(fact.symbol_path.as_deref())
+        .map(str::trim)
+        .filter(|symbol| !symbol.is_empty())
+        .map(str::to_owned)
 }
 
 /// callback bound 边界的判定结果。
