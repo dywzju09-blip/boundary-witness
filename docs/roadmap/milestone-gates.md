@@ -6,7 +6,7 @@
 
 工程 gate 通过与否与创新点是否成立无关。以下三项决定论题能不能立住，必须独立通过：
 
-- **外部基线对照**：在同一 corpus 上运行 Yuga 与 FFIChecker，记录它们在持有期维度上的检出情况。若 Yuga 能检出该维度，N1 的立论需重做；
+- **外部基线对照**：在同一 corpus 上运行 Yuga 与 FFIChecker，记录它们在持有期维度上的检出情况。若 Yuga 能检出该维度，N1 的立论需重做。执行步骤见 [baseline comparison runbook](../experiments/runbooks/baseline-comparison.md)；
 - **外部侧分析端到端**：至少一个库上产出可回查的逃逸证据（roadmap P2）。这是 N1 的前提，缺它则「跨语言联结」无证据；
 - **消融可执行**：关闭 API 清单后能给出召回与精度数字（roadmap P1）。这是 N2 的唯一证据来源。
 

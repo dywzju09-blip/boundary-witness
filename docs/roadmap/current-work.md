@@ -41,7 +41,7 @@
 
 ## 待决
 
-**跑 Yuga 作为地基验证。** 若 Yuga 能检出持有期维度的缺陷，N1 的立论需要重做。这是最便宜也最关键的一次外部验证，建议在 P2 投入之前完成。
+**跑 Yuga 作为地基验证**（步骤见 [baseline comparison runbook](../experiments/runbooks/baseline-comparison.md)）。 若 Yuga 能检出持有期维度的缺陷，N1 的立论需要重做。这是最便宜也最关键的一次外部验证，建议在 P2 投入之前完成。
 
 ## 已知未收口项
 
