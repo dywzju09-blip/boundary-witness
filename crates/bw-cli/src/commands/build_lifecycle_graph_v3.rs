@@ -1,26 +1,25 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{Cursor, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
 use bw_model::{
-    StaticFactEnvelope, V32CandidateRecord, V326LifecycleContractRecord,
-    V326LifecycleEvidenceRecord, V326LifecycleFactOrigin, V326LifecycleFactRecord,
-    V326LifecycleFeatureRecord, V326LifecycleGraphV3Record, build_v3_2_6_lifecycle_graph,
-    build_v3_2_6_lifecycle_graph_v3, derive_v3_2_6_lifecycle_features_with_context,
-    validate_v3_2_6_lifecycle_contracts, validate_v3_2_6_lifecycle_evidence,
-    validate_v3_2_6_lifecycle_facts, validate_v3_2_6_lifecycle_features,
-    validate_v3_2_6_lifecycle_graph_v3, validate_v3_2_candidates,
-    verify_v3_2_6_lifecycle_fact_static_provenance,
+    StaticFactEnvelope, V326LifecycleContractRecord, V326LifecycleEvidenceRecord,
+    V326LifecycleFactOrigin, V326LifecycleFactRecord, V326LifecycleFeatureRecord,
+    V326LifecycleGraphV3Record, build_v3_2_6_lifecycle_graph, build_v3_2_6_lifecycle_graph_v3,
+    derive_v3_2_6_lifecycle_features_with_context, validate_v3_2_6_lifecycle_contracts,
+    validate_v3_2_6_lifecycle_evidence, validate_v3_2_6_lifecycle_facts,
+    validate_v3_2_6_lifecycle_features, validate_v3_2_6_lifecycle_graph_v3,
+    validate_v3_2_candidates, verify_v3_2_6_lifecycle_fact_static_provenance,
 };
 use clap::Args;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl},
+    commands::{DEFAULT_MAX_LINE_BYTES, load_candidates, read_jsonl, write_records},
     exit::{CliError, CommandStatus},
 };
 
@@ -294,86 +293,6 @@ pub fn run(args: BuildLifecycleGraphV3Args) -> Result<CommandStatus, CliError> {
     };
     crate::commands::write_json_stdout(&output)?;
     Ok(CommandStatus::Success)
-}
-
-fn load_candidates(
-    path: &Path,
-    max_line_bytes: usize,
-) -> Result<Vec<V32CandidateRecord>, CliError> {
-    if path.is_file() {
-        return Ok(read_jsonl::<V32CandidateRecord>(path, max_line_bytes)?
-            .into_iter()
-            .map(|located| located.value)
-            .collect());
-    }
-    if path.is_dir() {
-        let candidates_dir = if path.join("candidates").is_dir() {
-            path.join("candidates")
-        } else {
-            path.to_path_buf()
-        };
-        let mut files = fs::read_dir(&candidates_dir)
-            .map_err(|error| {
-                CliError::input("BW-IO", format!("{}: {}", candidates_dir.display(), error))
-            })?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        name.ends_with(".jsonl")
-                            || name.ends_with(".jsonl.zst")
-                            || (name.starts_with("part-")
-                                && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")))
-                    })
-            })
-            .collect::<Vec<_>>();
-        files.sort();
-        if files.is_empty() {
-            return Err(CliError::input(
-                "BW-V326-CANDIDATES-EMPTY",
-                format!(
-                    "目录 {} 中没有找到 candidate JSONL 分片",
-                    candidates_dir.display()
-                ),
-            ));
-        }
-        let mut records = Vec::new();
-        for file in files {
-            records.extend(
-                read_jsonl::<V32CandidateRecord>(&file, max_line_bytes)?
-                    .into_iter()
-                    .map(|located| located.value),
-            );
-        }
-        return Ok(records);
-    }
-    Err(CliError::input(
-        "BW-IO",
-        format!("candidates 路径不存在: {}", path.display()),
-    ))
-}
-
-fn write_records<T: Serialize>(path: &Path, records: &[T]) -> Result<(), CliError> {
-    let mut bytes = Vec::<u8>::new();
-    for record in records {
-        serde_json::to_writer(&mut bytes, record)
-            .map_err(|error| CliError::internal(error.to_string()))?;
-        bytes.push(b'\n');
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = File::create(path)?;
-    if path.extension().is_some_and(|extension| extension == "zst") {
-        zstd::stream::copy_encode(Cursor::new(bytes), file, 0)
-            .map_err(|error| CliError::input("BW-IO", error.to_string()))?;
-    } else {
-        let mut file = file;
-        file.write_all(&bytes)?;
-    }
-    Ok(())
 }
 
 fn write_json_file(path: &Path, value: &impl Serialize) -> Result<(), CliError> {

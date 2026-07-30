@@ -9,7 +9,6 @@ members = [
     "crates/bw-model",
     "crates/bw-oracle",
     "crates/bw-runtime",
-    "crates/bw-rusqlite-v3-adapter",
     "crates/bw-v3-nday-adapter",
 ]
 resolver = "2"

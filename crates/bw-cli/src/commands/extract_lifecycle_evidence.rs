@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{Cursor, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, strip_rust_comments},
+    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, strip_rust_comments, write_records},
     exit::{CliError, CommandStatus},
 };
 
@@ -2537,27 +2537,6 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), CliError
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
             files.push(path);
         }
-    }
-    Ok(())
-}
-
-fn write_records<T: Serialize>(path: &Path, records: &[T]) -> Result<(), CliError> {
-    let mut bytes = Vec::<u8>::new();
-    for record in records {
-        serde_json::to_writer(&mut bytes, record)
-            .map_err(|error| CliError::internal(error.to_string()))?;
-        bytes.push(b'\n');
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = File::create(path)?;
-    if path.extension().is_some_and(|extension| extension == "zst") {
-        zstd::stream::copy_encode(Cursor::new(bytes), file, 0)
-            .map_err(|error| CliError::input("BW-IO", error.to_string()))?;
-    } else {
-        let mut file = file;
-        file.write_all(&bytes)?;
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{Cursor, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -16,7 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, strip_rust_comments},
+    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, strip_rust_comments, write_records},
     exit::{CliError, CommandStatus},
 };
 
@@ -723,27 +723,6 @@ fn sanitize_id(value: &str) -> String {
             }
         })
         .collect()
-}
-
-fn write_records(path: &Path, records: &[V32BoundaryIndexRecord]) -> Result<(), CliError> {
-    let mut bytes = Vec::<u8>::new();
-    for record in records {
-        serde_json::to_writer(&mut bytes, record)
-            .map_err(|error| CliError::internal(error.to_string()))?;
-        bytes.push(b'\n');
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = File::create(path)?;
-    if path.extension().is_some_and(|extension| extension == "zst") {
-        zstd::stream::copy_encode(Cursor::new(bytes), file, 0)
-            .map_err(|error| CliError::input("BW-IO", error.to_string()))?;
-    } else {
-        let mut file = file;
-        file.write_all(&bytes)?;
-    }
-    Ok(())
 }
 
 fn write_log(

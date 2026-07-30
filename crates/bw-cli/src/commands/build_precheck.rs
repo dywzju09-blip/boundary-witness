@@ -1,7 +1,7 @@
 use std::{
     env,
     fs::{self, File},
-    io::{Cursor, Read, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     thread::{self, JoinHandle},
@@ -17,7 +17,7 @@ use clap::Args;
 use serde::Serialize;
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, write_json_stdout},
+    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl, write_json_stdout, write_records},
     exit::{CliError, CommandStatus},
 };
 
@@ -662,27 +662,6 @@ fn with_fallback_attempt(
     record.fallback_failure_class = fallback_failure_class.map(str::to_owned);
     record.fallback_rustflags = Some(fallback_rustflags.to_owned());
     record
-}
-
-fn write_records(path: &Path, records: &[V32BuildabilityRecord]) -> Result<(), CliError> {
-    let mut bytes = Vec::<u8>::new();
-    for record in records {
-        serde_json::to_writer(&mut bytes, record)
-            .map_err(|error| CliError::internal(error.to_string()))?;
-        bytes.push(b'\n');
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = File::create(path)?;
-    if path.extension().is_some_and(|extension| extension == "zst") {
-        zstd::stream::copy_encode(Cursor::new(bytes), file, 0)
-            .map_err(|error| CliError::input("BW-IO", error.to_string()))?;
-    } else {
-        let mut file = file;
-        file.write_all(&bytes)?;
-    }
-    Ok(())
 }
 
 fn write_log(path: &Path, command: &str, stdout: &str, stderr: &str) -> Result<(), CliError> {

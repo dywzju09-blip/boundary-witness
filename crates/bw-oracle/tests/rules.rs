@@ -1,57 +1,13 @@
 use bw_model::{
-    BuildId, CallbackApiEntry, CallbackCaptureFact, CallbackInvokeEvent, CallbackRegisterEvent,
-    CallbackRetentionContract, CallbackUnregisterEvent, CaptureBindEvent, CaptureMode,
-    ContractClause, ContractClauseKind, InstanceId, InvokeRole, ObjectCreateEvent, ObjectFreeEvent,
-    ObjectKind, ObjectSiteFact, ObjectUseEvent, ObjectUseKind, RecordId, RegistrationRole,
-    ReleaseBehavior, RunId, RuntimeEvent, RuntimeEventEnvelope, SemanticSiteKey, SiteId,
-    StaticFact, StaticFactEnvelope, TRACE_SCHEMA_V01, TraceId, TraceStartEvent,
+    CallbackApiEntry, CallbackInvokeEvent, CallbackRetentionContract, CallbackUnregisterEvent,
+    CaptureMode, ContractClause, ContractClauseKind, InvokeRole, ObjectFreeEvent, ObjectUseEvent,
+    ObjectUseKind, RegistrationRole, ReleaseBehavior, RuntimeEvent, RuntimeEventEnvelope,
 };
-use bw_oracle::{Oracle, OracleEngine, StaticFactIndex};
+use bw_oracle::{Oracle, OracleEngine};
 
-fn site(value: &str) -> SiteId {
-    SiteId::from(value)
-}
+mod common;
 
-fn instance(value: &str) -> InstanceId {
-    InstanceId::from(value)
-}
-
-fn static_envelope(record: &str, payload: StaticFact) -> StaticFactEnvelope {
-    StaticFactEnvelope {
-        schema_version: bw_model::STATIC_SCHEMA_V01.to_owned(),
-        record_id: RecordId::from(record),
-        producer: "bw-rustc@test-commit".to_owned(),
-        build_id: BuildId::from("build:test"),
-        artifact: None,
-        source_ref: None,
-        payload,
-    }
-}
-
-fn static_facts(mode: CaptureMode) -> StaticFactIndex {
-    StaticFactIndex::from_envelopes([
-        static_envelope(
-            "fact:object",
-            StaticFact::ObjectSite(ObjectSiteFact {
-                site_id: site("site:object"),
-                semantic_site_key: SemanticSiteKey::from("semantic:object"),
-                type_name: "TrackedState".to_owned(),
-            }),
-        ),
-        static_envelope(
-            "fact:capture",
-            StaticFact::CallbackCapture(CallbackCaptureFact {
-                site_id: site("site:capture"),
-                semantic_site_key: SemanticSiteKey::from("semantic:capture"),
-                callback_site_id: site("site:callback"),
-                object_site_id: site("site:object"),
-                capture_ordinal: 0,
-                capture_mode: mode,
-            }),
-        ),
-    ])
-    .expect("static facts should be valid")
-}
+use common::{event, instance, setup_events, site, static_facts};
 
 fn contract() -> CallbackRetentionContract {
     CallbackRetentionContract {
@@ -121,69 +77,6 @@ fn contract() -> CallbackRetentionContract {
 
 fn oracle(mode: CaptureMode) -> Oracle {
     Oracle::new(static_facts(mode), contract())
-}
-
-fn event(seq: u64, payload: RuntimeEvent) -> RuntimeEventEnvelope {
-    RuntimeEventEnvelope {
-        schema_version: TRACE_SCHEMA_V01.to_owned(),
-        record_id: RecordId::from(format!("event:{seq}")),
-        run_id: RunId::from("run:test"),
-        trace_id: TraceId::from("trace:test"),
-        seq,
-        thread_id: "main".to_owned(),
-        source: "bw-runtime".to_owned(),
-        payload,
-    }
-}
-
-fn setup_events() -> Vec<RuntimeEventEnvelope> {
-    vec![
-        event(
-            0,
-            RuntimeEvent::TraceStart(TraceStartEvent {
-                build_id: BuildId::from("build:test"),
-            }),
-        ),
-        event(
-            1,
-            RuntimeEvent::ObjectCreate(ObjectCreateEvent {
-                instance_id: instance("owner:1"),
-                site_id: site("site:owner"),
-                object_kind: ObjectKind::ExternalOwner,
-                epoch: 0,
-                address_diag: None,
-            }),
-        ),
-        event(
-            2,
-            RuntimeEvent::ObjectCreate(ObjectCreateEvent {
-                instance_id: instance("object:1"),
-                site_id: site("site:object"),
-                object_kind: ObjectKind::Tracked,
-                epoch: 0,
-                address_diag: None,
-            }),
-        ),
-        event(
-            3,
-            RuntimeEvent::CallbackRegister(CallbackRegisterEvent {
-                callback_instance_id: instance("callback:1"),
-                callback_site_id: site("site:callback"),
-                owner_instance_id: instance("owner:1"),
-                registration_site_id: site("site:register"),
-                api_id: "api:register".to_owned(),
-            }),
-        ),
-        event(
-            4,
-            RuntimeEvent::CaptureBind(CaptureBindEvent {
-                callback_instance_id: instance("callback:1"),
-                callback_site_id: site("site:callback"),
-                object_instance_id: instance("object:1"),
-                object_site_id: site("site:object"),
-            }),
-        ),
-    ]
 }
 
 fn observe_all(oracle: &mut Oracle, events: impl IntoIterator<Item = RuntimeEventEnvelope>) {

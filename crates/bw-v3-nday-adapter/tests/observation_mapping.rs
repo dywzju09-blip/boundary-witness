@@ -1,10 +1,11 @@
 use bw_blind_model::{BlindCaseId, BlindCaseStatus, BlindSplit};
 use bw_model::FindingClassification;
-use bw_v3_nday_adapter::{ObservationInput, observation_from_findings};
+use bw_v3_nday_adapter::{ObservationInput, V3_NDAY_ADAPTER, observation_from_findings};
 
 #[test]
 fn confirmed_finding_requires_complete_witness() {
     let observation = observation_from_findings(ObservationInput {
+        identity: &V3_NDAY_ADAPTER,
         suite_id: "suite.v3-1.nday.gate.001".to_owned(),
         split: BlindSplit::Gate,
         case_id: BlindCaseId::parse("blind-0123456789abcdef").unwrap(),
@@ -32,6 +33,7 @@ fn confirmed_finding_requires_complete_witness() {
 #[test]
 fn clean_case_has_no_findings_or_witness() {
     let observation = observation_from_findings(ObservationInput {
+        identity: &V3_NDAY_ADAPTER,
         suite_id: "suite.v3-1.nday.gate.001".to_owned(),
         split: BlindSplit::Gate,
         case_id: BlindCaseId::parse("blind-0123456789abcdef").unwrap(),
@@ -55,6 +57,7 @@ fn clean_case_has_no_findings_or_witness() {
 fn analyzer_signatures_are_rehashed_for_public_observations() {
     let raw_analyzer_signature = "BW-LIFE-001|semantic:buffer:server";
     let observation = observation_from_findings(ObservationInput {
+        identity: &V3_NDAY_ADAPTER,
         suite_id: "suite.v3-1.nday.gate.001".to_owned(),
         split: BlindSplit::Gate,
         case_id: BlindCaseId::parse("blind-0123456789abcdef").unwrap(),

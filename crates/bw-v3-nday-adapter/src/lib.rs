@@ -21,7 +21,38 @@ use sha2::{Digest, Sha256};
 const DEFAULT_CASE_ROOT: &str = "/case";
 const ATTEMPT_COUNT: u32 = 20;
 
+/// 区分两个 adapter 的全部内容。
+///
+/// 这两个 adapter 之前是两个 crate，452 行 `lib.rs` 只差下面这三个字面量，测试文件
+/// 逐字节相同。合并成一个 crate 加两个 bin，但**三个值必须保持各自原样**：它们进入
+/// 公开签名、环境变量约定和 witness 产物，改动任何一个都会让历史 run 的 checksum
+/// 对不上。
+pub struct AdapterIdentity {
+    /// 公开签名的域分隔前缀，参与 SHA-256 输入。
+    pub signature_domain: &'static str,
+    /// 读取 case 根目录的环境变量名。
+    pub case_root_env: &'static str,
+    /// witness 文档写出的 `schema_version`。
+    pub witness_schema_version: &'static str,
+}
+
+/// rusqlite 专用形态。
+pub const RUSQLITE_V3_ADAPTER: AdapterIdentity = AdapterIdentity {
+    signature_domain: "bw-rusqlite-v3-adapter.public-signature/0.1",
+    case_root_env: "BW_RUSQLITE_V3_CASE_ROOT",
+    witness_schema_version: "bw.rusqlite-v3-witness/0.1",
+};
+
+/// 通用 V3 N-day 形态。
+pub const V3_NDAY_ADAPTER: AdapterIdentity = AdapterIdentity {
+    signature_domain: "bw-v3-nday-adapter.public-signature/0.1",
+    case_root_env: "BW_V3_NDAY_CASE_ROOT",
+    witness_schema_version: "bw.v3-nday-witness/0.1",
+};
+
 pub struct ObservationInput {
+    /// 该 observation 属于哪个 adapter 形态。决定公开签名的域前缀。
+    pub identity: &'static AdapterIdentity,
     pub suite_id: String,
     pub split: BlindSplit,
     pub case_id: BlindCaseId,
@@ -65,8 +96,11 @@ pub fn observation_from_findings(input: ObservationInput) -> Result<BlindCaseObs
             .into_iter()
             .map(
                 |(rule_id, classification, normalized_signature, evidence_complete)| {
-                    let normalized_signature =
-                        public_normalized_signature(&rule_id, &normalized_signature);
+                    let normalized_signature = public_normalized_signature(
+                        input.identity,
+                        &rule_id,
+                        &normalized_signature,
+                    );
                     BlindObservedFinding {
                         rule_id,
                         classification,
@@ -82,9 +116,16 @@ pub fn observation_from_findings(input: ObservationInput) -> Result<BlindCaseObs
     Ok(observation)
 }
 
-fn public_normalized_signature(rule_id: &str, analyzer_signature: &str) -> String {
+fn public_normalized_signature(
+    identity: &AdapterIdentity,
+    rule_id: &str,
+    analyzer_signature: &str,
+) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"bw-v3-nday-adapter.public-signature/0.1\0");
+    // 域前缀与其后的 NUL 分两次 update：SHA-256 是流式的，字节序列与原来的单次
+    // `update(b"...\0")` 完全一致，摘要不变。
+    hasher.update(identity.signature_domain.as_bytes());
+    hasher.update(b"\0");
     hasher.update(rule_id.as_bytes());
     hasher.update(b"\0");
     hasher.update(analyzer_signature.as_bytes());
@@ -92,6 +133,8 @@ fn public_normalized_signature(rule_id: &str, analyzer_signature: &str) -> Strin
 }
 
 pub struct AdapterRunOptions {
+    /// 该次运行属于哪个 adapter 形态。决定公开签名域与 witness schema_version。
+    pub identity: &'static AdapterIdentity,
     pub case_root: PathBuf,
     pub work_root: PathBuf,
     pub suite_id: String,
@@ -130,12 +173,13 @@ struct WitnessDocument {
     attempt_dirs: Vec<String>,
 }
 
-pub fn run_from_env() -> Result<()> {
-    let case_root = std::env::var("BW_V3_NDAY_CASE_ROOT")
+pub fn run_from_env(identity: &'static AdapterIdentity) -> Result<()> {
+    let case_root = std::env::var(identity.case_root_env)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_CASE_ROOT));
     let work_root = PathBuf::from(required_env("BW_CHILD_WORK_DIR")?);
     let options = AdapterRunOptions {
+        identity,
         case_root,
         work_root,
         suite_id: required_env("BW_BLIND_SUITE_ID")?,
@@ -181,7 +225,7 @@ pub fn run_adapter(options: AdapterRunOptions) -> Result<()> {
             .with_context(|| format!("create witness directory {}", witness_dir.display()))?;
         let witness_path = witness_dir.join("witness.json");
         let witness = WitnessDocument {
-            schema_version: "bw.v3-nday-witness/0.1".to_owned(),
+            schema_version: options.identity.witness_schema_version.to_owned(),
             case_id: options.case_id.as_str().to_owned(),
             replay_attempts: ATTEMPT_COUNT,
             replay_successes: ATTEMPT_COUNT,
@@ -198,6 +242,7 @@ pub fn run_adapter(options: AdapterRunOptions) -> Result<()> {
         )
     };
     let observation = observation_from_findings(ObservationInput {
+        identity: options.identity,
         suite_id: options.suite_id,
         split: options.split,
         case_id: options.case_id,
