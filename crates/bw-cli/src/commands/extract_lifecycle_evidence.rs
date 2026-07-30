@@ -416,6 +416,11 @@ pub fn run(args: ExtractLifecycleEvidenceArgs) -> Result<CommandStatus, CliError
         &static_facts,
         &candidates_by_id,
     );
+    canonical_static_fact_claimants.extend(canonical_registration_static_fact_claimants(
+        &static_fact_claimants,
+        &static_facts,
+        &candidates_by_id,
+    ));
     canonical_static_fact_claimants.extend(canonical_callback_user_data_static_fact_claimants(
         &static_fact_claimants,
         &static_facts,
@@ -1290,6 +1295,66 @@ fn expand_returned_borrow_chain_static_selections(
         }
         selection.fact_indexes = selected.into_iter().collect();
     }
+}
+
+/// 注册类静态事实的归属仲裁。
+///
+/// 带 callback / user_data site id 的注册事实"连接度高"：两跳扩散让很多候选都碰得到它，
+/// 唯一性门于是把它整条丢掉。实测 rusqlite 0.26.1：`InnerConnection::update_hook` 的
+/// register 事实（源码 546-550，带 callback + user_data site）有 **8 个 claimant**，被
+/// 全部丢弃；同一个函数里只带自身 site id 的 unregister 事实（553-553，1 个 claimant）
+/// 却留了下来。**事实越完整越容易被丢弃，正好反了**，而且丢的是唯一能给 witness plan
+/// 绑定 api_id 的那一类，表现出来只是所有 plan 都"没有 target"。
+///
+/// 仲裁规则：注册事实归**边界正落在这个调用点上**的候选，即 span 与事实源码范围直接重叠
+/// （距离 0）的那个。靠两跳蹭到的候选是邻居，不是所有者。仍然不唯一就不猜，保持丢弃。
+fn canonical_registration_static_fact_claimants(
+    static_fact_claimants: &BTreeMap<String, BTreeSet<String>>,
+    static_facts: &[bw_model::Located<StaticFactEnvelope>],
+    candidates_by_id: &BTreeMap<String, &V32CandidateRecord>,
+) -> BTreeMap<String, String> {
+    let mut canonical = BTreeMap::new();
+    for (identity, claimants) in static_fact_claimants {
+        if claimants.len() <= 1 {
+            continue;
+        }
+        let Some(located) = static_facts
+            .iter()
+            .find(|located| static_fact_identity_key(&located.value) == *identity)
+        else {
+            continue;
+        };
+        if !matches!(
+            located.value.payload,
+            bw_model::StaticFact::RegistrationSite(_)
+        ) {
+            continue;
+        }
+        let source_ref = source_ref_from_static_fact(&located.value);
+        let Some(line_start) = source_ref.line_start else {
+            continue;
+        };
+        let line_end = source_ref.line_end.unwrap_or(line_start);
+        let path = normalize_source_path(&source_ref.path);
+        let owners = claimants
+            .iter()
+            .filter(|candidate_id| {
+                candidates_by_id
+                    .get(candidate_id.as_str())
+                    .is_some_and(|candidate| {
+                        candidate_source_spans(candidate).iter().any(|span| {
+                            span.path == path
+                                && span.distance_to_range(line_start, line_end) == Some(0)
+                        })
+                    })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if owners.len() == 1 {
+            canonical.insert(identity.clone(), owners[0].clone());
+        }
+    }
+    canonical
 }
 
 fn canonical_callback_user_data_static_fact_claimants(
@@ -2630,4 +2695,138 @@ fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
     }
     output
+}
+
+#[cfg(test)]
+mod registration_claimant_tests {
+    use super::*;
+
+    fn candidate_with_span(candidate_id: &str, line: u64) -> V32CandidateRecord {
+        V32CandidateRecord {
+            schema_version: bw_model::V3_2_CANDIDATE_SCHEMA_V1.to_owned(),
+            run_id: "run:v326".to_owned(),
+            candidate_id: candidate_id.to_owned(),
+            crate_id: "crate:rusqlite:0.26.1".to_owned(),
+            boundary_id: format!("boundary:{candidate_id}"),
+            pattern_family: bw_model::V32PatternFamily::RetainedBorrowedCallback,
+            confidence: bw_model::V32CandidateConfidence::NeedsDynamicValidation,
+            evidence_refs: vec![bw_model::V32BoundaryEvidenceRef {
+                kind: V32BoundaryEvidenceKind::SourceSpan,
+                path: "src/hooks.rs".to_owned(),
+                line_start: Some(line),
+                line_end: Some(line),
+            }],
+            api_path: Some("source_api::c993ec".to_owned()),
+            recommended_next_step: bw_model::V32RecommendedNextStep::GenerateLifecycleSubgraph,
+            notes: Vec::new(),
+        }
+    }
+
+    /// 一条跨多行的注册事实，形如 rusqlite 0.26.1 `InnerConnection::update_hook` 里那次
+    /// `ffi::sqlite3_update_hook(..)` 调用（源码 546-550）。
+    fn multiline_registration_fact() -> StaticFactEnvelope {
+        StaticFactEnvelope {
+            schema_version: bw_model::STATIC_SCHEMA_V02.to_owned(),
+            record_id: bw_model::RecordId("fact:registration:update-hook".to_owned()),
+            producer: "fixture".to_owned(),
+            build_id: bw_model::BuildId("build:rusqlite".to_owned()),
+            artifact: Some(bw_model::StaticArtifactIdentity {
+                crate_id: "crate:rusqlite:0.26.1".to_owned(),
+                package_name: "rusqlite".to_owned(),
+                package_version: "0.26.1".to_owned(),
+                target: "lib".to_owned(),
+            }),
+            source_ref: Some(bw_model::StaticSourceRef {
+                path: "src/hooks.rs".to_owned(),
+                line_start: 546,
+                line_end: 550,
+                symbol_path: Some(
+                    "hooks::<impl inner_connection::InnerConnection>::update_hook".to_owned(),
+                ),
+            }),
+            payload: bw_model::StaticFact::RegistrationSite(bw_model::RegistrationSiteFact {
+                site_id: bw_model::SiteId("site:registration:update-hook".to_owned()),
+                semantic_site_key: bw_model::SemanticSiteKey("semantic:update-hook".to_owned()),
+                callback_site_id: Some(bw_model::SiteId("site:callback:update-hook".to_owned())),
+                user_data_site_id: Some(bw_model::SiteId("site:user-data:update-hook".to_owned())),
+                api_id: "api:rusqlite:update_hook:register".to_owned(),
+                role: bw_model::RegistrationRole::Register,
+            }),
+        }
+    }
+
+    /// 注册事实归"边界正落在这个调用点上"的候选，不归靠两跳蹭到的邻居。
+    ///
+    /// 没有这条仲裁，多 claimant 的注册事实会被唯一性门整条丢掉，witness plan 于是拿不到
+    /// api_id，全部退化成"没有 target"——一个看起来正常、实际什么都绑不上的结果。
+    #[test]
+    fn a_multi_claimant_registration_fact_goes_to_the_candidate_whose_span_covers_the_call() {
+        let located = bw_model::Located {
+            path: PathBuf::from("static-facts.jsonl"),
+            line: 1,
+            value: multiline_registration_fact(),
+        };
+        let identity = static_fact_identity_key(&located.value);
+        // 546 与事实的 546-550 直接重叠；515 和 567 只是邻居。
+        let owner = candidate_with_span("candidate:owner", 546);
+        let before = candidate_with_span("candidate:before", 515);
+        let after = candidate_with_span("candidate:after", 567);
+        let candidates_by_id = BTreeMap::from([
+            (owner.candidate_id.clone(), &owner),
+            (before.candidate_id.clone(), &before),
+            (after.candidate_id.clone(), &after),
+        ]);
+        let claimants = BTreeMap::from([(
+            identity.clone(),
+            BTreeSet::from([
+                owner.candidate_id.clone(),
+                before.candidate_id.clone(),
+                after.candidate_id.clone(),
+            ]),
+        )]);
+
+        let canonical = canonical_registration_static_fact_claimants(
+            &claimants,
+            std::slice::from_ref(&located),
+            &candidates_by_id,
+        );
+
+        assert_eq!(
+            canonical.get(&identity).map(String::as_str),
+            Some("candidate:owner"),
+            "the candidate whose boundary is the registration call owns the fact"
+        );
+    }
+
+    /// 两个候选都直接覆盖同一个调用点时不猜，保持丢弃。
+    #[test]
+    fn two_overlapping_candidates_leave_the_registration_fact_unclaimed() {
+        let located = bw_model::Located {
+            path: PathBuf::from("static-facts.jsonl"),
+            line: 1,
+            value: multiline_registration_fact(),
+        };
+        let identity = static_fact_identity_key(&located.value);
+        let first = candidate_with_span("candidate:first", 546);
+        let second = candidate_with_span("candidate:second", 548);
+        let candidates_by_id = BTreeMap::from([
+            (first.candidate_id.clone(), &first),
+            (second.candidate_id.clone(), &second),
+        ]);
+        let claimants = BTreeMap::from([(
+            identity.clone(),
+            BTreeSet::from([first.candidate_id.clone(), second.candidate_id.clone()]),
+        )]);
+
+        let canonical = canonical_registration_static_fact_claimants(
+            &claimants,
+            std::slice::from_ref(&located),
+            &candidates_by_id,
+        );
+
+        assert!(
+            canonical.get(&identity).is_none(),
+            "an ambiguous owner must stay unclaimed rather than be guessed"
+        );
+    }
 }

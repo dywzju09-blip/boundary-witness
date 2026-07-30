@@ -52,6 +52,13 @@
 | 回调参数的 bound 绑在函数声明的 lifetime 上（`F: ... + 'c`，而非 `+ 'static`） | 定义点、类型层自动分析 | 已实现：[`callback_lifetime_bounds`](../../compiler/bw-rustc/src/rustc_api/mir.rs) 读 HIR 签名，产出 `callback_lifetime_bound` 静态事实，取值为 `declared_receiver_lifetime` / `declared_free_lifetime` / `static_lifetime` / `no_lifetime_bound` |
 | 该 bound 是否**弱于 C 侧持有期**，即是否构成缺陷 | 事实关联，**但依赖 API map 提供外部边界事实** | 已实现：[`derive_v3_2_6_callback_bound_verdicts`](../../crates/bw-model/src/lifecycle_v326.rs) 要求同一个函数上既有非 `'static` 的 bound，又有 register / unregister / release / raw-pointer-escape 类事实。人工写的 `non_static_callback_max_version` 版本边界降为兜底与审计对照 |
 
+实测（vendored rusqlite 0.26.1，全 feature，**零行调用代码**）：`update_hook`、`commit_hook`、
+`rollback_hook` 三条的 witness plan 里 `callback_bound_scope.verdict_source` 为
+`derived_from_facts`、`verdict` 为 `non_static`，依据是
+`hooks::<impl InnerConnection>::X|declared_receiver_lifetime|register_call,unregister_call`；
+`api_map_verdict` 与之一致，起到交叉验证而非提供结论的作用。`create_scalar_function` 仍落在
+`api_map_version_boundary`——它的 bound 与外部边界事实没有落在同一个函数上，事实这一路判不了。
+
 `declared_receiver_lifetime` 本身不是缺陷——把回调绑在 `&'c mut self` 上，只要回调没被交给一个不受该借用约束的持有方，就完全健全。缺陷需要两半：签名允许的存活期，以及外部实际持有的时长。
 
 **降格的范围必须说准，别把它说大了。** 不再作为权威的只有一个字段：`non_static_callback_max_version`，即"bound 从哪个版本开始收紧"这条人工版本边界。工具现在读被扫版本自己的签名，不用别人告诉它。

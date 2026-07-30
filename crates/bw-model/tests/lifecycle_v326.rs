@@ -7810,6 +7810,20 @@ fn callback_bound_verdict_joins_on_the_enclosing_fn_not_the_candidate() {
         )],
         "evidence must name the fn, the bound and what proved the retention"
     );
+
+    // 判定是**函数**的属性，所以持有另一半的那个候选也必须看得到它。
+    //
+    // 这一条不是对称性洁癖：witness plan 的 api_id 来自 register 事实所在的那个候选，
+    // 而 bound 事实在另一个候选里。只把结论挂给持有 bound 的一侧，拿着 api_id 的候选就
+    // 永远读不到判定，plan 里的 callback_bound_scope 永远停在缺证。
+    let sibling = derived
+        .get("candidate:alpha:sibling")
+        .expect("the candidate carrying the retention half must see the same verdict");
+    assert_eq!(
+        sibling.verdict,
+        bw_model::V326CallbackBoundVerdict::NonStatic
+    );
+    assert_eq!(sibling.evidence, bound.evidence);
 }
 
 /// 签名松但没有任何外部边界事实 → `Undecided`，不是 `NonStatic`。
@@ -7825,13 +7839,9 @@ fn a_loose_callback_bound_without_foreign_retention_evidence_stays_undecided() {
     )];
 
     let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
-    let bound = derived
-        .get("candidate:alpha:bound")
-        .expect("verdict exists");
-    assert_eq!(bound.verdict, bw_model::V326CallbackBoundVerdict::Undecided);
     assert!(
-        bound.evidence.is_empty(),
-        "a fn with no foreign boundary fact contributes no evidence"
+        derived.get("candidate:alpha:bound").is_none(),
+        "no entry at all is the missing-evidence answer: a loose bound alone must not become a verdict"
     );
 }
 
@@ -7871,9 +7881,9 @@ fn a_callback_bound_that_states_nothing_is_undecided_even_with_retention_evidenc
     ];
 
     let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
-    assert_eq!(
-        derived["candidate:alpha:silent"].verdict,
-        bw_model::V326CallbackBoundVerdict::Undecided
+    assert!(
+        derived.get("candidate:alpha:silent").is_none(),
+        "a signature that states nothing must not be turned into a verdict in either direction"
     );
 }
 

@@ -1502,8 +1502,8 @@ pub fn derive_v3_2_6_callback_bound_verdicts(
             .insert(fact.fact_kind.schema_token());
     }
 
-    // candidate → enclosing fn → 该函数签名给出的 scope token
-    let mut bounds_by_candidate = BTreeMap::<String, BTreeMap<String, BTreeSet<String>>>::new();
+    // enclosing fn → 该函数签名给出的 scope token，跨候选聚合
+    let mut bounds_by_fn = BTreeMap::<String, BTreeSet<String>>::new();
     for fact in facts {
         if fact.fact_kind != V326LifecycleFactKind::CallbackLifetimeBound {
             continue;
@@ -1511,49 +1511,100 @@ pub fn derive_v3_2_6_callback_bound_verdicts(
         let Some(symbol) = lifecycle_fact_enclosing_symbol(fact) else {
             continue;
         };
-        let tokens = fact.object_ids.iter().filter_map(|object_id| {
-            object_id
-                .strip_prefix("callback_lifetime_bound_scope:")
-                .map(str::to_owned)
-        });
-        bounds_by_candidate
-            .entry(fact.candidate_id.clone())
-            .or_default()
+        bounds_by_fn
             .entry(symbol)
             .or_default()
-            .extend(tokens);
+            .extend(fact.object_ids.iter().filter_map(|object_id| {
+                object_id
+                    .strip_prefix("callback_lifetime_bound_scope:")
+                    .map(str::to_owned)
+            }));
+    }
+
+    // 判定是**函数**的属性，先按函数定下来。
+    let mut verdict_by_fn = BTreeMap::<String, (V326CallbackBoundVerdict, String)>::new();
+    for (symbol, tokens) in &bounds_by_fn {
+        // 没有外部边界事实的函数不参与判定：签名松本身不是缺陷。
+        let Some(retention) = retention_by_fn.get(symbol) else {
+            continue;
+        };
+        let retention_kinds = retention.iter().copied().collect::<Vec<_>>().join(",");
+        let shorter_than_static = tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "declared_receiver_lifetime" | "declared_free_lifetime"
+            )
+        });
+        let static_bound = tokens.iter().any(|token| token == "static_lifetime");
+        // 一个不健全的入口就够了，所以松的优先。
+        // `no_lifetime_bound`：签名不表态，不能当成任一方向的结论。
+        let (verdict, token) = if shorter_than_static {
+            let token = tokens
+                .iter()
+                .find(|token| {
+                    matches!(
+                        token.as_str(),
+                        "declared_receiver_lifetime" | "declared_free_lifetime"
+                    )
+                })
+                .cloned()
+                .unwrap_or_default();
+            (V326CallbackBoundVerdict::NonStatic, token)
+        } else if static_bound {
+            (
+                V326CallbackBoundVerdict::Static,
+                "static_lifetime".to_owned(),
+            )
+        } else {
+            continue;
+        };
+        verdict_by_fn.insert(
+            symbol.clone(),
+            (verdict, format!("{symbol}|{token}|{retention_kinds}")),
+        );
+    }
+
+    // 候选**在哪些函数里持有判定的任一半**，就看得到那个函数的结论。
+    //
+    // 两半会落在不同候选里，这不是可以绕开的细节：实测 rusqlite 0.26.1，
+    // `InnerConnection::update_hook` 的 bound 事实归 `native-library:0013`，
+    // register 事实归 `callback-registration:0050`。只把结论挂给持有 bound 那一侧的话，
+    // 拿着 api_id 的那个候选永远看不到结论，witness plan 里的判定就永远是缺证。
+    let mut participants = BTreeMap::<String, BTreeSet<String>>::new();
+    for fact in facts {
+        let is_half = fact.fact_kind == V326LifecycleFactKind::CallbackLifetimeBound
+            || FOREIGN_RETENTION_FACT_KINDS.contains(&fact.fact_kind);
+        if !is_half {
+            continue;
+        }
+        let Some(symbol) = lifecycle_fact_enclosing_symbol(fact) else {
+            continue;
+        };
+        if !verdict_by_fn.contains_key(&symbol) {
+            continue;
+        }
+        participants
+            .entry(fact.candidate_id.clone())
+            .or_default()
+            .insert(symbol);
     }
 
     let mut derived = BTreeMap::new();
-    for (candidate_id, by_fn) in bounds_by_candidate {
+    for (candidate_id, symbols) in participants {
         let mut evidence = Vec::new();
-        let mut shorter_than_static = false;
-        let mut static_bound = false;
-        for (symbol, tokens) in by_fn {
-            // 没有外部边界事实的函数不参与判定：签名松本身不是缺陷。
-            let Some(retention) = retention_by_fn.get(&symbol) else {
+        let mut verdict = V326CallbackBoundVerdict::Undecided;
+        for symbol in symbols {
+            let Some((fn_verdict, fn_evidence)) = verdict_by_fn.get(&symbol) else {
                 continue;
             };
-            let retention_kinds = retention.iter().copied().collect::<Vec<_>>().join(",");
-            for token in &tokens {
-                evidence.push(format!("{symbol}|{token}|{retention_kinds}"));
-                match token.as_str() {
-                    "declared_receiver_lifetime" | "declared_free_lifetime" => {
-                        shorter_than_static = true;
-                    }
-                    "static_lifetime" => static_bound = true,
-                    // `no_lifetime_bound`：签名不表态，不能当成任一方向的结论。
-                    _ => {}
-                }
+            evidence.push(fn_evidence.clone());
+            if *fn_verdict == V326CallbackBoundVerdict::NonStatic
+                || verdict == V326CallbackBoundVerdict::Undecided
+            {
+                verdict = *fn_verdict;
             }
         }
-        let verdict = if shorter_than_static {
-            V326CallbackBoundVerdict::NonStatic
-        } else if static_bound {
-            V326CallbackBoundVerdict::Static
-        } else {
-            V326CallbackBoundVerdict::Undecided
-        };
+        evidence.sort();
         derived.insert(candidate_id, V326DerivedCallbackBound { verdict, evidence });
     }
     derived
