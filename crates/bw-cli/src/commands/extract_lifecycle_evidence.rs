@@ -337,6 +337,70 @@ pub fn run(args: ExtractLifecycleEvidenceArgs) -> Result<CommandStatus, CliError
         &candidates_by_id,
         &manifest_by_crate,
     );
+    // 借用捕获只能来自编译器事实，不能来自源码文本。
+    //
+    // `classify_line` 的 BorrowEdge 规则要求同一行里同时出现 `&local` 和裸指针转换
+    // ——那是手写 FFI 的形态。安全封装侧的 `move |..| { borrowed.record(1) }` 永远
+    // 命中不了，于是 `has_borrowed_capture` 恒为假，而它恰好是这类漏洞唯一的判别
+    // 特征：排名于是只能靠"检测到多少保护"区分候选，保护检测得越少反而排得越高。
+    //
+    // 归属沿用 `scoped_static_facts_for_candidate` 的选择结果，不另造一套。按源码
+    // 行邻近归属是行不通的：注册在调用那一行，捕获在闭包体内，两者相隔十行以上。
+    // 真正把它们连起来的是共享的 `callback_site_id`，而那正是该函数的 site 跳转
+    // 已经在做的事。
+    for (candidate_id, selection) in &static_selections_by_candidate {
+        let Some(candidate) = candidates_by_id.get(candidate_id) else {
+            continue;
+        };
+        let mut ordinal = 0_u32;
+        for index in &selection.fact_indexes {
+            let envelope = &static_facts[*index].value;
+            let bw_model::StaticFact::CallbackCapture(fact) = &envelope.payload else {
+                continue;
+            };
+            if fact.capture_mode != bw_model::CaptureMode::Borrowed {
+                continue;
+            }
+            let Some(source_ref) = &envelope.source_ref else {
+                continue;
+            };
+            ordinal += 1;
+            evidence.push(V326LifecycleEvidenceRecord {
+                schema_version: bw_model::V3_2_6_LIFECYCLE_EVIDENCE_SCHEMA_V1.to_owned(),
+                run_id: args.run_id.clone(),
+                record_id: format!(
+                    "evidence:{}:{}:borrow-edge:{:04}",
+                    sanitize_id(&candidate.crate_id),
+                    sanitize_id(candidate_id),
+                    ordinal
+                ),
+                crate_id: candidate.crate_id.clone(),
+                candidate_id: candidate_id.clone(),
+                evidence_kind: V326EvidenceKind::BorrowEdge,
+                source_ref: V326SourceRef {
+                    path: source_ref.path.clone(),
+                    line_start: Some(source_ref.line_start),
+                    line_end: Some(source_ref.line_end),
+                    symbol_path: source_ref.symbol_path.clone(),
+                    // 事实侧不带行文本，摘要留空而不是补一个算不出来的值。
+                    text_sha256: None,
+                },
+                // 编译器事实，不是文本猜测。
+                confidence: V326EvidenceConfidence::High,
+                details: serde_json::json!({
+                    "signal": "compiler callback capture with borrowed capture mode",
+                    "capture_ordinal": fact.capture_ordinal,
+                }),
+                notes: vec!["neutral lifecycle evidence; not a defect conclusion".to_owned()],
+            });
+        }
+    }
+    evidence.sort_by(|left, right| {
+        left.candidate_id
+            .cmp(&right.candidate_id)
+            .then_with(|| left.record_id.cmp(&right.record_id))
+    });
+
     let mut static_fact_claimants = BTreeMap::<String, BTreeSet<String>>::new();
     for (candidate_id, selection) in &static_selections_by_candidate {
         for index in &selection.fact_indexes {
