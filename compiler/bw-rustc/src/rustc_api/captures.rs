@@ -37,7 +37,12 @@ pub fn collect_closure_captures<'tcx>(
     let mut observations = Vec::new();
 
     for (ordinal, capture) in tcx.closure_captures(def_id).iter().enumerate() {
-        let capture_mode = capture_mode(capture.info.capture_kind, &callback_def_path, ordinal)?;
+        let capture_mode = capture_mode(
+            capture.info.capture_kind,
+            capture.place.ty(),
+            &callback_def_path,
+            ordinal,
+        )?;
         let capture_span = capture.get_path_span(tcx);
         let object_span = capture.var_ident.span;
         observations.push(CaptureObservation {
@@ -87,20 +92,60 @@ fn captured_field_path<'tcx>(capture: &ty::CapturedPlace<'tcx>) -> Option<String
     (!segments.is_empty()).then(|| segments.join(":"))
 }
 
-fn capture_mode(
+/// 判定一次 upvar 捕获是持有借用还是持有所有权。
+///
+/// `ty::UpvarCapture` 只说明**怎么**捕获（by-ref / by-value），不说明捕获了**什么**。
+/// `move` 闭包的每个 upvar 都是 `ByValue`，哪怕被移动进去的值本身就是一个引用：
+///
+/// ```ignore
+/// let borrowed = owner.get();          // &Counter
+/// let owned = owner.get().clone();     // Counter
+/// conn.update_hook(Some(move |..| { borrowed.record(1) }));  // ByValue，但持有借用
+/// conn.update_hook(Some(move |..| { owned.record(1) }));     // ByValue，真的持有所有权
+/// ```
+///
+/// 只看 `capture_kind` 会把两者都判成 `Owned`，于是 `has_borrowed_capture` 永远不触发
+/// ——本该识别这一整类漏洞的特征恒为假，而排名照常输出分数。所以 `ByValue` 时必须
+/// 追加看被捕获值的类型。
+///
+/// 判据是"类型里含有非 `'static` 的引用"。`&'static T` 不算：它的被引数据活得和进程
+/// 一样久，回调持有它不构成滞留风险，把它算成借用只会制造假阳性。
+fn capture_mode<'tcx>(
     capture_kind: ty::UpvarCapture,
+    captured_ty: ty::Ty<'tcx>,
     callback_def_path: &str,
     ordinal: usize,
 ) -> Result<CaptureMode, CaptureExtractionError> {
     match capture_kind {
         ty::UpvarCapture::ByRef(_) => Ok(CaptureMode::Borrowed),
-        ty::UpvarCapture::ByValue => Ok(CaptureMode::Owned),
+        ty::UpvarCapture::ByValue => {
+            if carries_non_static_reference(captured_ty) {
+                Ok(CaptureMode::Borrowed)
+            } else {
+                Ok(CaptureMode::Owned)
+            }
+        }
         ty::UpvarCapture::ByUse => Err(CaptureExtractionError::UnsupportedCaptureMode {
             callback_def_path: callback_def_path.to_owned(),
             ordinal,
             mode: "by_use",
         }),
     }
+}
+
+/// 类型中是否含有非 `'static` 的引用。
+///
+/// 遍历整个类型而不是只看最外层：`(&Counter, u32)` 或 `Wrapper<&Counter>` 同样把借用
+/// 带进了闭包。region 被擦除（`ReErased`）时按含借用处理——那说明这一层已经拿不到
+/// 生命周期信息，判成 owned 会把缺证当成"安全"。
+fn carries_non_static_reference<'tcx>(ty: ty::Ty<'tcx>) -> bool {
+    ty.walk().any(|arg| match arg.kind() {
+        ty::GenericArgKind::Type(inner) => match inner.kind() {
+            ty::Ref(region, ..) => !region.is_static(),
+            _ => false,
+        },
+        _ => false,
+    })
 }
 
 fn source_path<'tcx>(tcx: TyCtxt<'tcx>, span: Span) -> Result<PathBuf, CaptureExtractionError> {
