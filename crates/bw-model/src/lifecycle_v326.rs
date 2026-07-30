@@ -9026,6 +9026,12 @@ fn validate_lifecycle_fact_object_ids<T>(
                     || object_id.starts_with("object_flow_binding:")
                     || object_id.starts_with("object_flow_binding_member:")
                     || object_id.starts_with("object_flow_binding_prefix:")
+                    // `object_flow_binding_kind:` 与上面三个是同一族，由
+                    // `object_flow_binding_kind_object_id` 产出，`object_flow_auxiliary_object_id`
+                    // 也已经接受它。漏在这张表里的后果是：一旦被扫组件真的走到 hook
+                    // release slot 那条流（rusqlite 开启 `hooks` 时就会），整个 stage
+                    // 直接被验证器拒掉，扫描停在第 7 步。
+                    || object_id.starts_with("object_flow_binding_kind:")
                     || object_id.starts_with("object_binding_gap:")
                     || object_id.starts_with("adapter:")
                     || object_id.starts_with("atomic_operation:")

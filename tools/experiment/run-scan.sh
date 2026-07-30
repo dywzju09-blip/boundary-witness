@@ -27,6 +27,17 @@ Options:
   --witness-limit <n>      Witness plans to emit. Default: 10
   --toolchain <name>       Toolchain the rustc wrapper links against. Default: nightly-2026-07-08
   --cargo-locked           Pass --locked to the cargo stages. Off by default
+  --all-features           Enable every cargo feature of the scanned crate
+  --no-default-features    Disable the scanned crate's default features
+  --features <list>        Comma-separated cargo features to enable
+
+Feature selection reaches both build-precheck and extract-static-facts, and the
+default selection is a real choice rather than the absence of one. FFI binding
+crates usually gate their callback surface behind non-default features: rusqlite
+compiles neither `hooks` nor `functions` by default, so a default scan sees no
+`ffi::sqlite3_update_hook` registration at all and reports the crate as having no
+supported boundary. Use --all-features when the point of the scan is the whole
+callback surface of a component.
   --skip-static-facts      Skip MIR extraction; downstream stages run without static facts
   --keep-partial           Keep the .partial directory when a stage fails
 
@@ -79,6 +90,9 @@ witness_limit="10"
 skip_static_facts="false"
 keep_partial="false"
 cargo_locked="false"
+cargo_all_features="false"
+cargo_no_default_features="false"
+cargo_features=""
 toolchain="nightly-2026-07-08"
 api_maps=()
 
@@ -122,6 +136,13 @@ while [[ $# -gt 0 ]]; do
       toolchain="$2"; shift 2 ;;
     --cargo-locked)
       cargo_locked="true"; shift ;;
+    --all-features)
+      cargo_all_features="true"; shift ;;
+    --no-default-features)
+      cargo_no_default_features="true"; shift ;;
+    --features)
+      [[ $# -ge 2 ]] || fail "--features requires a value"
+      cargo_features="$2"; shift 2 ;;
     --skip-static-facts)
       skip_static_facts="true"; shift ;;
     --keep-partial)
@@ -283,6 +304,24 @@ if [[ "$cargo_locked" == "true" ]]; then
   locked_arg=(--locked)
 fi
 
+# Feature 选择必须同时给 build-precheck 和 extract-static-facts。两者用不同的 feature
+# 跑，前者会判"可构建"而后者拿不到那部分代码的 MIR，缺口落在两个阶段之间没人记录。
+# FFI 绑定 crate 普遍把回调面放在非默认 feature 后面（rusqlite 的 hooks/functions
+# 都不是 default），所以默认选择恰好是最窄的那个。
+if [[ "$cargo_all_features" == "true" && -n "$cargo_features" ]]; then
+  fail "--all-features cannot be combined with --features"
+fi
+feature_arg=()
+if [[ "$cargo_all_features" == "true" ]]; then
+  feature_arg+=(--all-features)
+fi
+if [[ "$cargo_no_default_features" == "true" ]]; then
+  feature_arg+=(--no-default-features)
+fi
+if [[ -n "$cargo_features" ]]; then
+  feature_arg+=(--features "$cargo_features")
+fi
+
 api_map_args=()
 api_map_scan_args=()
 for map in "${api_maps[@]}"; do
@@ -309,7 +348,7 @@ scan() {
     --output "$buildability_path" \
     --logs-root "${partial_run}/logs" \
     --run-id "$run_id" \
-    "${locked_arg[@]}" || return 1
+    "${locked_arg[@]}" "${feature_arg[@]}" || return 1
 
   local static_facts_arg=() mir_coverage_arg=()
   if [[ "$skip_static_facts" != "true" ]]; then
@@ -319,7 +358,7 @@ scan() {
       --logs-root "${partial_run}/logs" \
       --run-id "$run_id" \
       --rustc-wrapper "$rustc_wrapper" \
-      "${locked_arg[@]}" || return 1
+      "${locked_arg[@]}" "${feature_arg[@]}" || return 1
     static_facts_arg=(--static-facts "${static_dir}/static-facts.jsonl")
     mir_coverage_arg=(--mir-coverage "${static_dir}/mir-coverage.json")
   fi

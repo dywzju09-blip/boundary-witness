@@ -48,6 +48,20 @@ pub struct BuildPrecheckArgs {
     cargo: PathBuf,
     #[arg(long)]
     locked: bool,
+    /// 启用被扫 crate 的全部 cargo feature。
+    ///
+    /// 组件扫描下这不是可选项。FFI 绑定 crate 普遍把回调面放在非默认 feature 后面
+    /// ——rusqlite 的 `hooks`、`functions`、`collation`、`vtab` 都不是 default。默认
+    /// features 下那些模块被 `#[cfg]` 掉，precheck 说"可构建"，而真正含注册点的代码
+    /// 从未参与编译。precheck 的判定必须与后续 MIR 提取用同一组 feature，否则前者
+    /// 通过、后者无事实，缺口落在两个阶段之间没人记。
+    #[arg(long = "all-features")]
+    all_features: bool,
+    #[arg(long = "no-default-features")]
+    no_default_features: bool,
+    /// 显式 feature 列表，逗号分隔。与 `--all-features` 互斥。
+    #[arg(long)]
+    features: Option<String>,
     #[arg(long)]
     timeout_seconds: Option<u64>,
     #[arg(long, default_value_t = DEFAULT_MAX_LINE_BYTES)]
@@ -62,10 +76,21 @@ struct BuildPrecheckOutput {
     failed_count: u64,
     fallback_attempt_count: u64,
     fallback_buildable_count: u64,
+    /// 本次 precheck 实际使用的 feature 选择。
+    ///
+    /// 必须落在产物里：`buildable` 只对某一组 feature 成立，不记下来的话，读结果的人
+    /// 无法判断"可构建"覆盖了这个 crate 的哪一部分表面。
+    feature_selection: String,
     output: String,
 }
 
 pub fn run(args: BuildPrecheckArgs) -> Result<CommandStatus, CliError> {
+    if args.all_features && args.features.is_some() {
+        return Err(CliError::input(
+            "BW-PRECHECK-FEATURE-SELECTION",
+            "--all-features 不能与 --features 同时使用",
+        ));
+    }
     let manifest_records =
         read_jsonl::<V32CorpusManifestRecord>(&args.manifest, args.max_line_bytes)?;
     validate_v3_2_corpus_manifest(manifest_records.clone())?;
@@ -104,10 +129,33 @@ pub fn run(args: BuildPrecheckArgs) -> Result<CommandStatus, CliError> {
             .iter()
             .filter(|record| record.fallback_status == Some(V32BuildabilityStatus::Buildable))
             .count() as u64,
+        feature_selection: feature_selection_label(&args),
         output: args.output.display().to_string(),
     };
     write_json_stdout(&summary)?;
     Ok(CommandStatus::Success)
+}
+
+/// 把 feature 选择压成一个可读标签，写进 summary。
+///
+/// `default` 不是"没有选择"，它是一个**具体的**选择，而且对 FFI 绑定 crate 通常是
+/// 最窄的那个：rusqlite 在 default 下不编译 `hooks`/`functions`，回调注册点整个不存在。
+fn feature_selection_label(args: &BuildPrecheckArgs) -> String {
+    let mut parts = Vec::new();
+    if args.all_features {
+        parts.push("all-features".to_owned());
+    }
+    if args.no_default_features {
+        parts.push("no-default-features".to_owned());
+    }
+    if let Some(features) = &args.features {
+        parts.push(format!("features={features}"));
+    }
+    if parts.is_empty() {
+        "default".to_owned()
+    } else {
+        parts.join(",")
+    }
 }
 
 fn precheck_one(
@@ -457,6 +505,15 @@ fn cargo_check_command(args: &BuildPrecheckArgs, cargo_toml: &Path, target: &str
         .arg("--quiet");
     if args.locked {
         command.arg("--locked");
+    }
+    if args.all_features {
+        command.arg("--all-features");
+    }
+    if args.no_default_features {
+        command.arg("--no-default-features");
+    }
+    if let Some(features) = &args.features {
+        command.arg("--features").arg(features);
     }
     if args.target.is_some() {
         command.arg("--target").arg(target);
