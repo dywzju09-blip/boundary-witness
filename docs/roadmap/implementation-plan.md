@@ -117,7 +117,7 @@ enum Verdict {
 
 ### 代码入口
 
-`crates/bw-model/src/static_fact.rs`、`crates/bw-model/src/lifecycle_v326.rs`、`crates/bw-model/src/site.rs`、`compiler/bw-rustc/src/domain.rs`。
+`crates/bw-model/src/static_fact.rs`、`crates/bw-model/src/lifecycle_v326.rs`、`crates/bw-model/src/id.rs`、`compiler/bw-rustc/src/site.rs`（`SiteDescriptor` 是现成的可扩展入口）、`compiler/bw-rustc/src/domain.rs`。
 
 ### 完成谓词
 

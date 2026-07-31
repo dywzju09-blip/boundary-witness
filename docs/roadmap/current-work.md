@@ -42,7 +42,7 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 | 服务 | C2 的前提 |
 | 状态 | `Planned` |
 | 前置 | 无 |
-| 代码入口 | `crates/bw-model/src/static_fact.rs`、`crates/bw-model/src/lifecycle_v326.rs`、`crates/bw-model/src/site.rs`、`compiler/bw-rustc/src/domain.rs` |
+| 代码入口 | `crates/bw-model/src/static_fact.rs`、`crates/bw-model/src/lifecycle_v326.rs`、`crates/bw-model/src/id.rs`、`compiler/bw-rustc/src/site.rs`（`SiteDescriptor` 是现成的可扩展入口）、`compiler/bw-rustc/src/domain.rs` |
 | 测试入口 | `crates/bw-model/tests/lifecycle_v326.rs`、`crates/bw-model/tests/schema_roundtrip.rs` |
 | 完成谓词 | 两侧事实可在不依赖候选切分的前提下联结；同一调用含多组 callback/userdata 时仍能区分 |
 | 风险 | 低，但必须一次做对，后续每一维都挂在这个键上 |
