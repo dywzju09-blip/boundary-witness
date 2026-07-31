@@ -2,34 +2,59 @@
 
 本文服从 [research thesis](../project/research-thesis.md)。每个阶段都标注它服务哪条创新点；不服务任何创新点的工作不排进路线。
 
-本文于 2026-07-30 全量重写，取代此前所有版本。旧版本的 P0–P7 编号与 N1/N2/N3 创新点编号一律作废。
+本文于 2026-07-30 全量重写，2026-07-31 复审后调整关键路径。旧版本的 P0–P7 编号与 N1/N2/N3 创新点编号一律作废。
 
 当前阶段是 **V3.2.x core-effect hardening**。本文是计划，不是已完成能力的声明。
 
 ## 关键路径
 
 ```text
-PP 猎物存在性探针 ──（决定后续是否投入）──┐
-                                          │
-P0 hand-off 身份与双侧事实模型 ───────────┼─→ P3 关系判定器 ─→ P4 反证合成 ─→ P5 评估
-                                          │
-P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 ───┘
+PF 关系与四 fixture ──（Gate R）──┐
+PC EffectiveCaptureAdmission ─────┤
+                                  ↓
+                     PP 猎物存在性探针（Gate P）──（决定后续是否投入）──┐
+                                                                        │
+P0 hand-off 身份与双侧事实模型 ─────────────────────────────────────────┼─→ P3 判定器 ─→ P4 反证合成 ─→ P5 评估
+                                                                        │
+P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 + Q4′ 清槽 ──────────────────────┘
 ```
 
-**执行顺序上最重要的一条：PP 排在一切之前。** 它成本约为 P1+P2 的百分之一，却能否定整条路线。此前的路线图从设计直接跳到最贵的外部侧实现，没有先问「还有没有东西可找」。
+**执行顺序上最重要的两条：**
+
+1. **PF 排在一切之前。** 关系错了，后面所有测量都在测错的东西。它的外部侧用手写 C stub，与 P1/P2 完全解耦，现在就能做。
+2. **PP 排在外部侧实现之前。** 成本约为 P1+P2 的百分之一，却能否定整条路线。
 
 各阶段的可执行细化（数据结构、算法、完成谓词、非空性检查、Q3 降级记录）见 [implementation plan](implementation-plan.md)。
 
+## PF — 核心关系与四个 matched fixture
+
+服务 [Gate R](milestone-gates.md#gate-r关系正确性)。
+
+实现 [research thesis §2.4](../project/research-thesis.md) 的轨迹可行性关系，三类生命周期（referent / allocation / registration）分开建模，用四个 matched fixture 验证。**外部侧用手写 C stub，不需要 LLVM IR 流水线。**
+
+- 风险：低
+- 完成谓词：四条 fixture 全判对，且 fixture 2 与 3（Rust 侧逐字节相同、只有 C stub 不同）上 Full 能分开而 Rust-only 不能
+- **失败动作**：fixture 2/3 分不开则外部侧对 C2 无判别力，转路线 B
+
+## PC — `EffectiveCaptureAdmission`
+
+服务 PP 的正确性，可与 PF 并行。
+
+把语法四态换成语义取值。`fn register<F: Fn()>` 的「无 bound」是**允许捕获借用**，`dyn Fn` 的省略 lifetime 默认 `'static`——现有实现把这两种语义相反的情况合并了。
+
+- 风险：中
+- 完成谓词：`dyn Fn` 与泛型 `F: Fn` 两个 fixture 落到相反取值
+
 ## PP — 猎物存在性探针
 
-服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。
+服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：PC。
 
-在 300–500 个 FFI crate 上运行已实现的 Rust-only 前端，统计「safe API + 非 `'static` 的 Fn bound + 同函数内 FFI 注册」的位置数量。
+在 300–500 个 FFI crate 上运行 Rust-only 前端，统计 **Tier A** 交出点：`PermitsNonStaticCapture` + dataflow 到达精确 extern 参数 + L1 可分析。仅语法共现的 Tier B 只作探索性筛选。
 
-- 复用：`callback_lifetime_bounds` 四态判定，已实现且不依赖 API 清单
 - 风险：低
-- 完成谓词：候选池表，区分已调优与未调优 crate
-- **失败动作**：候选池过小则转路线 C（经验研究），不投入 P1/P2
+- 完成谓词：候选池表，分列 Tier A/B，标注 IR tier，区分已调优与未调优；判据用置信界
+- 运行前必须完成 family-level sealed split，默认只返回盲化聚合统计
+- **失败动作**：候选池不足以支撑确认集则转路线 C，不投入 P1/P2
 
 ## P0 — hand-off 身份与双侧事实模型
 
@@ -43,9 +68,9 @@ P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 ───┘
 
 **这一层不是创新点**，是任何跨语言分析的基本前提。见 [research thesis §3](../project/research-thesis.md)。
 
-## P1 — 外部侧 Q1：逃逸
+## P1 — 外部侧 Q1：逃逸（前提，非判别项）
 
-服务 C2。
+服务 C2 的前提。**Q1 是前提不是判别项**——它提供槽位身份，判别力在 Q4′。
 
 判定外部函数的指针形参是否到达「调用返回后仍存活」的存储。只支持外部 C 源码随构建提供的 crate（L1），其余写入 limitation。
 
@@ -54,13 +79,13 @@ P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 ───┘
 - 完成谓词：单一库上端到端产出指令级可回查证据
 - 止损：两三周内看不到端到端结果，贡献结构需重新设计
 
-## P2 — 外部侧 Q3：晚调
+## P2 — 外部侧 Q3 晚调 与 Q4′ 清槽
 
-服务 C2 的核心判据。**全路线风险最高的一段。**
+服务 C2。**全路线风险最高的一段。**
 
-完整 Q3 需要全库可达性加间接调用 callee 解析。**首期降级为「同槽间接调用存在性」**，判定产出 `SupportedIncompatibility (weak)`，由 P4 的反证补上真实可达性证明。降级的确切代价、必须量化的三个指标、以及完整实现的 F1–F4 分阶段计划，全部记在 [implementation plan 的 P2 一节](implementation-plan.md#p2-外部侧-q3晚调含降级方案)。
+完整 Q3 需要全库可达性加间接调用 callee 解析。**首期降级为「同槽间接调用存在性」**，输出 `StaticVerdict = InsufficientEvidence` + `EvidenceGrade = SameSlotInvokeCandidate` + witness obligation，由 P4 的反证补上真实可达性证明。**不得输出任何第四态。** 降级的确切代价、必须量化的三个指标、以及 F1–F4 分阶段计划，全部记在 [implementation plan 的 P2 一节](implementation-plan.md#p2-外部侧-q3-晚调-与-q4-清槽)。
 
-附属查询 Q4′（unregister/replace 是否清空槽位）服务反证的负对照与消融，不作独立创新点。
+**Q4′（unregister/replace 是否在所有路径上清空槽位）已升为主查询之一。** 按 [research thesis §2.6](../project/research-thesis.md)，Q1 的答案在候选集合上可能恒为真，外部侧的判别力全在 Q4′；guard 是否真的保护也由它判定。
 
 - 风险：高
 - Plan B：把范围收为「外部源码随构建提供的 FFI crate」，作为明确 scope 而非失败
@@ -69,7 +94,7 @@ P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 ───┘
 
 服务 C2。
 
-实现 [research thesis §2.4](../project/research-thesis.md) 的判定矩阵，三态输出。把持有期判定的外部侧证据来源从「注册事实推断」换成 Q1/Q3 证据；人工版本边界保留为交叉验证。
+实现 [research thesis §2.4](../project/research-thesis.md) 的轨迹可行性关系（**不是旧的 2×2 矩阵**，那个已因可构造的假阳性与假阴性废除），三个正交维度输出：`StaticVerdict` / `EvidenceGrade` / `WitnessStatus`。外部侧证据来源换成 Q1/Q3/Q4′；人工版本边界保留为交叉验证。
 
 - 风险：低
 - 完成谓词：判定来源为外部侧证据；Full / Rust-only / Foreign-only / manual-oracle 四变体作用于同一 candidate universe
@@ -97,6 +122,8 @@ P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 ───┘
 | 旧 P1「消除 API 清单」 | 立论已被 Yuga 基线否定。结构化推断仍实现，但作工程属性 |
 | 旧 P5「别名与重入维度」 | 持有期一维闭环前不扩维，转 future work |
 | 旧 P6「线程维度」 | 同上 |
+| 旧 2×2 判定矩阵 | guard 造成假阳性、`'static` 不保证分配存活造成假阴性，由轨迹可行性关系取代 |
+| `SupportedIncompatibility (weak)` | 破坏三态模型，由 `EvidenceGrade` + `WitnessStatus` 取代 |
 
 ## 明确的非目标
 

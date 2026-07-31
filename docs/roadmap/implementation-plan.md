@@ -20,50 +20,127 @@
 
 ## 关键路径
 
+2026-07-31 复审后调整：**关系正确性排在一切之前**，它不依赖外部侧流水线。
+
 ```text
-PP 猎物存在性探针 ──（决定后续是否投入）──┐
-                                          │
-P0 hand-off 身份与双侧事实模型 ───────────┼─→ P3 关系判定器 ─→ P4 反证合成 ─→ P5 评估
-                                          │
-P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 ───┘
+PF 关系与四 fixture ──（Gate R）──┐
+PC EffectiveCaptureAdmission ─────┤
+                                  ↓
+                     PP 猎物存在性探针（Gate P）──（决定后续是否投入）──┐
+                                                                        │
+P0 hand-off 身份与双侧事实模型 ─────────────────────────────────────────┼─→ P3 判定器 ─→ P4 反证合成 ─→ P5 评估
+                                                                        │
+P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 + Q4′ 清槽 ──────────────────────┘
 ```
 
-- **PP 排在一切之前。** 它成本最低、否定力最强。
-- **P0 与 P1 可并行起步。**
-- **P2 是关键路径上风险最高的一段**，其降级方案见该节。
+- **PF 排在一切之前**：关系错了，后面所有测量都在测错的东西。它的外部侧用手写 C stub，**与 P1/P2 完全解耦**。
+- **PC 是 PP 的前置**：语法四态会让 PP 系统性错估猎物池。
+- **PP 决定是否投入外部侧实现。**
+- **Q4′ 已从附属查询升为主查询**，见 P2。
+
+---
+
+## PF — 核心关系与四个 matched fixture
+
+**服务 [Gate R](milestone-gates.md#gate-r关系正确性)。前置：无。风险：低。成本：小。**
+
+### 问题
+
+旧的 2×2 判定矩阵（bound 形状 × 外部行为）有可构造的假阳性与假阴性，见 [research thesis §2.5](../project/research-thesis.md)。必须先把关系换成 §2.4 的轨迹可行性形式，并用 fixture 验证它真的能分开该分开的情况。
+
+### 要做
+
+实现 [research thesis §2.4](../project/research-thesis.md) 的关系，三类生命周期 R / A / G 分开建模，然后构造四个 matched fixture。
+
+| # | Rust 侧 | 外部 C stub | 应判 | 检验什么 |
+| --- | --- | --- | --- | --- |
+| 1 | `PermitsNonStaticCapture`，无 guard | 保存 + 晚调 | 不相容 | 基本正确性（正对照） |
+| 2 | `PermitsNonStaticCapture`，返回 `Registration<'a>` guard | 保存 + 晚调，**注销真的清槽** | 相容 | 不得误报 guard 保护的 API |
+| 3 | 与 #2 **完全相同的 Rust 侧** | 保存 + 晚调，**注销没清干净** | 不相容 | **外部侧是否有判别力** |
+| 4 | `RequiresStaticCapture`，分配提前释放 | 保存 + 晚调 | 不相容 | R / A 分离，不得漏报 |
+
+**fixture 2 与 3 的 Rust 侧必须逐字节相同**，只有 C stub 不同。这是本阶段唯一真正重要的设计约束。
+
+### 完成谓词
+
+四条全部判对；且在 2 与 3 上，Full 能分开而 Rust-only 不能。**若 Rust-only 也能分开，说明外部侧在这条关系上没有净贡献**——那是 [Gate A](milestone-gates.md#gate-a外部证据必要性) 的提前失败信号，应转路线 B。
+
+### 非空性检查
+
+把 fixture 3 的 C stub 换成「注销真的清槽」，确认判定翻转为相容且翻转位置符合预期。
+
+---
+
+## PC — `EffectiveCaptureAdmission`
+
+**服务 PP 的正确性。前置：无，可与 PF 并行。风险：中。**
+
+### 问题
+
+现有 `CallbackLifetimeBoundScope` 是**语法**四态。其中 `NoLifetimeBound` 把两种语义相反的情况合并了：
+
+- `fn register<F: Fn()>(f: F)` —— 没有 `'static` **恰恰允许捕获借用**，是最强候选；
+- `Box<dyn Fn()>` —— 省略的 trait object lifetime **默认到 `'static`**，根本不是候选。
+
+**在修正前，PP 会把最强的一类候选记成弱候选。**
+
+### 要做
+
+改为语义取值 `PermitsNonStaticCapture` / `RequiresStaticCapture` / `ContextDependent` / `Unresolved`。归一化至少覆盖：泛型 `F: Fn`；`impl Fn`；`dyn Fn` 的默认 lifetime 规则；容器产生的 implied bound；参数与返回值的 implied lifetime；HRTB；回调参数 lifetime 与捕获环境 lifetime 的区别；registration guard 对 lifetime 的约束。
+
+### 代码入口
+
+`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`；`crates/bw-model/src/static_fact.rs` 的 `CallbackLifetimeBoundScope`。
+
+### 完成谓词
+
+对上列每一种签名形状都有 fixture，且取值与手工判读一致。`benchmarks/compiler-fixtures/callback-lifetime-bound/` 需按新取值扩充。
+
+### 非空性检查
+
+`dyn Fn` 与泛型 `F: Fn` 两个 fixture 必须落到**相反**的取值。若两者仍相同，说明归一化没生效。
 
 ---
 
 ## PP — 猎物存在性探针
 
-**服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：无。风险：低。成本：约为 P1+P2 的百分之一。**
+**服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：PC（否则系统性错估）。风险：低。成本：约为 P1+P2 的百分之一。**
 
 ### 问题
 
-在投入外部侧实现之前必须知道：生态里还有多少个「safe API + 非 `'static` 的 Fn bound + 同函数内 FFI 注册」的位置。这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，猎物池可能已被维护者清空。**若池子只有个位数，[research thesis §7.2](../project/research-thesis.md) 的新发现硬要求无法满足，路线 A 直接死。**
+在投入外部侧实现之前必须知道：生态里还剩多少个**安全客户端可能形成 lifetime separation 的交出点**。这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，猎物池可能已被维护者清空。**若池子不足以支撑 [research thesis §7.8](../project/research-thesis.md) 的确认集与新发现目标，路线 A 不成立。**
 
 ### 为什么现在就能做
 
-Rust 侧的回调 bound 四态判定**已实现**（`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`），不依赖外部侧、不依赖 API 清单。探针只需要把它跑到规模上。
+Rust 侧的回调 bound 判定**已实现**（`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`），不依赖外部侧、不依赖 API 清单。探针需要的是把它按 PC 改成语义取值，加上 Tier A 的 dataflow 判据，再跑到规模上。
 
 ### 要做
 
-在 300–500 个 FFI crate 上运行 Rust-only 前端，统计同时满足以下条件的公开函数：
+在 300–500 个 FFI crate 上运行 Rust-only 前端，按两级统计：
+
+**Tier A（Gate P 的判据）** —— 同时满足：
 
 1. 是安全 API（无 `unsafe fn`）；
 2. 有 Fn 家族的泛型或 trait object 参数；
-3. 该参数的 outlives bound 短于 `'static` 或不存在；
-4. 同一函数体内存在 `extern` 调用。
+3. 该参数的 `EffectiveCaptureAdmission` 为 `PermitsNonStaticCapture`（**语义取值，不是语法四态**，见 PC）；
+4. 回调 / trampoline / userdata 经过程内或**有界过程间 dataflow 到达精确的 extern 参数**；
+5. 能绑定到精确的外部 LLVM IR（L1 tier）。
 
-执行步骤与统计口径见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。
+**Tier B（仅探索性筛选）** —— 回调表面与 `extern` 调用只发生**语法共现**（同函数内出现 extern 调用）。
+
+**Tier B 既不是精确候选，也不是上界**——它同时高估（无关 extern 调用）和低估（helper、RAII 构造器、宏生成桥、多层 wrapper 里的交出）。**不得用 Tier B 数字作 Go/No-Go。**
+
+执行步骤、抽样预注册与 sealed split 见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。
 
 ### 完成谓词
 
-产出一张按 crate 分组的候选池表，区分「已参与本项目开发的 crate」与未调优 crate，并对每个候选记录 bound 形状。**候选池规模与其中未调优部分的占比是 Gate P 的判据。**
+产出一张按 crate 分组的候选池表，分列 Tier A / Tier B，标注 IR acquisition tier，区分「已参与本项目开发的 crate」与未调优 crate，并对每个候选记录 `EffectiveCaptureAdmission` 取值。**判据是未调优、L1 可分析的 Tier A 候选数的置信下界。**
+
+**运行前必须完成 family-level sealed split**，默认由独立 runner 只返回盲化聚合统计——否则按 [research thesis §7.6](../project/research-thesis.md) 整个前瞻池会变成开发集。
 
 ### 非空性检查
 
-在已知含有该形状的 fixture（`benchmarks/compiler-fixtures/callback-lifetime-bound/`）上必须命中；把条件 3 反向后必须落空。
+在已知含有该形状的 fixture（`benchmarks/compiler-fixtures/callback-lifetime-bound/`）上必须命中；把条件 3 反向后必须落空。另需**随机抽审**一部分 Tier A 阳性与候选阴性，估计探针的 PPV 与漏检率——合成 fixture 与反向检查只能发现恒空分类器，**不能证明生态召回率**。
 
 ---
 
@@ -97,17 +174,35 @@ struct HandOffId {
 struct RustContractFact    { hand_off: HandOffId, dimension: Dimension, contract: Contract }
 struct ForeignBehaviorFact { hand_off: HandOffId, dimension: Dimension,
                              behavior: Behavior, evidence: Vec<IrEvidenceRef> }
+/// 三个维度正交，不得合并成一个枚举。见 research thesis §2.7。
 struct CompatibilityVerdict{ hand_off: HandOffId, dimension: Dimension,
                              contract: Contract, behavior: Option<Behavior>,
-                             verdict: Verdict, assumptions: Vec<AssumptionRef>,
+                             static_verdict: StaticVerdict,
+                             evidence_grade: Option<EvidenceGrade>,
+                             witness_status: WitnessStatus,
+                             assumptions: Vec<AssumptionRef>,
                              witness_obligation: Option<WitnessObligation> }
 
-enum Verdict {
+enum StaticVerdict {
     SupportedIncompatibility,
     CompatibleWithinAnalyzedFragment,
     InsufficientEvidence,
 }
+
+enum EvidenceGrade {
+    SameSlotInvokeCandidate,   // 降级 Q3 的上限
+    ReachableMayInvoke,
+    PathSupportedLateInvoke,
+    GuardDefeated,
+}
+
+enum WitnessStatus {
+    NotAttempted, Generated, Executed,
+    ConfirmedCounterexample, Inconclusive,
+}
 ```
+
+**`SupportedIncompatibility (weak)` 及任何第四态一律禁止。** 证据强度由 `EvidenceGrade` 承载，反证结果由 `WitnessStatus` 承载。
 
 `Dimension` 取 [research thesis §4](../project/research-thesis.md) 的八维；当前只实例化 `HoldPeriod`。
 
@@ -131,13 +226,19 @@ enum Verdict {
 
 ---
 
-## P1 — 外部侧 Q1：逃逸
+## P1 — 外部侧 Q1：逃逸（前提，非判别项）
 
-**服务 C2。前置：无，可与 P0 并行。风险：中。**
+**服务 C2 的前提。前置：无，可与 P0 并行。风险：中。**
 
 ### 查询定义
 
 > 对外部函数 `f` 的指针形参 `p`，`p` 是否到达一处「`f` 返回后仍存活」的存储。
+
+### 定位说明
+
+**Q1 是前提，不是判别项。** 进入候选集合的 API 按定义都带注册语义，因此 Q1 的答案在候选集合上可能几乎恒为「是」，恒为真的项没有判别力。外部侧真正的判别力在 **Q4′（清槽）**，见 [research thesis §2.6](../project/research-thesis.md) 与 P2。
+
+Q1 仍然必须做——它提供槽位身份，Q3 与 Q4′ 都建立在它之上。但**不得把 Q1 的产出当作 C2 的机制证据**。
 
 ### IR 获取分级
 
@@ -173,9 +274,11 @@ enum Verdict {
 
 ---
 
-## P2 — 外部侧 Q3：晚调（含降级方案）
+## P2 — 外部侧 Q3 晚调 与 Q4′ 清槽
 
-**服务 C2 的核心判据。前置：P1。风险：全路线最高。**
+**服务 C2。前置：P1。风险：全路线最高。**
+
+**Q4′ 已从附属查询升为主查询之一**，见 2.5。它是外部侧真正有判别力的部分。
 
 Q3 是判定矩阵右列的那一半——没有它，「逃逸到存储」无法升级为「会在返回后被调用」。**本节记录当前决定的降级、降级的确切代价，以及完整实现的分阶段计划。**
 
@@ -210,9 +313,17 @@ S2 与 S3 是昂贵的：
 
 **降级版不证明的事**：它**不证明**存在一条真实的返回后调用路径。它只证明「存在一个从同一槽位取出函数指针的间接调用点」。该调用点可能不可达、可能被路径条件排除、可能读的是同类型的另一个分配。
 
-**因此降级版单独不足以下 `SupportedIncompatibility`。** 它只能产出 `SupportedIncompatibility (weak)`，必须由 C1 的反证补上真实可达性证明：反证真的跑起来、外部组件真的回调进来，才把「存在同槽间接调用」升级为「确实会被晚调」。
+**因此降级版单独不足以下 `SupportedIncompatibility`。** 按 [research thesis §2.7](../project/research-thesis.md) 的三个正交维度，它的正确输出是：
 
-**降级并非纯粹的损失。** 对能够生成反证的候选，动态执行证据的强度**高于**静态可达性证明——前者是真实发生的，后者是 may-behavior。降级 Q3 的真正损失落在**不能生成反证的候选上**：那里只能停在 `InsufficientEvidence` 或 `weak`，无法给出结论。
+```text
+StaticVerdict   = InsufficientEvidence
+EvidenceGrade   = SameSlotInvokeCandidate
+WitnessObligation = EstablishLateInvoke
+```
+
+**不得输出 `SupportedIncompatibility (weak)` 或任何第四态**——旧版本引入的那个写法破坏三态模型，已废除。必须由 C1 的反证补上真实可达性证明：反证真的跑起来、外部组件真的回调进来，才产生 `WitnessStatus = ConfirmedCounterexample`。**动态确认不改变静态 verdict 的语义。**
+
+**降级并非纯粹的损失。** 对能够生成反证的候选，动态执行证据的强度**高于**静态可达性证明——前者是真实发生的，后者是 may-behavior。降级 Q3 的真正损失落在**不能生成反证的候选上**：那里只能停在 `StaticVerdict = InsufficientEvidence` + `EvidenceGrade = SameSlotInvokeCandidate`，无法给出结论。
 
 这条取舍必须写进论文的 limitation，并且**必须量化**。
 
@@ -222,17 +333,36 @@ S2 与 S3 是昂贵的：
 
 | 指标 | 含义 |
 | --- | --- |
-| 被反证证实的比例 | 降级判据的有效精度下界 |
-| 被反证证伪的比例 | 降级引入的误报，且必须给出误报机制归因 |
-| 无法生成反证的比例 | 降级未被覆盖的部分，即 limitation 的实际规模 |
+| `WitnessStatus = ConfirmedCounterexample` 的比例 | 降级判据的有效精度**下界** |
+| `WitnessStatus = Inconclusive` 的比例 | 反证已执行但未触发。**这不是证伪** |
+| `WitnessStatus = NotAttempted` 的比例 | 无法生成反证，即 limitation 的实际规模 |
+
+**「反证未触发」只能记 `Inconclusive`，不得记为候选被证伪。** 有限次动态执行不能证伪一个 may-property——被判 `MayInvokeAfterReturn` 的槽位可能需要特定输入、特定并发交错或特定配置才会走到那条路径。把 `Inconclusive` 记成误报，会系统性地高估降级判据的错误率，并可能导致错误地放弃真实缺陷。
 
 这三个数字是论文里 Q3 降级 limitation 的全部内容。没有它们，降级就是一个未量化的弱点。
 
-### 2.5 附属查询 Q4′：清槽
+### 2.5 Q4′ 清槽：外部侧真正的判别项
 
-> `unregister` / `replace` 类外部符号是否把槽 `S` 写回空值。
+> `unregister` / `replace` 类外部符号是否在**所有相关路径上**把槽 `S` 写回空值。
 
-范围窄，与 Q1 共用传播框架。它服务两件事：C1 反证中 `unregister-before-drop` 负对照的义务；[research thesis §7.6](../project/research-thesis.md) 中 `Full − unregister analysis` 这一项消融。**不作为独立创新点。**
+**2026-07-31 复审后从附属查询升为主查询。** 理由见 [research thesis §2.6](../project/research-thesis.md)：Q1 的答案在候选集合上可能恒为真，判别力全在这一项。
+
+要回答的四个子问题：
+
+| 子问题 | 为什么 Rust 侧看不见 |
+| --- | --- |
+| 注销是否在**所有路径**上清空槽位 | Rust 侧只看到 `Drop` impl 调了某个外部函数，看不到它内部是否真的清了 |
+| `replace` 的覆盖语义 | 是覆盖旧槽、还是追加到列表、还是写到第二个槽 |
+| 是否存在**绕过 guard 的第二条晚调路径** | 另一个外部入口可能从别的槽位读到同一个指针 |
+| 同一槽位是否被多个 registration instance 共享 | 影响「注销了哪一个」的判定 |
+
+**这也是 guard 有效性的判据来源。** [research thesis §2.4](../project/research-thesis.md) 中「registration guard 否定 `SafeLifetimeSeparationPossible`」这一条**依赖 Q4′**——guard 只有在其 drop 路径真的清空槽位时才成立。没有 Q4′，guard 只能记 `InsufficientEvidence`，不能记「相容」。
+
+`GuardDefeated` 这一 `EvidenceGrade` 取值即由本查询产生。
+
+它同时服务：C1 反证中 `unregister-before-drop` 负对照的义务；[research thesis §7.7](../project/research-thesis.md) 中 `Full − unregister analysis` 这一项消融；PF 阶段 fixture 2 与 3 的分离。
+
+范围仍然窄，与 Q1 共用传播框架。**它本身不是独立创新点**——创新点是把它接进 §2.4 的关系里。
 
 ### 2.6 完整 Q3 的未来工作计划
 
@@ -245,11 +375,17 @@ S2 与 S3 是昂贵的：
 | **F3 路径条件** | 判定该间接调用是否受「是否已注册」的守卫控制（如 `if (db->xCallback) db->xCallback(...)`） | 能区分「无条件调用」与「注册后才可能调用」 | 把「存在可达调用点」提升为「注册后必然可被调用」，此时静态判定可独立支撑 `SupportedIncompatibility` |
 | **F4 与清槽的交互** | 把 Q4′ 的清槽 effect 接入 F3 的路径条件，给出完整的 release protocol | 能判定「注销后该路径不再可达」 | 判定器可输出精确的 release 义务，而不只是「存在需清除的槽」 |
 
-**F1–F4 全部完成后，Q3 不再依赖反证补证**，降级判据退化为快速预筛。在此之前，`SupportedIncompatibility` 的完整形式必须包含反证。
+**F1–F4 完成后应称为「declared abstraction 内的高精度 Q3」，不得称为独立确认。** 即使四个阶段全做完，静态分析仍不能自动证明：抽象路径条件可满足；任意导出入口可从 safe Rust wrapper 到达；register 与 invoke 对应同一个运行时实例；保守的间接调用边不是虚假边；线程入口、动态链接与别名关系完整。
+
+`if (db->xCallback) { db->xCallback(...); }` 只说明存在一个受注册状态约束的 **may-call 形状**，不说明「注册后必然可被调用」。
+
+因此 F1–F4 提高的是 `EvidenceGrade`（从 `SameSlotInvokeCandidate` 升到 `PathSupportedLateInvoke`），**不改变「`SupportedIncompatibility` 的完整形式需要反证或人工 ground truth」这一结论**。降级判据在 F1–F4 之后退化为快速预筛。
 
 ### 2.7 P2 的完成谓词
 
-单一库上：Q1 与降级 Q3 端到端产出指令级可回查证据；与 Rust 侧契约按 `HandOffId` 联结；`SupportedIncompatibility (weak)` 与 `InsufficientEvidence` 的分界可测试；2.4 的三个指标有采集通路（数值本身在 P4 之后才有）。
+单一库上：Q1、降级 Q3 与 Q4′ 端到端产出指令级可回查证据；与 Rust 侧契约按 `HandOffId` 联结；`StaticVerdict` / `EvidenceGrade` / `WitnessStatus` 三个维度分别可测试；2.4 的三个指标有采集通路（数值本身在 P4 之后才有）。
+
+**Q4′ 必须能分开 PF 阶段的 fixture 2 与 3**——那是它有判别力的最小证明。
 
 ### 2.8 Plan B
 
@@ -261,29 +397,48 @@ S2 与 S3 是昂贵的：
 
 **服务 C2。前置：P0 + P2。风险：低。**
 
-实现 [research thesis §2.4](../project/research-thesis.md) 的判定矩阵，把持有期判定的外部侧证据来源从「注册事实推断」换成 Q1/Q3 证据。人工版本边界保留为**交叉验证**：两路结论都写入产物，不一致时都保留。
+实现 [research thesis §2.4](../project/research-thesis.md) 的关系（**不是旧的 2×2 矩阵，那个已因可构造的假阳性与假阴性废除**），把外部侧证据来源从「注册事实推断」换成 Q1/Q3/Q4′ 证据。人工版本边界保留为**交叉验证**：两路结论都写入产物，不一致时都保留。
 
-### 判定表
+### 判定过程
 
-| Rust 侧契约 | 外部侧行为 | 判定 |
+对每个 `(X, Slot)`，`X ∈ {R referent, A allocation}`，分两步：
+
+**第一步：`SafeLifetimeSeparationPossible(X, Slot)`**
+
+| Rust 侧观察 | 对 X = R | 对 X = A |
 | --- | --- | --- |
-| bound 短于 `'static` | `MayRetain` + `MayInvokeAfterReturn`（完整 Q3） | `SupportedIncompatibility` |
-| bound 短于 `'static` | `MayRetain` + 降级 Q3 判 `MayInvokeAfterReturn` | `SupportedIncompatibility (weak)`，反证义务待补 |
-| bound 短于 `'static` | `SynchronousInvokeOnly` | `CompatibleWithinAnalyzedFragment` |
-| bound 为 `'static` | `MayRetain` | `CompatibleWithinAnalyzedFragment` |
-| bound 为 `'static` | `SynchronousInvokeOnly` | `CompatibleWithinAnalyzedFragment` + `OverRestrictive` 标记 |
-| 任意 | 外部侧不可得 | `InsufficientEvidence` |
-| 无 outlives bound | 任意 | `InsufficientEvidence`（签名不表态） |
+| `EffectiveCaptureAdmission = RequiresStaticCapture` | **否定**（排除借用捕获） | 不否定——`'static` 不约束分配存活 |
+| `EffectiveCaptureAdmission = PermitsNonStaticCapture` | 不否定 | 不否定 |
+| 返回 registration guard，其类型把 Slot 存活绑到 X | **否定**，但**需 Q4′ 证明该 guard 的 drop 路径真的清槽**；否则记 `InsufficientEvidence` | 同左 |
+| owner 的 drop 必然触发注销 | 否定，同样需 Q4′ | 同左 |
+| 分配由外部拥有直到注销 | 不适用 | 否定 |
+| `ContextDependent` / `Unresolved` | `InsufficientEvidence` | `InsufficientEvidence` |
 
-**`'static` 只排除非静态捕获这一子问题，不得解释为回调分配永远存活或 API 整体安全。**
+**第二步：`ForeignLateUsePossible(Slot, X)`**
+
+| 外部侧证据 | 结果 |
+| --- | --- |
+| Q1 判不逃逸 | 否定 → `CompatibleWithinAnalyzedFragment` |
+| Q1 逃逸 + Q3 有晚调路径 + Q4′ 证明无有效 clear | 成立，`EvidenceGrade` 按 Q3 的强度取值 |
+| Q1 逃逸 + Q4′ 证明存在**可证明有效**的 clear 支配所有晚调路径 | 否定 → `CompatibleWithinAnalyzedFragment` |
+| Q1 逃逸 + Q4′ 发现绕过 guard 或未清空的路径 | 成立，`EvidenceGrade = GuardDefeated` |
+| 外部侧不可得 / Q3 只有降级证据 | `InsufficientEvidence` + 相应 `EvidenceGrade` + witness obligation |
+
+两步都成立且 `SameArtifactSlotAndRole` 满足时，`StaticVerdict = SupportedIncompatibility`。
+
+### 三条纪律
+
+- **`'static` 只否定 X = R，不否定 X = A。** 把它当作整体安全会漏掉分配提前释放这一整类。
+- **guard 不是纯 Rust 侧判据。** 没有 Q4′ 就没有「guard 有效」这个结论，只有 `InsufficientEvidence`。
+- **`OverRestrictive` 标签只在闭世界地证明所有相关路径均为同步时可用**；否则最多称 `PotentiallyStrongerThanObservedForeignRequirement`。
 
 ### 完成谓词
 
-判定来源字段显示为外部侧证据；与人工边界不一致的条目被单独列出；Full / Rust-only / Foreign-only / manual-foreign-oracle 四个变体能作用于**同一 candidate universe**。
+判定来源字段显示为外部侧证据；与人工边界不一致的条目被单独列出；Full / Rust-only / Foreign-only / manual-foreign-oracle 四个变体能作用于**同一 candidate universe**；PF 阶段的四个 fixture 全部判对。
 
 ### 非空性检查
 
-把外部侧行为强制为 `SynchronousInvokeOnly`，确认所有 `SupportedIncompatibility` 消失且消失位置符合预期。
+把 Q4′ 的输出强制为「注销总是清槽」，确认 PF fixture 3 从不相容翻转为相容——**这条同时验证判定器接了 Q4′，也验证 Q4′ 确实在起判别作用**。
 
 ---
 
@@ -341,16 +496,17 @@ S2 与 S3 是昂贵的：
 
 实验结构、指标定义、ground truth、数据隔离与消融见 [research thesis §7](../project/research-thesis.md)，不在此重复。执行顺序：
 
-1. PP 猎物探针（Gate P）
-2. LLVM micro/pattern suite
-3. matched pairs（Gate A）
-4. historical vulnerable/fixed pairs
-5. 消融八项
-6. 与 Yuga / FFIChecker 的精度对照（[runbook](../experiments/runbooks/precision-comparison-at-scale.md)）
-7. 与 MiriLLI + 现有测试套件的对照
-8. 与 deepSURF 类工作的确认率/生成率/time-to-witness 对照
-9. 生态级扫描
-10. 前瞻扫描与披露（Gate D）
+1. PF 四个 matched fixture（Gate R）
+2. PP 猎物探针（Gate P）
+3. LLVM micro/pattern suite
+4. matched pairs（Gate A）
+5. historical vulnerable/fixed pairs
+6. 消融八项
+7. 与 Yuga / FFIChecker 的精度对照（[runbook](../experiments/runbooks/precision-comparison-at-scale.md)）
+8. 与 MiriLLI + 现有测试套件的对照
+9. 与 deepSURF 的对照——**固定 crate/version/feature/target、CPU 与时间预算、工具与 LLM 版本、随机种子、重复次数，报告 timeout-censored 的 time-to-witness**。rusqlite 上 108 harness / 84.2% 覆盖 / 24h 每个 / 0 bug 是基准点
+10. 生态级扫描，报告完整 attrition waterfall
+11. 前瞻扫描与披露（Gate D）
 
 ---
 
@@ -364,6 +520,9 @@ S2 与 S3 是昂贵的：
 | 旧 P5「别名与重入维度」 | 持有期一维闭环前不扩维。转 future work |
 | 旧 P6「线程维度」 | 同上 |
 | 旧 Q2「写穿」 | 服务别名维度，随之转 future work |
+| 旧 2×2 判定矩阵 | 有可构造的假阳性（guard）与假阴性（`'static` 不保证分配存活），已由 [research thesis §2.4](../project/research-thesis.md) 的轨迹可行性关系取代 |
+| `SupportedIncompatibility (weak)` | 破坏三态模型，由 `EvidenceGrade` + `WitnessStatus` 两个正交维度取代 |
+| 语法四态 `CallbackLifetimeBoundScope` | `NoLifetimeBound` 合并了语义相反的两种情况，由 `EffectiveCaptureAdmission` 取代（PC） |
 
 ---
 
@@ -372,6 +531,8 @@ S2 与 S3 是昂贵的：
 见 [research thesis §15](../project/research-thesis.md)。摘要：
 
 - 缺证、相容、不相容三态必须可区分，缺证不是安全；
+- 静态判定、证据强度、反证状态三个维度正交，不得用一个枚举表达；
+- 反证未触发只能记 `Inconclusive`，**有限次执行不能证伪 may-property**；
 - 两半齐才是缺陷，单侧证据只产出候选；
 - join key 必须是被判定对象的身份，不是分析产物的切分单位；
 - 改判定器必须做非空性验证：破坏判据的一半，确认对应断言失败且落在预期位置；

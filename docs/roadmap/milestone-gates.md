@@ -1,8 +1,8 @@
 # Milestone gates
 
-本文定义 gate。**研究 gate（P、A、B、C、D）决定论题能不能立住；工程 gate（1–6）决定能不能从 V3.2.x 进入 V3.3。两者互不替代**——任何工程 gate 通过都不能推出创新点成立，反之亦然。
+本文定义 gate。**研究 gate（R、P、A、B、C、D）决定论题能不能立住；工程 gate（1–6）决定能不能从 V3.2.x 进入 V3.3。两者互不替代**——任何工程 gate 通过都不能推出创新点成立，反之亦然。
 
-方向权威见 [research thesis](../project/research-thesis.md)。本文于 2026-07-30 重写研究 gate 部分，旧的「Gate 0：研究前提」已被 Gate P/A/B/C/D 取代。
+方向权威见 [research thesis](../project/research-thesis.md)。本文于 2026-07-30 重写研究 gate 部分，旧的「Gate 0：研究前提」已被 Gate R/P/A/B/C/D 取代。2026-07-31 复审后新增 Gate R 并重做 Gate P 的判据。
 
 ---
 
@@ -10,25 +10,53 @@
 
 按执行顺序排列。每一道都是研究方向的止损点。
 
+## Gate R：关系正确性
+
+**2026-07-31 复审后新增，排在一切之前。关系错了，后面所有测量都在测错的东西。**
+
+用四个 matched fixture 验证 [research thesis §2.4](../project/research-thesis.md) 的核心关系。**外部侧用手写 C stub，不需要 LLVM IR 流水线**，因此本 gate 与 P1/P2 完全解耦，现在就能做。
+
+| # | Rust 侧 | 外部 C stub | 应判 | 检验什么 |
+| --- | --- | --- | --- | --- |
+| 1 | 允许捕获借用，无 guard | 保存 + 晚调 | 不相容 | 正对照 |
+| 2 | 允许捕获借用，返回 guard | 保存 + 晚调，**注销真的清槽** | 相容 | 不得误报 guard 保护的 API |
+| 3 | **与 #2 逐字节相同的 Rust 侧** | 保存 + 晚调，**注销没清干净** | 不相容 | **外部侧是否有判别力** |
+| 4 | `'static`，分配提前释放 | 保存 + 晚调 | 不相容 | R / A 分离，不得漏报 |
+
+- **通过**：四条全判对；且 fixture 2 与 3 上 Full 能分开、Rust-only 不能。
+- **No-Go**：fixture 2 与 3 分不开。
+- **失败动作**：外部侧对 C2 没有判别力，转路线 B。
+
+**fixture 3 是本 gate 的重点。** 它检验 [research thesis §2.6](../project/research-thesis.md) 的推论——外部侧的判别力若真的在 Q4′（清槽）而不在 Q1（是否保存），这一条就必须能分开。**若 Rust-only 也能分开 2 与 3，那是 Gate A 的提前失败信号。**
+
 ## Gate P：猎物存在性
 
-**最先做，成本最低，否定力最强。**
+在投入外部侧实现之前必须回答：生态里还剩多少个**安全客户端可能形成 lifetime separation 的交出点**。
 
-在投入任何外部侧分析之前必须回答：生态里还有多少个「safe API + 非 `'static` 的 Fn bound + 同函数内 FFI 注册」的位置。
+这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，许多维护者早已收紧 bound。**若猎物池不足以支撑 [research thesis §7.8](../project/research-thesis.md) 的确认集与新发现目标，路线 A 不成立。**
 
-这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，许多维护者早已收紧 bound。**若猎物池只有个位数，[research thesis §7.2](../project/research-thesis.md) 的新发现硬要求无法满足，路线 A 直接死。**
+**判据必须同时满足四条方法学要求**，缺一不可：
 
-- **通过**：候选池规模足以支撑确认集与新发现目标，且未调优 crate 上有非平凡占比。
-- **No-Go**：候选池过小，或全部集中在已修复的历史版本。
+| 要求 | 内容 |
+| --- | --- |
+| **语义取值** | 以 `EffectiveCaptureAdmission` 为准，不用语法四态。`fn register<F: Fn()>` 的「无 bound」是**允许捕获借用**，不是「不表态」；`dyn Fn` 的省略 lifetime 默认 `'static`。合并两者会把最强的一类候选记成弱候选 |
+| **Tier A** | 回调 / trampoline / userdata 经 dataflow **到达精确的 extern 参数**。仅「同函数内出现 extern 调用」是 Tier B 语法共现，**同时高估和低估**，不得用作 Go/No-Go |
+| **L1 可分析** | 候选必须能绑定到精确的外部 LLVM IR。主表须标注 IR acquisition tier——**一个很大的 Rust 侧池可能全部进不了 P1/P2** |
+| **置信界判据** | `Pass` = 下置信界仍足以支撑预定确认集；`No-Go` = 上置信界仍不足；`Amber` = 扩大样本或增加人工审计。**「足够」「非平凡」允许事后移动门槛，不得作为 gate 判据** |
+
+**运行前必须完成 family-level sealed split。** 直接查看 300–500 个 crate 的身份与候选数，会按 [research thesis §7.6](../project/research-thesis.md) 把整个前瞻池变成开发集。默认做法是独立 runner 只返回盲化聚合统计。
+
 - **失败动作**：转路线 C（经验研究），不再投入外部侧实现。
 
-执行步骤见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。所需能力（回调 bound 四态判定）已实现，成本约为外部侧实现的百分之一。
+执行步骤、抽样预注册与 sealed split 见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。前置是 PC（`EffectiveCaptureAdmission`），成本约为外部侧实现的百分之一。
 
 ## Gate A：外部证据必要性
 
-- **通过**：matched pair 中 Full 能区分同步与保存；Rust-only 对两者给出相同结果或必须 abstain；在真实未调优样本上，Full 相对 Rust-only 有可解释的 precision/coverage 增益。
+- **通过**：matched pair 中 Full 能区分同步与保存、也能区分「注销真清槽」与「注销没清干净」；Rust-only 对两者给出相同结果或必须 abstain；在真实未调优样本上，Full 相对 Rust-only 有可解释的 precision/coverage 增益。
 - **No-Go**：关闭外部分析后结果不变；所谓增益主要来自更窄的候选范围；外部行为仍主要由 API map 预先给定。
 - **失败动作**：放弃 C2 作为主角，转路线 B（以反证合成为主）。
+
+**注意判别力的来源。** 按 [research thesis §2.6](../project/research-thesis.md)，Q1（是否保存）在候选集合上可能几乎恒为真，恒为真的项没有判别力。本 gate 的增益必须**可归因到 role/slot-sensitive 的外部证据**（主要是 Q4′ 清槽），不能只归因到更窄的候选范围。Gate R 的 fixture 2/3 是这一点的最小检验，**若那里就分不开，不必等到 Gate A**。
 
 与 Yuga / FFIChecker 的同任务同分母精度对照是本 gate 的组成部分，步骤见 [规模化精度对照 runbook](../experiments/runbooks/precision-comparison-at-scale.md)。2026-07-31 的单 crate 对照见 [Gate 0 结果](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)——**n=1 且该 crate 参与过开发，不构成证据。**
 
@@ -53,7 +81,7 @@
 - **通过**：冻结后的 unseen corpus；公平 baseline 与全套消融；双人 ground truth；coverage、Unknown、cluster 与置信区间完整；**至少一个有独立外部确认的实际发现**。
 - **No-Go**：结论仍来自开发集；100% precision 依赖大量 abstention；指标单位在 alert、API、crate 与 root cause 之间混用；没有新发现。
 
-**在 Gate P、A、B、D 全部通过前，不得在任何对外材料中表述跨语言契约不相容判定已达成。**
+**在 Gate R、P、A、B、D 全部通过前，不得在任何对外材料中表述跨语言契约不相容判定已达成。**
 
 ---
 

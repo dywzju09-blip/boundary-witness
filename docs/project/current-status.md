@@ -10,13 +10,15 @@
 
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
-| C1 safe-only 可执行反证合成 | `Planned` | 反证合成（roadmap P4）未开始。这是重排后的**首要**创新点 |
-| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 外部侧 Q1/Q3（roadmap P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
+| C1 safe-only 可执行反证合成 | `Planned` | 反证合成（roadmap P4）未开始。这是重排后的**首要**创新点。**delta 已收窄**：deepSURF 已生成 safe-only harness 并用 ASan，safe-only 本身不是创新点 |
+| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 核心关系已于 2026-07-31 重写（roadmap PF 未开始）。外部侧 Q1/Q3/Q4′（roadmap P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
 | C3 生态级度量与新发现 | `Planned` | 猎物存在性尚未测量（roadmap PP），无法判断新发现目标是否可达 |
 
 **artifact-aligned hand-off identity 不再列为创新点**，降为实现属性（roadmap P0）。**旧 N2「消除人工 API 清单」已于 2026-07-31 撤销**：Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立；结构化角色推断仍会实现，但作为工程属性。
 
-外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。当前最高优先级是 [Gate P 猎物存在性探针](../experiments/runbooks/prey-existence-probe.md)。
+外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。**注意该记录显示本系统排除那 8 条误报只用了 Rust 侧签名形状、没有用外部证据**，因此 n=1 数据不构成「外部侧信息消除了误报」的证据。
+
+当前最高优先级是 [Gate R](../roadmap/milestone-gates.md#gate-r关系正确性)：核心关系于 2026-07-31 复审后重写，四个 matched fixture 未构造。
 
 ## 状态总览
 
@@ -29,10 +31,12 @@
 | `Implemented` | returned-borrow exact claimant | 共享事实只接受唯一 exact anchor；仍需完整回归复验 |
 | `Implemented` | object-chain proof-layer split | identity、ordering、complete risk chain 已分层；仍需完整回归复验 |
 | `Implemented` | runtime、oracle 与 fuzz observer 基础 | 组件测试通过；不是任意候选 executor |
-| `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound 是声明 lifetime 还是 `'static`，四态取值，无需 API 清单；健全与不健全两侧都产出事实 |
+| `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound，**语法**四态，无需 API 清单；健全与不健全两侧都产出事实。**取值语义待修正**，见 roadmap PC |
 | `Implemented` | 返回借用寿命不受输入约束的定义点识别 | 从 HIR 签名比较输入与输出的 lifetime 参数集合，无需 API 清单。此维度与 Yuga 重叠，不作创新点 |
 | `Implemented` | 持有期维度的两侧联结与判定来源记录 | 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；两路结论不一致时都留在产物中 |
-| `Planned` | 猎物存在性探针（roadmap PP） | 未测量。所需能力已实现，只差跑到规模上。**当前最高优先级** |
+| `Planned` | 核心关系与四个 matched fixture（roadmap PF） | 未开始。**当前最高优先级**，外部侧用 C stub，不需要 IR 流水线 |
+| `Planned` | `EffectiveCaptureAdmission`（roadmap PC） | 未开始。现有取值是语法四态，把语义相反的两种情况合并了。是 Gate P 的前置 |
+| `Planned` | 猎物存在性探针（roadmap PP） | 未测量。判据已于 2026-07-31 重做（Tier A / L1 / 置信界 / sealed split），前置是 PC |
 | `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
 | `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |
 | `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现，属 future work，持有期一维闭环前不扩维 |

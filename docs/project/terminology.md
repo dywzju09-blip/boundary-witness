@@ -52,11 +52,33 @@ oracle 将 static facts、runtime events 与 contract 组合后产生的规则�
 
 判定结论成立的前提集合，包括支持的 IR 获取级别、过程间分析深度、假设与未覆盖路径。所有精度、召回与覆盖结论只在片段内成立；论文与结果文档必须显式给出片段定义。
 
+### `StaticVerdict` / `EvidenceGrade` / `WitnessStatus`
+
+三个**正交**维度，不得用一个枚举表达。
+
+- **`StaticVerdict`**：`SupportedIncompatibility` / `CompatibleWithinAnalyzedFragment` / `InsufficientEvidence`；
+- **`EvidenceGrade`**：支撑该 verdict 的外部证据强度，`SameSlotInvokeCandidate` / `ReachableMayInvoke` / `PathSupportedLateInvoke` / `GuardDefeated`；
+- **`WitnessStatus`**：`NotAttempted` / `Generated` / `Executed` / `ConfirmedCounterexample` / `Inconclusive`。
+
+**`SupportedIncompatibility (weak)` 及任何第四态一律禁止。** 降级的外部侧查询产出的是 `InsufficientEvidence` + 低 `EvidenceGrade` + 一条 witness obligation，不是弱化的不相容结论。
+
+**动态反证不改变静态 verdict 的语义**；反证未触发只能记 `Inconclusive`，有限次执行不能证伪 may-property。
+
 ### `SupportedIncompatibility`
 
 两侧证据共同支持某交出点上的回调持有期不相容。**它是接口层结论，不等于可执行的 UB**——升级到后者需要一份合格的 safe-only 反证。
 
-外部侧晚调证据来自降级查询时，判定记为 `SupportedIncompatibility (weak)`，反证义务待补。
+### `EffectiveCaptureAdmission`
+
+回调类型**在语义上**是否允许捕获非 `'static` 借用：`PermitsNonStaticCapture` / `RequiresStaticCapture` / `ContextDependent` / `Unresolved`。
+
+它取代了按签名语法给出的四态。**「无 outlives bound」不是一个语义取值**：对泛型 `fn register<F: Fn()>(f: F)` 它意味着 `PermitsNonStaticCapture`（最强候选），而 `Box<dyn Fn()>` 的省略 lifetime 在多数位置默认到 `'static`，是 `RequiresStaticCapture`。把两者合并会系统性错估候选池。
+
+### referent / allocation / registration
+
+判定必须分开的三类生命周期：**referent** 是回调捕获的借用对象；**allocation** 是回调分配本身与 trampoline userdata；**registration** 是外部槽位上的注册实例。
+
+`'static` bound 只约束 referent。合并任意两类都会产生可构造的错判。
 
 ### `CompatibleWithinAnalyzedFragment`
 

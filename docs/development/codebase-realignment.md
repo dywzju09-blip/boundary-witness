@@ -2,7 +2,9 @@
 
 本文审计当前代码库相对 [research thesis](../project/research-thesis.md) 新路线的对齐情况，并给出**逐组件的处置决定**。
 
-审计日期：2026-07-30。审计基线 commit：`46abf7f`。
+审计日期：2026-07-30。审计基线 commit：`46abf7f`。2026-07-31 复审后补充执行顺序（§9）与两处受影响的处置。
+
+**处置分类本身未因复审改变**——复审修正的是研究关系与 gate 方法学，不是代码资产的去留。
 
 ## 0. 本文的效力
 
@@ -74,7 +76,7 @@
 
 | 路径 | 行数 | 处置 | 理由 |
 | --- | ---: | --- | --- |
-| `src/rustc_api/mir.rs` 的 `callback_lifetime_bounds` 及其调用点 | ~120 | **保留并扩展** | C2 的规约抽取，PP 探针的全部依赖 |
+| `src/rustc_api/mir.rs` 的 `callback_lifetime_bounds` 及其调用点 | ~120 | **保留并重构** | C2 的规约抽取，PP 探针的全部依赖。**取值需从语法四态改为 `EffectiveCaptureAdmission` 语义取值**（roadmap PC）——现状把「无 bound 的泛型」与「默认 `'static` 的 `dyn Fn`」这两种语义相反的情况合并了 |
 | `src/rustc_api/mir.rs` 的 returned-borrow 族（225 函数） | ~8k 估 | **冻结**（D1） | 非跨界维度 |
 | `src/rustc_api/mir.rs` 的 external-buffer / atomic-ordering / object-binding-gap | ~1k 估 | **冻结** | 服务已转 future work 的维度 |
 | `src/rustc_api/mir.rs` 的 registration / capture / release 族 | ~3k 估 | **保留** | 服务 Q4′、负对照与 hand-off 身份 |
@@ -114,7 +116,8 @@ package / target / def_path / role / mir_location / capture_ordinal / relative_p
 
 **`lifecycle_v326.rs` 的局部重构范围**（不是重写这 9764 行）：
 
-- `V326CallbackBoundVerdict`、`V326DerivedCallbackBound`、`V326WitnessCallbackBoundScope` → 改为三态 `Verdict`，并区分 `SupportedIncompatibility` 与 `SupportedIncompatibility (weak)`；
+- `V326CallbackBoundVerdict`、`V326DerivedCallbackBound`、`V326WitnessCallbackBoundScope` → 改为**三个正交维度** `StaticVerdict` / `EvidenceGrade` / `WitnessStatus`。**不得引入 `SupportedIncompatibility (weak)` 或任何第四态**；
+- `CallbackLifetimeBoundScope` → `EffectiveCaptureAdmission`（随 PC 一起做，同属 D2 的一次升版）；
 - 新增 `RustContractFact` / `ForeignBehaviorFact` / `CompatibilityVerdict` 三层，作为现有 `StaticFact` 的聚合，**不删除底层事实种类**；
 - `V326LifecycleFactKind::ALL` 与 `schema_token()` 的双向 schema 测试必须同步扩展——这条机制已经挡住过遗漏，不能绕过。
 
@@ -128,7 +131,7 @@ package / target / def_path / role / mir_location / capture_ordinal / relative_p
 | `commands/extract_lifecycle_evidence.rs` | 2832 | **保留 + 局部重构** | join 逻辑改挂 `HandOffId` |
 | `commands/build_lifecycle_graph_v3.rs` | 365 | **保留** | |
 | `commands/rank_lifecycle_v2.rs` | 231 | **保留，降优先级** | 排序不是贡献，仅用于 triage |
-| `commands/build_witness_plan.rs` | 1545 | **保留 + 局部重构** | 输出改为反证义务 |
+| `commands/build_witness_plan.rs` | 1545 | **保留 + 局部重构** | 输出改为反证义务；判定字段拆成 `StaticVerdict` / `EvidenceGrade` / `WitnessStatus` 三个正交维度 |
 | **`commands/generate_witness_harness.rs`** | **1266** | **重构（D3）** | 见 §6 |
 | `commands/validate.rs` | 1074 | **保留** | schema 校验 |
 | `commands/audit_lifecycle_contracts.rs` | 854 | **保留** | |
@@ -318,20 +321,27 @@ grep -rn 'build-lifecycle-graph-v2\|BuildLifecycleGraphV2' \
 
 ## 9. 执行顺序
 
+2026-07-31 复审后调整：**关系正确性排到最前**，猎物探针相应后移。
+
 | 步 | 事项 | 依赖 | 规模 |
 | --- | --- | --- | ---: |
-| 1 | PP 批量驱动器 | 无 | 小 |
-| 2 | **跑 Gate P** | 1 | 实验 |
-| 3 | 删除 `build_lifecycle_graph_v2`（先跑 §7.1 验证） | 无 | 小 |
-| 4 | `SiteDescriptor` 扩展 + 外部符号记录 | Gate P 通过 | 中 |
-| 5 | 外部侧新 crate 的 Q1 骨架 | 4 | 大 |
-| 6 | 一次性 schema 升版（D2） | 4、5 定稿 | 中 |
-| 7 | Q3 降级版 + 关系判定器 | 6 | 大 |
-| 8 | 反证生成器重写（D3） | 7 | 大 |
+| 1 | 删除 `build_lifecycle_graph_v2`（先跑 §7.1 验证） | 无 | 小 |
+| 2 | **PF：核心关系 + 四个 matched fixture（Gate R）** | 无。外部侧用手写 C stub | 中 |
+| 3 | PC：`EffectiveCaptureAdmission` | 无，可与 2 并行 | 中 |
+| 4 | PP 批量驱动器 | 3 | 小 |
+| 5 | **跑 Gate P** | 4 | 实验 |
+| 6 | `SiteDescriptor` 扩展 + 外部符号记录 | Gate P 通过 | 中 |
+| 7 | 外部侧新 crate 的 Q1 骨架 + Q4′ | 6 | 大 |
+| 8 | 一次性 schema 升版（D2） | 6、7 定稿 | 中 |
+| 9 | Q3 降级版 + 关系判定器 | 8 | 大 |
+| 10 | 反证生成器重写（D3） | 9 | 大 |
 
-**第 2 步之前不要做第 4 步及以后。** Gate P 的结论可能是「转路线 C」，那样第 4 步之后的全部工作都不该发生。
+**两条硬约束：**
 
-第 1 步与第 3 步不受 Gate P 影响，可以随时做。
+- **第 2 步之前不要做第 6 步及以后。** 关系错了，后面所有实现都在实现错的判据。
+- **第 5 步之前不要做第 6 步及以后。** Gate P 的结论可能是「转路线 C」，那样第 6 步之后的全部工作都不该发生。
+
+第 1 步不受任何 gate 影响，可以随时做。
 
 ## 10. 本次审计明确不做的事
 

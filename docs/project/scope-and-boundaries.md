@@ -2,7 +2,7 @@
 
 本文服从 [research thesis](research-thesis.md)，是能力边界与允许表述的权威表述。当前阶段是 **V3.2.x core-effect hardening**。
 
-本文于 2026-07-30 随研究主线重写。旧版本的 `Mismatch`/`NoMismatch` 三态措辞已改为 [research thesis §2.3](research-thesis.md) 的规范枚举。
+本文于 2026-07-30 随研究主线重写，2026-07-31 复审后更新判定语义。旧版本的 `Mismatch`/`NoMismatch` 措辞与 `SupportedIncompatibility (weak)` 均已作废，规范枚举见 [research thesis §2.7](research-thesis.md)。
 
 ## 1. 扫描对象
 
@@ -24,7 +24,7 @@
 
 | 维度 | Rust 侧契约 | 外部侧行为 | 联结判定 |
 | --- | --- | --- | --- |
-| 持有期 | 已实现：从 HIR 签名判定回调 bound 是声明 lifetime 还是 `'static`，四态取值 | **未实现**：当前由 API 清单分类出的注册/注销事实**推断**，不是外部代码行为 | 已实现但证据来源为推断；人工版本边界作交叉验证 |
+| 持有期 | **部分**：从 HIR 签名判定回调 bound，但当前是**语法**四态。按 [research thesis §2.8](research-thesis.md) 需改为 `EffectiveCaptureAdmission` 语义取值——现状把「无 bound」的泛型与默认 `'static` 的 `dyn Fn` 合并了 | **未实现**：当前由 API 清单分类出的注册/注销事实**推断**，不是外部代码行为 | 已实现但证据来源为推断；人工版本边界作交叉验证 |
 | 别名与可变性 | 未实现 | 未实现 | 未实现 |
 | 线程 | 未实现 | 未实现 | 未实现 |
 | 重入 | 未实现 | 未实现 | 未实现 |
@@ -42,17 +42,29 @@
 
 因此：**接入一个新组件仍然必须先有人手写 API 清单。** 已经不需要人工声明的只有两项：回调 bound 的形状，以及「bound 从哪个版本开始收紧」这条版本边界。
 
-## 4. 判定的三态纪律
+**第三，Rust 侧的 bound 判定本身尚未语义化。** 见上表持有期一行——这是 [Gate P](../roadmap/milestone-gates.md#gate-p猎物存在性) 的前置。
 
-任何判定都必须能区分三种情况，不得合并。规范枚举见 [research thesis §2.3](research-thesis.md)：
+## 4. 判定的三态纪律与三个正交维度
+
+任何判定都必须能区分三种情况，不得合并。规范枚举见 [research thesis §2.7](research-thesis.md)：
 
 - **`SupportedIncompatibility`**：两侧证据共同支持该交出点上的持有期不相容；
 - **`CompatibleWithinAnalyzedFragment`**：在明确给出的片段与假设内，未形成该类不相容；
 - **`InsufficientEvidence`**：任一侧事实、联结身份或外部行为证据不足。
 
+**静态判定、证据强度、反证状态是三个正交维度**，不得用一个枚举表达：`StaticVerdict` / `EvidenceGrade` / `WitnessStatus`。**`SupportedIncompatibility (weak)` 及任何第四态一律禁止。**
+
 **缺证不是安全。** 没有观察到事实不得解释为不存在问题。查不出外部侧逃逸时必须记 `InsufficientEvidence`。
 
+**反证未触发只能记 `Inconclusive`**，不得记为候选被证伪——有限次动态执行不能证伪一个 may-property。
+
 **`CompatibleWithinAnalyzedFragment` 不表示 API 整体健全**，它只排除本研究定义的回调持有期不相容这一个子问题。
+
+## 4.1 三类生命周期必须分开
+
+见 [research thesis §2.3](research-thesis.md)。**`F: 'static` 只约束回调捕获的 referent，完全不约束回调分配本身。** 把两者合并会把「分配提前释放、外部随后调用悬垂指针」这一整类判成相容。
+
+**guard 不是纯 Rust 侧判据。** registration guard 是否真的保护，取决于其 drop 路径调用的外部函数**是否真的清空了槽位**——那是外部侧问题。没有 Q4′ 就没有「guard 有效」这个结论，只有 `InsufficientEvidence`。
 
 ## 5. 候选与结论的分层
 
@@ -74,7 +86,7 @@
 ## 7. 当前允许的表述
 
 - 能在给定组件版本上定位并排序生命周期敏感的静态候选。对回调家族，此表述仅在 API 清单已覆盖的 API 范围内成立；
-- 能从签名判定回调 bound 的形状，无需 API 清单；
+- 能从签名判定回调 bound 的**语法形状**，无需 API 清单。**尚不能给出语义取值**（`EffectiveCaptureAdmission`）；
 - 能在受控样本上形成可审计的动态验证闭环。
 
 ## 8. 当前不允许的表述
@@ -84,7 +96,11 @@
 - 八维错配等价于安全 API 整体健全性；
 - 跨语言契约不相容判定已达成（外部侧未实现）；
 - 不读 API 清单也能识别回调注册 API；
-- `'static` bound 意味着回调分配永远存活；
+- `'static` bound 意味着回调分配永远存活（它只约束 referent，见 §4.1）；
+- 「无显式 outlives bound」一律等于「不表态」——对泛型 `F: Fn` 它恰恰是**允许捕获借用**；
+- 「同一函数内出现 extern 调用」等于已确认的 hand-off（那只是语法共现）；
+- 静态 IR 分析给出的 may-effect 等于运行时的实际行为；
+- 「反证未触发」等于候选被证伪；
 - 「没有看到 escape」等于安全；
 - 把针对已披露公告的检出成绩表述为发现能力——公告是度量仪器，其版本边界由人写入；
 - 所有 `verified_static_chain` 都是完整风险链；

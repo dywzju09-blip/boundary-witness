@@ -18,6 +18,8 @@ Rust 的全部安全价值建立在一条保证之上：**不写 `unsafe` 的代
 
 这一句是论文的中心主张，摘要、引言、模型、实现和实验必须共用它。它把工作定位为**对一项安全机制的度量**，而不是又一个 lint 或又一个检测器——这是本工作能进入安全顶会而非工具论文的唯一区别。
 
+**但在拿到 §7.3 的 attrition waterfall 之前，这一句只是目标主张。** 系统实际产生四个不会天然相等的集合（可分析总体、静态判定、反证生成、独立确认），「对每一次打破都给出反证」是其中最窄的一个。用中心主张替代分级报告，是对结果的系统性美化。
+
 ### 1.1 目标会议与判据
 
 IEEE S&P、USENIX Security、ACM CCS、NDSS。这类 PC 接受两种东西：真实漏洞与其影响，或对某一安全性质的类级别可度量结论。本工作押注后者，并以前者作为其可信度锚点。
@@ -30,7 +32,9 @@ IEEE S&P、USENIX Security、ACM CCS、NDSS。这类 PC 接受两种东西：真
 
 研究对象是 Rust crate 对外暴露的**安全 API**。该 API 接受回调或 user data，并将其交给 C/C++ 等外部组件。
 
-> 对一个确定构建中的具体交出点（hand-off），Rust API 所允许的回调生命周期，是否与外部组件实际的 retain/invoke 行为不相容？若不相容，能否生成一个只使用 safe Rust 的可执行反例？
+> 对一个确定构建中的具体交出点（hand-off），**安全客户端能否构造出一条轨迹，使某个被外部持有的对象失效而注册仍然有效，且外部随后仍可能使用它？** 若能，能否生成一个只使用 safe Rust 的可执行反例？
+
+判定的是**安全客户端可达的时序状态**，不是 lifetime bound 的字面形状。这一点在 2026-07-31 的复审后改写——原表述以 bound 形状为判据，可被构造出假阳性与假阴性，见 §2.5。
 
 ### 2.2 分析片段（analyzed fragment）
 
@@ -46,29 +50,123 @@ IEEE S&P、USENIX Security、ACM CCS、NDSS。这类 PC 接受两种东西：真
 
 外部 IR、间接调用、动态链接或别名关系不足时，系统必须返回 `InsufficientEvidence`。**「没有观察到逃逸」不得推断为安全。**
 
-### 2.3 判定的三态
+### 2.3 三类生命周期必须分开
 
-判定结果不得使用带整体安全含义的 `Mismatch` / `NoMismatch`。规范枚举为：
+**这是判定正确性的前提。** 合并任意两类都会产生可构造的错判。
 
-| 结果 | 含义 |
-| --- | --- |
-| `SupportedIncompatibility` | 两侧证据共同支持该交出点上的回调持有期不相容 |
-| `CompatibleWithinAnalyzedFragment` | 在明确给出的分析片段与假设内，未形成该类不相容 |
-| `InsufficientEvidence` | 任一侧事实、联结身份或外部行为证据不足 |
+| 记号 | 对象 | 由什么约束 |
+| --- | --- | --- |
+| **R** referent | 回调**捕获的**借用对象 | 回调类型的 outlives bound；guard 的类型 |
+| **A** allocation | 回调分配本身与 trampoline userdata（`Box<F>` 等） | Rust 侧的所有权与 drop；注销路径 |
+| **G** registration | 外部槽位上的注册实例 | 外部的 register / replace / clear effect |
+
+`F: 'static` **只约束 R，完全不约束 A**。一个 `'static` 回调的 `Box<F>` 仍然可能被 Rust wrapper 提前释放，而外部随后调用悬垂指针。把 R 与 A 合并，就会把这一整类缺陷判成相容。
+
+### 2.4 核心关系
+
+判据是**安全客户端的轨迹可行性**，不是 bound 的字面形状：
+
+```text
+SupportedIncompatibility(X, Slot)
+  ⇐ SafeLifetimeSeparationPossible(X, Slot)
+  ∧ ForeignLateUsePossible(Slot, X)
+  ∧ SameArtifactSlotAndRole
+其中 X ∈ { R, A }
+```
+
+**`SafeLifetimeSeparationPossible(X, Slot)`**
+
+> 存在一条 well-typed、只使用安全 API 的客户端轨迹，使 `X` 失效而 `Slot` 上的注册仍然有效。
+
+Rust 侧能够**否定**它的机制（这些让 API 健全）：
+
+- 回调 bound 要求 `'static` —— **只否定 X = R，不否定 X = A**；
+- registration guard 的类型把 `Slot` 的存活绑到 `X` 上（例如返回 `Registration<'a>`）；
+- owner 的 drop 必然触发注销；
+- 对 X = A：分配由外部拥有直到注销。
+
+**`ForeignLateUsePossible(Slot, X)`**
+
+> 同一 registration slot 上存在 retain 与「返回之后 use/invoke」的 may-path，**且中间不存在可证明有效的 clear / unregister**。
+
+**最后那个从句是本关系里外部侧真正有判别力的部分**，它由 Q4′ 回答。见 §2.6。
+
+**`SameArtifactSlotAndRole`**
+
+两侧事实必须引用同一 artifact、同一 hand-off、同一 callback/userdata 参数角色、同一 registration slot 才能组合。按函数名、API 名或候选分片联结一律禁止。
+
+### 2.5 原 2×2 矩阵为什么被废除
+
+2026-07-31 的复审构造出两个反例，`non-'static bound + MayRetain + MayInvokeAfterReturn ⇒ 不相容` 因此不成立：
+
+**假阳性——guard 使 API 健全。** API 接受 `F: 'a` 并返回 `Registration<'a>`，guard 的类型保证被捕对象至少活到注册结束，drop 时先执行 unregister。外部**确实**保存并晚调，但安全客户端构造不出 `referent_dead ∧ registration_live`。旧矩阵会报——错报。
+
+**假阴性——`'static` 不保证分配存活。** 见 §2.3。旧矩阵判「相容」——漏报。
+
+**一处事实错误一并更正：** 旧文档称 rusqlite 0.26.2 的修复落在「`'static` + 仅同步调用」格。**这是错的。** [RUSTSEC-2021-0128](https://rustsec.org/advisories/RUSTSEC-2021-0128.html) 说明这些函数注册回调供 SQLite 稍后调用；0.26.2 收紧了 bound，**没有把 SQLite 的行为改成同步**。修复版落在 `'static + retain/late-invoke`，即在借用捕获这一子问题上相容。
+
+`OverRestrictive` 这一标签只有在**闭世界地证明了所有相关路径均为同步**时才能使用；否则最多称 `PotentiallyStrongerThanObservedForeignRequirement`。
+
+### 2.6 外部侧的判别力在 Q4′ 而不在 Q1
+
+一个推论，直接决定 [Gate A](#gate-a外部证据必要性) 能否通过。
+
+进入候选集合的 API 按定义都带注册/注销语义——一个只做同步回调的 API 根本不需要把回调交出去。因此 **Q1（是否保存）的答案在候选集合上可能几乎恒为「是」，恒为真的项没有判别力。**
+
+真正因库而异、且 Rust 侧看不见的是：
+
+- 注销是否在**所有路径**上都清空槽位；
+- replace 的覆盖语义；
+- 是否存在**绕过 guard 的第二条晚调路径**；
+- 同一槽位是否被多个 registration instance 共享。
+
+**这也是 guard 有效性的判据来源。** Rust 侧只能看到 guard 的 `Drop` impl 调了某个外部函数；**那次调用是否真的清空了槽位，只有外部侧能回答**。所以 §2.4 中「否定 `SafeLifetimeSeparationPossible` 的 guard 机制」本身依赖外部证据，guard 不是纯 Rust 侧的事。
+
+因此 Q4′ 从附属查询升为**主查询之一**，见 [implementation plan](../roadmap/implementation-plan.md)。
+
+### 2.7 判定的三个正交维度
+
+**不得用一个枚举同时表达「静态判定」「证据强度」「反证状态」。** 旧文档引入的 `SupportedIncompatibility (weak)` 破坏了三态模型，予以废除。
+
+```text
+StaticVerdict
+  = SupportedIncompatibility          // 两侧证据共同支持不相容
+  | CompatibleWithinAnalyzedFragment  // 片段与假设内未形成该类不相容
+  | InsufficientEvidence              // 任一侧事实、联结身份或行为证据不足
+
+EvidenceGrade                          // 支撑该 verdict 的外部证据强度
+  = SameSlotInvokeCandidate           // 同槽位存在间接调用点（降级 Q3）
+  | ReachableMayInvoke                // 该调用点自导出入口可达
+  | PathSupportedLateInvoke           // 路径条件支持返回后调用
+  | GuardDefeated                     // 存在绕过 guard 或未清空的路径
+
+WitnessStatus
+  = NotAttempted | Generated | Executed
+  | ConfirmedCounterexample | Inconclusive
+```
+
+两条纪律：
+
+- **降级 Q3 的输出是 `StaticVerdict = InsufficientEvidence` + `EvidenceGrade = SameSlotInvokeCandidate` + 一条 witness obligation**，不是任何形式的 `SupportedIncompatibility`；
+- **动态反证成功产生 `ConfirmedCounterexample`，不改变静态 verdict 的语义。** 反证未触发只能记 `Inconclusive`——**有限次动态执行不能证伪一个 may-property。**
 
 `CompatibleWithinAnalyzedFragment` **只排除本研究定义的回调持有期不相容**，不表示 API 整体健全。
 
-### 2.4 判定矩阵
+### 2.8 `EffectiveCaptureAdmission`：取代语法四态
 
-这张 2×2 是判定器的核心，应作为论文的一张图。**第四格有独立价值**，不要因为它「不是漏洞」就丢掉。
+原实现按签名语法给出四态（绑 receiver lifetime / 绑其他声明 lifetime / `'static` / 无 outlives bound）。**「无 outlives bound」这一态语义上是错的。**
 
-| Rust 侧契约 \ 外部侧行为 | `SynchronousInvokeOnly` | `MayRetain` + `MayInvokeAfterReturn` |
-| --- | --- | --- |
-| bound 短于 `'static`（允许捕获借用） | 相容 | **`SupportedIncompatibility`** |
-| bound 为 `'static` | **过度限制**：安全但对调用者施加了不必要的约束 | 相容 |
+对泛型 `fn register<F: Fn()>(f: F)`，没有 `'static` 恰恰是**允许 `F` 包含局部借用**，不是「不表态」。而 `Box<dyn Fn()>` 中省略的 trait object lifetime 在多数位置**默认到 `'static`**。两者语义相反，却被合并成同一个 `no_lifetime_bound`。
 
-- 「无 outlives bound」与「无法判定」一律落 `InsufficientEvidence`，不并入任何一格。
-- 「过度限制」这一格是次要结果：它证明判定器不是只会报警，也能说明某个 API 的收紧是超额的（rusqlite 0.26.2 的修复即落此格）。
+规范取值改为语义事实：
+
+```text
+PermitsNonStaticCapture | RequiresStaticCapture | ContextDependent | Unresolved
+```
+
+归一化至少必须处理：泛型 `F: Fn`；`impl Fn`；`dyn Fn` 的默认 lifetime；容器产生的 implied bound；参数与返回值中的 implied lifetime；HRTB；**回调参数 lifetime 与捕获环境 lifetime 的区别**；registration guard 对 lifetime 的约束。
+
+**在这一项修正前，[Gate P](#gate-p猎物存在性) 会系统性错估猎物池**——它现在把最强的一类候选记成弱候选。
 
 ---
 
@@ -112,11 +210,30 @@ IEEE S&P、USENIX Security、ACM CCS、NDSS。这类 PC 接受两种东西：真
 
 #### C1 相对已有工作的 delta
 
+**以下几项单独都不是创新点，不得写进贡献列表**（2026-07-31 复审后更正，deepSURF 论文原文已核实）：
+
+- 生成 safe-only 程序；
+- 使用 `#![forbid(unsafe_code)]`；
+- 从静态候选生成 harness；
+- 用 sanitizer 确认；
+- 保存 artifact hash 与 lineage。
+
+它们仍是证据质量与 artifact evaluation 的组成部分，写在实现与评估一节。
+
 | 已有工作 | 差别 |
 | --- | --- |
-| PinChecker | 同样合成违反 API 契约的程序，但对象是纯 Rust 的 Pin API 误用模式，**不涉及跨语言**。本工作的触发义务来自边界另一侧的 effect，**在 Rust 源码里根本推不出来** |
-| deepSURF | 静态分析 + LLM 生成 harness + fuzzing，靠覆盖率盲测求崩溃。本工作由一条已判定的契约违反反推**确定的**动作序列，且 oracle 判的是契约违反 |
+| **deepSURF**（S&P 2026） | **不得描述为「盲测求崩溃」。** 论文原文：所有生成的 harness「contain only safe code, enforced by the `#![forbid(unsafe_code)]` directive」，并用 AFL++（ASan + CmpLog 双线程、每 harness 24 小时）覆盖率引导，配合静态 unsafe-reachability 分析、LLM 序列生成与泛型/trait 实现合成。**差别在于搜索 vs 推导**：它生成大量语义合理的 API 序列再靠覆盖率碰，本工作从外部 effect 反推**唯一确定的**时序目标 `referent_dead ∧ registration_live ∧ later_invoke` 并直接构造那一条序列 |
+| PinChecker | 同样合成暴露安全抽象不健全的程序，但对象是纯 Rust 的 Pin API 误用模式，**不涉及跨语言**——其触发义务可从 Rust 源码本身推出。本工作的触发义务来自边界另一侧的 effect，Rust 源码里推不出来 |
+| SyRust 等程序合成 | 符合 Rust 类型与所有权约束的程序合成已有先例。本工作的合成目标是**具体时序状态**，不是类型可行的任意序列 |
 | MiriLLI | 需要一个已经能触发缺陷的测试才能观察到 UB。**本工作合成那个测试。** 度量指标即「现有测试到不了、本系统能到」的数量 |
+
+#### deepSURF 在 rusqlite 上的数据点
+
+论文 Table IV 中 rusqlite 一行为 `0 | 84.2% (108)`：**108 个可编译 harness、84.2% 的 unsafe-reachable API 覆盖、每个 harness AFL++ 加 ASan 跑满 24 小时、发现 0 个 bug**——而该 crate 有已公开的回调持有期公告。
+
+**这是 C1 最有力的头对头设计**：通用覆盖率搜索在该预算下到不了这一类时序路径。若本工作的定向合成能到，差别是可量化的（确认率、time-to-witness）。比较时必须固定 crate/version/feature/target、CPU 与时间预算、工具与 LLM 版本、随机种子、重复次数，并报告 timeout-censored 的 time-to-witness。
+
+**这个数据点也约束我们自己**：若本工作在同一 crate 上同样得到 0，那说明差别不在方法而在别处。
 
 ### C2 — 类型契约作为规约、外部 effect 作为实现的精化检查
 
@@ -205,15 +322,32 @@ Rust 事实、外部 IR 事实、静态判定、反证与动态回执全部引�
 
 | 工作 | 覆盖 | 与本系统的边界 |
 | --- | --- | --- |
-| **Yuga**（TSE 2024） | 函数签名上的生命周期标注错误 | **已实测：它能报出本项目主线缺陷类的 5/7，修复版精确消失。**「它不建模外部持有者所以不会报」是错的，不得再使用该表述。差别在精度与证据层级：同一 crate 上 13 条报告有 8 条不对应公告，根因统一为无法区分「存进受借用检查器约束的 Rust 结构体」与「跨界交给外部槽位」；且它只能给出 "probably assigned"、"potential use-after-free" |
+| **Yuga**（TSE 2024） | 函数签名上的生命周期标注错误 | **已实测：它能报出本项目主线缺陷类的 5/7，修复版精确消失。**「它不建模外部持有者所以不会报」是错的，不得再使用该表述。同一 crate 上 13 条报告有 8 条不对应公告，但**不得表述为「根因完全统一」**——[逐条记录](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)显示至少四种机制（`Arc` 锚、外层转发、结构体 lifetime 参数、输入到输出的 lifetime），只有其中 4 条接近「Rust 内部结构与外部槽位混淆」。且该记录明确说明**本系统排除这 8 条只用了 Rust 侧签名形状、没有使用外部证据**，因此 n=1 数据**不构成**「外部侧信息消除了这些误报」的证据。它只能给出 "probably assigned"、"potential use-after-free" |
 | **FFIChecker**（ESORICS'22） | Rust/C FFI 堆内存管理，LLVM IR 分析 | 判 alloc/dealloc 错配与 double free，规约来自内存操作配对；本工作判时序契约，规约来自 Rust 类型系统。释放责任维度与其重叠，该维度**不作为创新点** |
 | **MiriLLI**（ICSE 2025） | Miri + LLVM 解释器联合执行，跨 FFI 的 UB 实证研究 | 动态、依赖既有测试触达路径。**必须作为本工作的 baseline 之一**：指标是「现有测试到不了、本系统能到」。其结论「Miri 看不进外部函数」也是本工作 oracle 选型的直接依据 |
-| **deepSURF**（S&P 2026） | 静态分析 + LLM 生成 harness + fuzzing | 盲测求崩溃；本工作定向求契约违反。**撞车风险最高，必须在评估中并列对比**确认率、生成率与 time-to-witness |
-| **PinChecker**（2025） | 合成程序违反 Pin API 契约 | 思路最近的一条，但对象是纯 Rust 的 Pin，不涉跨语言，触发义务可从 Rust 源码本身推出 |
+| **deepSURF**（S&P 2026） | 静态 unsafe-reachability + LLM 序列生成 + 泛型/trait 合成 + AFL++ 覆盖率引导，**harness 为 safe-only 并带 `#![forbid(unsafe_code)]`**，用 ASan 确认 | **撞车风险最高。** 已核实原文，**不得描述为盲测**。差别是搜索 vs 推导，见 §3 C1。rusqlite 上 108 harness / 84.2% 覆盖 / 24h 每个 / 0 bug 是最重要的对照数据点 |
+| **PinChecker**（2025） | 合成程序暴露 Pin API 安全抽象不健全 | 思路最近的一条，但对象是纯 Rust 的 Pin，不涉跨语言，触发义务可从 Rust 源码本身推出 |
+| **SyRust** 类程序合成 | 符合 Rust 类型与所有权约束的 API 序列合成 | 本工作的合成目标是具体时序状态，不是类型可行的任意序列 |
 | **Rudra**（SOSP'21） | panic safety、higher-order safety invariant、Send/Sync variance | 技术路线同为 HIR+MIR，但三类缺陷均为 Rust 内部，不含跨界持有期 |
-| **ACORN / 多语言 Rust**（2025） | Rust 与 C 均译为统一 IR | 本系统不做全量翻译，只做有界查询，须在论文中说明代价与精度取舍 |
+| **ACORN / 多语言 Rust** | Rust 与 C 均译为统一 IR | 本系统不做全量翻译，只做有界查询，须说明代价与精度取舍。**发表年份需核实后再写入**——旧文档标注的 2025 存疑 |
 
-**绝对新颖性表述一律禁止。** 不得出现「目前无人做」「首个」这类未经限定的说法；新颖性只能表述为对上表某一行的具体差别。
+### 5.1 待核实并补入的相关工作
+
+2026-07-31 的复审列出以下工作，**本项目尚未逐篇核实，不得在核实前写进论文或对外材料**。核实后按上表格式补入，每一篇必须写出与本工作的具体差别，不得只列名字。
+
+CRUST（统一 Rust/C 跨语言分析）、CREMA（Rust/foreign 代码的 UAF / never-free / double-free 静态分析）、CULPA（安全要求 → executable predicate → triggerability，**与本工作路线最接近，优先核实**）、SafeFFI（边界运行时 spatial/temporal sanitization）、CapsLock（跨 Rust/FFI/assembly 的运行时 ownership 强制）、Omniglot（safe foreign interaction 与 temporal constraints）、SAILOR / SAVIOR / Helium（静态候选 → harness → 动态确认这一范式的先例，**用于避免过宽的首创声明**）。
+
+**照抄一份未核实的相关工作表，是另一种形式的不严谨。**
+
+### 5.2 绝对新颖性表述一律禁止
+
+不得出现「目前无人做」「首个」这类未经限定的说法；新颖性只能表述为对上表某一行的具体差别。经过本轮更正，可辩护的范围已被压缩到：
+
+```text
+role/slot-sensitive 的回调时序协议分析
++ 安全客户端的 lifetime-separation 可行性
++ effect 定向的可执行反证
+```
 
 ---
 
@@ -247,15 +381,41 @@ Rust 事实、外部 IR 事实、静态判定、反证与动态回执全部引�
 | 生态级扫描 | buildability、coverage、`InsufficientEvidence` 比例与成本 |
 | Prospective scan | 新问题与维护者反馈 |
 
-### 7.2 新发现是硬要求，不是二选一
+### 7.2 新发现是本项目的竞争力要求
 
-投稿就绪清单中「新发现或强 correctness argument 至少具备其一」的写法是错的，必须改：
+「新发现或强 correctness argument 至少具备其一」的旧写法会让项目误以为形式化是真备胎，必须改。但 2026-07-31 的复审指出一个更准确的措辞——四大安全会的 CFP 列出的核心标准是原创性、相关性、科学严谨性、正确性与清晰度，**没有把「必须发现新漏洞」写成形式规则**。
 
-> **对 S&P / USENIX Security / CCS / NDSS，新发现是必需的。** 形式化路线在这四个会需要达到 POPL 级别的语义与证明才能替代实证，本项目不具备也不打算具备。形式化补偿只在路线 D（§9）的目标会议成立。
+准确表述：
 
-不写死这一条，项目会误以为形式化是真备胎。
+> **鉴于 §3 与 §5 更正后机制 delta 已被显著压缩，实证回报必须承担更多重量。新发现是本项目的竞争力要求，不是会场的形式规则。** 形式化路线在这四个会需要达到 POPL 级别的语义与证明才能替代实证，本项目不具备也不打算具备——形式化补偿只在路线 D（§9）的目标会议成立。
 
-### 7.3 必须报告的指标
+竞争力目标：2–3 个独立新问题；至少跨两个外部库 / 协议族；至少一个获得维护者确认或修复。
+
+### 7.3 必须报告完整的 attrition waterfall
+
+系统会产生四个**不会天然相等**的集合。只报告 precision 而不报告集合之间的收缩，是对结果的系统性美化。
+
+论文必须逐级报告：
+
+```text
+eligible hand-off population   （预注册的可分析总体，分母）
+→ statically decided           （非 InsufficientEvidence 的比例）
+→ supported candidates         （StaticVerdict = SupportedIncompatibility）
+→ witness attempted
+→ witness generated            （可编译的 safe-only 客户端）
+→ witness executed
+→ independently confirmed      （独立 oracle 出证）
+```
+
+每一级都要给出流失原因的分类。**在拿到这些数字之前，禁止使用以下表述：**
+
+- 「FFI 边界上的保证被系统性打破」；
+- 「对每一次 break 都提供证明」；
+- 「LLVM IR 给出外部的实际行为」——静态 IR 分析给出的是指定抽象与假设下的 **IR-supported may-effect**，只有动态反证说明某次具体执行真实发生。
+
+§1 的统领主张在 Gate 通过前是**目标主张**，不是能力陈述。
+
+### 7.4 必须报告的指标
 
 不同工具必须在**预先定义的共同任务**上比较。不得用 Yuga 的全部 lifetime 报告对比本系统的窄回调持有期输出。
 
@@ -267,21 +427,21 @@ decision coverage          = decided / eligible
 conservative precision bound = TP / (TP + FP + Unknown)
 ```
 
-### 7.4 Ground truth
+### 7.5 Ground truth
 
 - 确认集结果由两名独立标注者审阅，尽量对工具身份盲化；
 - 分歧由第三人裁决；
 - 报告一致性、分歧率与证据等级；
 - **同一 advisory 的多个 API 不得伪装成多个独立根因。**
 
-### 7.5 数据隔离
+### 7.6 数据隔离
 
 - rusqlite 与所有已读源码样本属于**开发集**；
 - pilot 中暴露的 crate 此后**永久**转为开发集；
 - 算法、阈值、Contract、feature 与 corpus 冻结后才打开 holdout；
 - 同一外部库、fork、版本家族与 vulnerable/fixed pair 不得跨集合泄漏。
 
-### 7.6 消融
+### 7.7 消融
 
 | 变体 | 回答的问题 |
 | --- | --- |
@@ -296,7 +456,7 @@ conservative precision bound = TP / (TP + FP + Unknown)
 
 **若关闭外部分析后 precision、coverage 与误报归因没有实质变化，C2 失败**，不得继续把跨界判别写成主创新。
 
-### 7.7 规模参考线
+### 7.8 规模参考线
 
 不是会议硬性数字，作为投稿准备线：约 100 个客观选取的 FFI crate 做适用性扫描；至少 10 个未参与开发的 crate 进入人工确认集；至少 30 个独立 hand-off 获得双人标注；至少 5 个独立 root-cause family 或 protocol shape；最好有 2–3 个新问题，至少一个获得维护者确认或修复。
 
@@ -308,19 +468,47 @@ conservative precision bound = TP / (TP + FP + Unknown)
 
 按执行顺序排列。**每一道都是研究方向的止损点，不是工程里程碑。**
 
-### Gate P：猎物存在性（最先做，成本最低）
+### Gate R：关系正确性（最先做）
 
-在投入任何外部侧分析之前必须先回答：
+**2026-07-31 复审后新增，排在 Gate P 之前。** 关系错了，后面所有测量都在测错的东西。
 
-> **生态里到底还有多少个「safe API + 非 `'static` 的 Fn bound + 同函数内 FFI 注册」的位置？**
+用四个 matched fixture 验证核心关系（§2.4）。**外部侧用手写 C stub，不需要 LLVM IR 流水线**，因此该 gate 与 P1/P2 完全解耦。
 
-RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众所周知，很多维护者早已收紧。**若猎物池只有个位数，路线 A 直接死于 §7.2 的新发现硬要求**，应立即转路线 C。
+| # | Rust 侧 | 外部 C stub | 应判 | 谁能判出来 |
+| --- | --- | --- | --- | --- |
+| 1 | 允许捕获借用，无 guard | 保存 + 晚调 | **不相容** | 两侧都能怀疑 |
+| 2 | 允许捕获借用，有 guard | 保存 + 晚调，**注销真的清槽** | 相容 | 需要 Q4′ |
+| 3 | 允许捕获借用，有 guard | 保存 + 晚调，**注销没清干净** | **不相容** | **只有外部侧能判** |
+| 4 | `'static`，分配提前释放 | 保存 + 晚调 | **不相容** | 需要 A 的生命周期建模 |
 
-- 通过条件：候选池规模足以支撑 §7.7 的确认集与新发现目标，且未调优 crate 上有非平凡占比。
-- No-Go：候选池过小，或全部集中在已修复的历史版本。
-- 失败动作：转路线 C（经验研究），不再投入 P2 的外部侧实现。
+- **通过**：四条全部判对；且 fixture 2 与 3 的 Rust 侧完全相同、只有 C stub 不同，Full 能分开而 Rust-only 不能。
+- **No-Go**：fixture 2 与 3 分不开。
+- **失败动作**：外部侧对 C2 没有判别力，转路线 B。
 
-**这一步现在就能做**，Rust 侧的回调 bound 四态判定已实现，不依赖外部侧、不依赖 API 清单。执行步骤见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。**成本约为外部侧实现的百分之一，却决定是否要做外部侧。**
+**fixture 3 是整个 gate 的重点**，它是 [§2.6](#26-外部侧的判别力在-q4-而不在-q1) 的直接检验：如果外部侧的价值真的在 Q4′ 而不在 Q1，这一条就必须能分开。fixture 4 检验 R/A 分离，防止 §2.3 的假阴性。
+
+### Gate P：猎物存在性
+
+在投入外部侧实现之前必须回答：**生态里还剩多少个安全客户端可能形成 lifetime separation 的交出点。**
+
+RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众所周知，很多维护者早已收紧。**若猎物池不足以支撑 §7.8 的确认集与新发现目标，路线 A 不成立**，应转路线 C。
+
+**判据必须满足四条方法学要求**，缺一不可，详见 [runbook](../experiments/runbooks/prey-existence-probe.md)：
+
+1. **以 `EffectiveCaptureAdmission` 为准，不用语法四态**（§2.8）——否则最强的一类候选被记成弱候选；
+2. **以 Tier A 为准**：回调 / trampoline / userdata 经过程内或有界过程间 dataflow **到达精确的 extern 参数**。仅「同函数内出现 extern 调用」是 Tier B 语法共现，只能作探索性筛选；
+3. **以 L1 可分析为准**：候选必须能绑定到精确的外部 LLVM IR。主表必须标注 IR acquisition tier——**一个很大的 Rust 侧候选池可能全部进不了 P1/P2**；
+4. **以未调优 crate 为准**，且判据用置信界而非「足够」「非平凡」这类事后可移动的词：
+
+```text
+Pass   = 下置信界仍足以支撑预定确认集
+No-Go  = 上置信界仍不足以支撑预定确认集
+Amber  = 扩大样本或增加人工审计
+```
+
+**运行前必须完成 family-level sealed split。** 直接查看 300–500 个 crate 的身份与候选数，会按 §7.6 把整个前瞻池变成开发集。默认做法是**独立 runner 只返回盲化聚合统计**，开发者不接触 crate 身份。
+
+- 失败动作：转路线 C（经验研究），不再投入外部侧实现。
 
 ### Gate A：外部证据必要性
 
@@ -351,7 +539,7 @@ RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众�
 
 | 路线 | 适用条件 | 主张 |
 | --- | --- | --- |
-| **A：Verifier + Witness 联合主线** | Gate P、A、B、D 全通过 | 完整的 §1 统领主张。**当前的目标路线** |
+| **A：Verifier + Witness 联合主线** | Gate R、P、A、B、D 全通过 | 完整的 §1 统领主张。**当前的目标路线** |
 | **B：Witness 合成为主** | 外部侧消融没有明显精度增益，但候选到真实 UB 的自动转化率显著优于 fuzzing baseline | 收窄为「利用静态 lifetime obligation 定向合成 safe-Rust 反例，并以独立跨语言 oracle 验证」。C2 不再是核心，外部分析只服务触发规划 |
 | **C：经验研究** | Gate P 失败，或自动化泛化不足，但能建立大规模严格标注的 corpus | 需要生态级样本、vulnerable/fixed pair、多工具盲评、coverage/Unknown、高质量 taxonomy 与 benchmark。**缺少生态级新结论时更适合软件工程会议** |
 | **D：形式化 effect/trace calculus** | 实证规模受限，但能为限定片段给出清晰的 compatibility relation、推理规则与正确性论证 | 目标会议改为 CSF、PLDI、OOPSLA。**不能只用一个统一 enum 代替正式语义** |
@@ -367,7 +555,7 @@ RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众�
 ## 10. 明确做什么
 
 1. **先做透回调持有期一维。** 外部行为、关系判定、反证与确认性评估全部闭合后，再讨论扩维。
-2. **先跑 Gate P 的猎物探针。** 它决定后面所有投入是否有意义，成本是外部侧实现的百分之一。
+2. **先过 Gate R，再跑 Gate P。** Gate R 用四个 matched fixture 验关系，外部侧用手写 C stub，不需要 IR 流水线；关系错了，后面所有测量都在测错的东西。Gate P 决定后面所有投入是否有意义，成本是外部侧实现的百分之一。
 3. **分析真实构建产物。** feature、target、宏、链接对象与 artifact hash 必须与 Rust 分析一致，不得另行编译一份「相似的 C 源码」代替。
 4. **保留第三态。** unknown callee、IR 不可得、join 失败全部显式进入 coverage。
 5. **制作 matched pairs。** 保持 Rust wrapper 相同，只替换外部的同步/保存行为，直接验证信息增益。
@@ -399,7 +587,19 @@ RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众�
 17. 不做完整外部语义建模、全程序 points-to 或 exploit 生成。
 18. 不在没有维护者确认、补丁或独立证据时把前瞻候选称为漏洞。
 19. 不使用「目前无人做」之类未经限定的绝对新颖性表述。
-20. 不把把 artifact-aligned identity 列为创新点。
+20. 不把 artifact-aligned identity 列为创新点。
+21. 不把 `SupportedIncompatibility (weak)` 或任何第四态写进判定枚举（§2.7）。
+22. 不把「反证未触发」写成候选被证伪——有限次执行不能证伪 may-property。
+23. 不把「注册状态守卫下的 may-call」写成「注册后必然被调用」。
+24. 不把无显式 outlives bound 一律归为 unknown（§2.8）。
+25. 不把「同函数内出现 extern 调用」称为已确认的 hand-off（Tier B ≠ Tier A）。
+26. 不把 IR 的 may-effect 称为运行时实际行为。
+27. 不把 deepSURF 描述为纯盲测——已核实原文，它生成 safe-only harness 并用 ASan。
+28. 不把 rusqlite 0.26.2 写进「同步 / 过度限制」格（§2.5）。
+29. 不把 Yuga 的 8 条误报描述为完全相同的单一机制（§5）。
+30. 不在核实前把复审列出的相关工作写进论文（§5.1）。
+31. 不用普通 ASan 的覆盖结果代表所有 Rust lifetime / provenance UB。
+32. 不用维护者确认替代正确性 ground truth。
 
 ---
 
@@ -419,10 +619,11 @@ RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众�
 
 ## 13. 投稿就绪定义
 
-- [ ] Gate P 通过，猎物池规模支撑 §7.7 的目标；
+- [ ] Gate R 通过：四个 matched fixture 全部判对，且 fixture 2/3 只有 Full 能分开；
+- [ ] Gate P 通过（Tier A + L1 + 未调优 + 置信界），猎物池规模支撑 §7.8 的目标；
 - [ ] 核心主张已从整体 soundness 收窄到回调持有期 compatibility；
 - [ ] exact hand-off identity 与双侧事实模型完成；
-- [ ] 外部侧 Q1/Q3 在真实构建 IR 上完成，Q3 的降级与 limitation 已量化；
+- [ ] 外部侧 Q1/Q3/Q4′ 在真实构建 IR 上完成，Q3 的降级与 limitation 已量化；
 - [ ] matched-pair 证明 Full 的信息增益；
 - [ ] 三态判定与分析片段写清；
 - [ ] 至少一个 unseen 候选自动生成 safe-only 反证；
@@ -433,7 +634,8 @@ RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众�
 - [ ] 开发集、pilot 与 sealed holdout 严格隔离；
 - [ ] precision、recall、coverage、Unknown 与 root-cause clustering 完整；
 - [ ] evidence receipt 与 artifact lineage 可公开复核；
-- [ ] **至少一个新发现**（§7.2 硬要求）；
+- [ ] **至少一个新发现**（§7.2 竞争力要求）；
+- [ ] 完整的 attrition waterfall 已报告（§7.3）；
 - [ ] 摘要、引言、模型、实现与实验使用同一范围与术语。
 
 ---
@@ -448,7 +650,7 @@ RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众�
 
 > 本文度量 Rust 的安全抽象保证在 FFI 边界上被打破的频率与形态。系统把 Rust 安全 API 的 lifetime bound 视为一份隐式规约、把外部实现 LLVM IR 中的 retain/invoke effect 视为实现，在参数角色级的交出点身份上检查两者的精化关系，并把有证据支持的不相容自动转化为只使用 safe Rust 的可运行、可独立验证的反例。
 
-**在 Gate P、A、B、D 通过前，上述句子只能作为目标主张，不能作为当前能力陈述。**
+**在 Gate R、P、A、B、D 通过前，上述句子只能作为目标主张，不能作为当前能力陈述。**
 
 ---
 
