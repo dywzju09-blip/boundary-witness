@@ -40,10 +40,10 @@ pub use candidate::{
     V32PatternFamily, V32RecommendedNextStep, candidate_from_boundary, validate_v3_2_candidates,
 };
 pub use compatibility::{
-    AllocationOwnership, CompatibilityVerdict, EffectiveCaptureAdmission, EvidenceGrade,
-    ForeignBehaviorFact, ForeignClear, ForeignInvocation, ForeignRetention, HandOffId,
-    LifetimeSubject, RegistrationGuard, RustContractFact, StaticVerdict, WitnessObligation,
-    WitnessStatus, hand_off_is_incompatible, judge, judge_hand_off,
+    AllocationOwnership, CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear,
+    ForeignInvocation, ForeignRetention, HandOffId, LifetimeSubject, RegistrationGuard,
+    RustContractFact, StaticVerdict, WitnessObligation, WitnessStatus, hand_off_is_incompatible,
+    judge, judge_hand_off,
 };
 pub use contract::{
     CALLBACK_RETENTION_API_MAP_SCHEMA_V01, CallbackApiEntry, CallbackRetentionApiMap,
@@ -130,13 +130,13 @@ pub use static_fact::{
     CallbackLifetimeBoundFact, CallbackLifetimeBoundScope, CallbackReleaseUseOrderFact,
     CallbackReleaseUseOrdering, CallbackSiteFact, CallbackUserDataReconstructionFact,
     CallbackUserDataReconstructionKind, CaptureMode, DropKind, DropPreventionFact,
-    DropPreventionKind, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
-    ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
-    ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
-    RawPointerTransferFact, RawPointerTransferKind, RegistrationRole, RegistrationSiteFact,
-    ReleasePathProofFact, ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
-    ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, StaticArtifactIdentity, StaticFact,
-    StaticFactEnvelope, StaticSourceRef,
+    DropPreventionKind, DropSiteFact, EffectiveCaptureAdmission, ExternalBufferBindingFact,
+    ExternalCallRole, ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind,
+    ObjectFlowFact, ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact,
+    PersistedReturnedBorrowFact, RawPointerTransferFact, RawPointerTransferKind, RegistrationRole,
+    RegistrationSiteFact, ReleasePathProofFact, ReturnedBorrowInvalidationOrderFact,
+    ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationFact, ReturnedBorrowRelationKind,
+    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef,
 };
 pub use static_ranking_reveal::{
     RevealStaticRankingInput, V3_2_5_PRIVATE_GROUND_TRUTH_SCHEMA_V1,

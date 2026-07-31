@@ -40,22 +40,43 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 **[Gate A](milestone-gates.md#gate-a外部证据必要性) 的增益必须归因到那里**，不能笼统地说「因为我们看了外部侧」。
 
-## 下一步：PC `EffectiveCaptureAdmission`
+## 已完成：PC `EffectiveCaptureAdmission`（Gate P 前置）
 
-| 字段 | 内容 |
+2026-07-31 完成。落点：`crates/bw-model/src/static_fact.rs`（语义取值与映射）、
+`compiler/bw-rustc/src/rustc_api/mir.rs`（trait object 覆盖）、
+`crates/bw-model/src/lifecycle_v326.rs`（判定推导的更正）。
+
+### 先测量后写代码，探针改了方案
+
+按纪律先跑探针看现状，四项结果里有三项与预期不同：
+
+| 探针结果 | 影响 |
 | --- | --- |
-| 服务 | PP 的正确性，是 Gate P 的前置 |
-| 状态 | `Planned` |
-| 前置 | 无，可与 PF 并行 |
-| 问题 | 现有 `CallbackLifetimeBoundScope` 是语法四态。`fn register<F: Fn()>` 的「无 bound」**恰恰是允许捕获借用**（最强候选），而 `dyn Fn` 的省略 lifetime **默认 `'static`**（不是候选）——两者被合并成同一个 `NoLifetimeBound` |
-| 代码入口 | `compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`；`crates/bw-model/src/static_fact.rs` |
-| 完成谓词 | `dyn Fn` 与泛型 `F: Fn` 两个 fixture 落到**相反**取值 |
+| APIT（`impl Fn`）**已经能工作** | 原计划的一项工作取消 |
+| **`dyn Fn` 一条事实都不产出** | trait object 是参数类型，不在 `generics.predicates` 里，现有分类器完全看不到。是漏报 |
+| `Box<dyn Fn()>` 与 `&'c mut dyn Fn()` 在 HIR 里是**同一个** `ImplicitObjectLifetimeDefault` | 语义相反，只看 lifetime kind 会把一半判反。必须靠外层容器区分 |
+| `lifecycle_v326.rs` 的判定推导对 `no_lifetime_bound` 直接 `continue` | `fn register<F: Fn()>(f: F)` **产出零个判定**——猎物池被数少的确切机制 |
 
-**不修这一项就跑 Gate P，会系统性错估猎物池。**
+### 改了什么
+
+- `NoLifetimeBound` 的语义订正为 `PermitsNonStaticCapture`。没有 `'static` 恰恰是允许捕获借用，这是候选形状里最强的一种，不是最弱的；
+- 新增 `UnresolvedLifetime`，真正「解析不出」的那一格。容器不在已知集合（`Box`/`Rc`/`Arc`）时落这里，**不猜**；
+- trait object 覆盖，object lifetime 的默认值由外层容器解析；
+- `is_shorter_than_static()` 改为由语义映射推导，并有断言钉死两者不得分叉。
+
+### 非空性检查
+
+故意让容器判据失效后，`boxed_dyn_default` 从 `RequiresStaticCapture` 落到 `Unresolved`，断言在预期那一行失败。
+
+### 一处顺带修掉的自造问题
+
+`EffectiveCaptureAdmission` 一度在 `compatibility.rs` 与 `static_fact.rs` 各有一份定义——正是 [代码库审计 §7.3](../development/codebase-realignment.md) 记的 `sanitize_id` 那种分歧。已合并成一份，放在事实层，关系层 import。
 
 ## 之后：PP 猎物存在性探针
 
-仅在 PC 完成后启动。判据已重做，见 [runbook](../experiments/runbooks/prey-existence-probe.md)：以 `EffectiveCaptureAdmission` 语义取值为准；只数 **Tier A**（dataflow 到达精确 extern 参数）；只算 **L1 可分析**；用置信界而非「足够」；**运行前必须完成 family-level sealed split，默认只返回盲化聚合统计**——否则整个前瞻池变成开发集。
+## 之后：PP 猎物存在性探针
+
+PC 已完成，可以启动。判据已重做，见 [runbook](../experiments/runbooks/prey-existence-probe.md)：以 `EffectiveCaptureAdmission` 语义取值为准；只数 **Tier A**（dataflow 到达精确 extern 参数）；只算 **L1 可分析**；用置信界而非「足够」；**运行前必须完成 family-level sealed split，默认只返回盲化聚合统计**——否则整个前瞻池变成开发集。
 
 ## 再之后：P0 与 P1 并行起步
 

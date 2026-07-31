@@ -4699,10 +4699,13 @@ fn returned_borrow_static_fact_maps_to_candidate_scoped_lifecycle_fact() {
     ));
 }
 
-/// 四个 scope 都要能走完 static fact → lifecycle fact → 验证器这条链。
+/// 每个 scope 都要能走完 static fact → lifecycle fact → 验证器这条链。
 ///
-/// 健全的两种（`static_lifetime` / `no_lifetime_bound`）也必须产出事实：缺证与"已检查且
-/// 健全"必须可区分，这与 `callback_bound_scope` 的 `Undecided` 是同一条纪律。
+/// `static_lifetime` 是"已检查且不允许借用捕获"、`unresolved_lifetime` 是"识别出回调但
+/// 解析不出取值"，两者都必须产出事实：缺证与"已检查且健全"必须可区分。
+///
+/// **这张表是手写的**，新增变体时必须同步——漏一行不会有编译错误，只会让那个变体
+/// 悄悄没有覆盖。
 ///
 /// 这条测试同时是 object_id 白名单的非空性检查——`callback_lifetime_bound_scope:` 漏在
 /// `BW-V326-FACT-OBJECT-ID` 那张表里的话，`validate_v3_2_6_lifecycle_facts` 会直接拒掉。
@@ -4728,6 +4731,11 @@ fn callback_lifetime_bound_static_fact_carries_every_scope_through_validation() 
             bw_model::CallbackLifetimeBoundScope::NoLifetimeBound,
             None,
             "no_lifetime_bound",
+        ),
+        (
+            bw_model::CallbackLifetimeBoundScope::UnresolvedLifetime,
+            None,
+            "unresolved_lifetime",
         ),
     ] {
         let mut candidate = sample_candidate("candidate:bound:001", "crate:bound");
@@ -4810,16 +4818,63 @@ fn callback_lifetime_bound_static_fact_carries_every_scope_through_validation() 
     }
 }
 
-/// `is_shorter_than_static` 是第 3 步判定"bound 是否弱于 C 侧持有期"的入口谓词。
-/// 它必须只对声明 lifetime 那两种为真——反了就会把修好的版本报成缺陷。
+/// 语法 scope 到语义取值的映射。**判定必须消费语义取值**，不得自行按 scope 变体判断。
+///
+/// 2026-07-31 更正：`NoLifetimeBound` 此前被当成「不表态」，于是
+/// `fn register<F: Fn()>(f: F)` 这种最强的候选形状被静默跳过。没有 `'static` 恰恰意味着
+/// 调用方可以传一个捕获了局部借用的闭包。
 #[test]
-fn only_declared_lifetime_scopes_are_shorter_than_static() {
-    assert!(
-        bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime.is_shorter_than_static()
+fn scope_maps_to_effective_capture_admission() {
+    use bw_model::{CallbackLifetimeBoundScope as Scope, EffectiveCaptureAdmission as Admission};
+
+    assert_eq!(
+        Scope::DeclaredReceiverLifetime.effective_capture_admission(),
+        Admission::PermitsNonStaticCapture
     );
-    assert!(bw_model::CallbackLifetimeBoundScope::DeclaredFreeLifetime.is_shorter_than_static());
-    assert!(!bw_model::CallbackLifetimeBoundScope::StaticLifetime.is_shorter_than_static());
-    assert!(!bw_model::CallbackLifetimeBoundScope::NoLifetimeBound.is_shorter_than_static());
+    assert_eq!(
+        Scope::DeclaredFreeLifetime.effective_capture_admission(),
+        Admission::PermitsNonStaticCapture
+    );
+    assert_eq!(
+        Scope::NoLifetimeBound.effective_capture_admission(),
+        Admission::PermitsNonStaticCapture,
+        "裸泛型 `F: Fn()` 没有 outlives bound 是允许捕获借用，不是缺证"
+    );
+    assert_eq!(
+        Scope::StaticLifetime.effective_capture_admission(),
+        Admission::RequiresStaticCapture
+    );
+    assert_eq!(
+        Scope::UnresolvedLifetime.effective_capture_admission(),
+        Admission::Unresolved,
+        "解析不出 object lifetime 默认值时必须记缺证，不得猜任一方向"
+    );
+}
+
+/// `is_shorter_than_static` 是判定「bound 是否弱于外部持有期」的入口谓词。
+/// 它现在由语义映射推导，两者不得分叉。
+#[test]
+fn is_shorter_than_static_follows_the_semantic_admission() {
+    use bw_model::{CallbackLifetimeBoundScope as Scope, EffectiveCaptureAdmission as Admission};
+
+    for scope in [
+        Scope::DeclaredReceiverLifetime,
+        Scope::DeclaredFreeLifetime,
+        Scope::StaticLifetime,
+        Scope::NoLifetimeBound,
+        Scope::UnresolvedLifetime,
+    ] {
+        assert_eq!(
+            scope.is_shorter_than_static(),
+            scope.effective_capture_admission() == Admission::PermitsNonStaticCapture,
+            "{scope:?}：两个谓词分叉就会出现「一处判宽、一处判紧」的静默不一致"
+        );
+    }
+
+    // 具体取值也钉死，避免两个谓词一起改错还互相印证。
+    assert!(Scope::NoLifetimeBound.is_shorter_than_static());
+    assert!(!Scope::StaticLifetime.is_shorter_than_static());
+    assert!(!Scope::UnresolvedLifetime.is_shorter_than_static());
 }
 
 #[test]
@@ -7866,9 +7921,14 @@ fn a_static_callback_bound_with_retention_evidence_reads_as_static() {
     );
 }
 
-/// `no_lifetime_bound` 是"签名不表态"，不能倒向任一结论。
+/// `no_lifetime_bound` 允许捕获借用，因此判 `NonStatic`。
+///
+/// **2026-07-31 更正。** 此前这条测试断言它「不表态、不产出判定」，那是把最强的一类
+/// 候选形状静默丢掉：`fn register<F: Fn()>(f: F)` 没有 `'static`，恰恰意味着调用方
+/// 可以传一个捕获了局部借用的闭包。语义映射见
+/// `CallbackLifetimeBoundScope::effective_capture_admission`。
 #[test]
-fn a_callback_bound_that_states_nothing_is_undecided_even_with_retention_evidence() {
+fn a_callback_bound_without_an_outlives_bound_reads_as_non_static() {
     let enclosing = "alpha::register";
     let facts = vec![
         bound_fact("candidate:alpha:silent", enclosing, "no_lifetime_bound"),
@@ -7881,9 +7941,36 @@ fn a_callback_bound_that_states_nothing_is_undecided_even_with_retention_evidenc
     ];
 
     let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
+    assert_eq!(
+        derived["candidate:alpha:silent"].verdict,
+        bw_model::V326CallbackBoundVerdict::NonStatic,
+        "没有 outlives bound 的泛型回调参数允许捕获借用，不是缺证"
+    );
+}
+
+/// 真正「不表态」的那一格现在是 `unresolved_lifetime`：识别出回调 trait object，
+/// 但解析不出它省略的 object lifetime 默认成什么。它不得倒向任一结论。
+#[test]
+fn an_unresolved_object_lifetime_is_undecided_even_with_retention_evidence() {
+    let enclosing = "alpha::register_dyn";
+    let facts = vec![
+        bound_fact(
+            "candidate:alpha:unresolved",
+            enclosing,
+            "unresolved_lifetime",
+        ),
+        bound_derivation_fact(
+            "candidate:alpha:unresolved",
+            bw_model::V326LifecycleFactKind::UnregisterCall,
+            enclosing,
+            vec!["callback:alpha".to_owned()],
+        ),
+    ];
+
+    let derived = bw_model::derive_v3_2_6_callback_bound_verdicts(&facts);
     assert!(
-        derived.get("candidate:alpha:silent").is_none(),
-        "a signature that states nothing must not be turned into a verdict in either direction"
+        derived.get("candidate:alpha:unresolved").is_none(),
+        "解析不出取值时必须记缺证，不得猜任一方向"
     );
 }
 

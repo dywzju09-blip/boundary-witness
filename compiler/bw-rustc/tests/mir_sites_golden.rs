@@ -7101,6 +7101,10 @@ fn callback_lifetime_bound_fixture_separates_receiver_scoped_bounds_from_static_
             .map(|bound| (bound.bound_scope, bound.bound_lifetime.clone()))
     };
 
+    let admission_of = |method: &str| {
+        scope_of(method).map(|(scope, _)| scope.effective_capture_admission())
+    };
+
     // 这四条断言是判据本身。任何一条反了，`update_hook` 那个缺陷就会被判成健全，或者
     // 修好的版本会被误报。
     assert_eq!(
@@ -7152,6 +7156,68 @@ fn callback_lifetime_bound_fixture_separates_receiver_scoped_bounds_from_static_
     assert!(
         scope_of("not_a_callback").is_none(),
         "`T: Clone + 'c` carries no Fn bound and must not produce a callback bound fact"
+    );
+    // ---- 语义取值（PC）：语法形状与「能否捕获借用」不是一回事 ----
+
+    // APIT 走的是同一条泛型路径，实测确认无需额外处理。
+    assert_eq!(
+        admission_of("apit_unbounded"),
+        Some(bw_model::EffectiveCaptureAdmission::PermitsNonStaticCapture),
+        "`impl FnMut()` 没有 outlives bound，允许捕获借用"
+    );
+    assert_eq!(
+        admission_of("apit_static"),
+        Some(bw_model::EffectiveCaptureAdmission::RequiresStaticCapture)
+    );
+
+    // HRTB 约束的是**回调参数**的 lifetime，不是捕获环境的，因此对捕获不设限。
+    assert_eq!(
+        admission_of("hrtb_arg_lifetime"),
+        Some(bw_model::EffectiveCaptureAdmission::PermitsNonStaticCapture),
+        "`for<'r> FnMut(&'r u8)` 不得被读成 `'static`"
+    );
+
+    // ---- 非空性检查：语义相反的两种形状必须落到相反的取值 ----
+    //
+    // `unbounded` 与 `boxed_dyn_default` 在「有没有写 outlives bound」这一点上完全
+    // 一样。若两者取值相同，说明归一化没生效——那正是此前会系统性错估候选池的形态。
+    assert_eq!(
+        admission_of("unbounded"),
+        Some(bw_model::EffectiveCaptureAdmission::PermitsNonStaticCapture),
+        "裸泛型 `F: FnMut()` 没有 `'static` 恰恰是允许捕获借用，不是「不表态」"
+    );
+    assert_eq!(
+        admission_of("boxed_dyn_default"),
+        Some(bw_model::EffectiveCaptureAdmission::RequiresStaticCapture),
+        "`Box<dyn FnMut()>` 省略的 object lifetime 默认到 `'static`"
+    );
+    assert_ne!(
+        admission_of("unbounded"),
+        admission_of("boxed_dyn_default"),
+        "两者语法上都「没写 bound」，语义相反，必须分开"
+    );
+
+    // ---- trait object：默认值由外层容器决定，不能只看 lifetime kind ----
+    //
+    // `boxed_dyn_default` 与 `ref_dyn_default` 的 object lifetime 在 HIR 里是同一个
+    // `ImplicitObjectLifetimeDefault`（已实测），语义却相反。
+    assert_eq!(
+        scope_of("ref_dyn_default").map(|(scope, _)| scope),
+        Some(bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime),
+        "`&'c mut dyn FnMut()` 的省略 object lifetime 默认取自引用，即 `'c`"
+    );
+    assert_ne!(
+        admission_of("ref_dyn_default"),
+        admission_of("boxed_dyn_default"),
+        "同一个 LifetimeKind、相反的语义：只看 kind 会把其中一半判反"
+    );
+    assert_eq!(
+        scope_of("boxed_dyn_declared"),
+        Some((
+            bw_model::CallbackLifetimeBoundScope::DeclaredReceiverLifetime,
+            Some("'c".to_owned())
+        )),
+        "`Box<dyn FnMut() + 'c>` 显式写了 lifetime"
     );
 }
 

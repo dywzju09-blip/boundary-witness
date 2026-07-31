@@ -33,11 +33,11 @@
 | `Implemented` | returned-borrow exact claimant | 共享事实只接受唯一 exact anchor；仍需完整回归复验 |
 | `Implemented` | object-chain proof-layer split | identity、ordering、complete risk chain 已分层；仍需完整回归复验 |
 | `Implemented` | runtime、oracle 与 fuzz observer 基础 | 组件测试通过；不是任意候选 executor |
-| `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound，**语法**四态，无需 API 清单；健全与不健全两侧都产出事实。**取值语义待修正**，见 roadmap PC |
+| `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound，无需 API 清单；健全与不健全两侧都产出事实。语义取值由 `effective_capture_admission()` 给出，覆盖泛型 / APIT / HRTB / trait object |
 | `Implemented` | 返回借用寿命不受输入约束的定义点识别 | 从 HIR 签名比较输入与输出的 lifetime 参数集合，无需 API 清单。此维度与 Yuga 重叠，不作创新点 |
 | `Implemented` | 持有期维度的两侧联结与判定来源记录 | 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；两路结论不一致时都留在产物中 |
 | `Implemented` | 核心关系与四个 matched fixture（roadmap PF） | `crates/bw-model/src/compatibility.rs` + `crates/bw-model/tests/compatibility.rs`（14 项）+ `benchmarks/compiler-fixtures/callback-retention-relation/`。四个 fixture 全部判对，Full 能分开 2 与 3、Rust-only 不能。**外部侧事实由 C stub 手工标注**（manual foreign oracle），不是从 IR 推导 |
-| `Planned` | `EffectiveCaptureAdmission`（roadmap PC） | 未开始。现有取值是语法四态，把语义相反的两种情况合并了。是 Gate P 的前置 |
+| `Implemented` | `EffectiveCaptureAdmission`（roadmap PC） | 语法 scope 到语义取值的映射 + `dyn Fn` 覆盖。`crates/bw-model/src/static_fact.rs`、`compiler/bw-rustc/src/rustc_api/mir.rs`。golden 与模型测试覆盖 APIT / HRTB / `Box<dyn>` / `&mut dyn` / 显式 lifetime |
 | `Planned` | 猎物存在性探针（roadmap PP） | 未测量。判据已于 2026-07-31 重做（Tier A / L1 / 置信界 / sealed split），前置是 PC |
 | `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
 | `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |

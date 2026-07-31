@@ -1529,24 +1529,26 @@ pub fn derive_v3_2_6_callback_bound_verdicts(
             continue;
         };
         let retention_kinds = retention.iter().copied().collect::<Vec<_>>().join(",");
-        let shorter_than_static = tokens.iter().any(|token| {
-            matches!(
-                token.as_str(),
-                "declared_receiver_lifetime" | "declared_free_lifetime"
-            )
-        });
+        // `no_lifetime_bound` 属于「允许捕获借用」。**2026-07-31 更正**：此前它被排除在
+        // 外，于是 `fn register<F: Fn()>(f: F)` 这种最强的候选形状根本不产出判定——
+        // 一个静默的、看起来完全正常的漏判。语义映射见
+        // `CallbackLifetimeBoundScope::effective_capture_admission`。
+        const PERMITS_NON_STATIC_CAPTURE: [&str; 3] = [
+            "declared_receiver_lifetime",
+            "declared_free_lifetime",
+            "no_lifetime_bound",
+        ];
+        let shorter_than_static = tokens
+            .iter()
+            .any(|token| PERMITS_NON_STATIC_CAPTURE.contains(&token.as_str()));
         let static_bound = tokens.iter().any(|token| token == "static_lifetime");
         // 一个不健全的入口就够了，所以松的优先。
-        // `no_lifetime_bound`：签名不表态，不能当成任一方向的结论。
+        // `unresolved_lifetime`：确实识别出回调，但解析不出 object lifetime 默认值。
+        // 它落到下面的 `continue`，记缺证——不得当成任一方向的结论。
         let (verdict, token) = if shorter_than_static {
             let token = tokens
                 .iter()
-                .find(|token| {
-                    matches!(
-                        token.as_str(),
-                        "declared_receiver_lifetime" | "declared_free_lifetime"
-                    )
-                })
+                .find(|token| PERMITS_NON_STATIC_CAPTURE.contains(&token.as_str()))
                 .cloned()
                 .unwrap_or_default();
             (V326CallbackBoundVerdict::NonStatic, token)
@@ -6611,6 +6613,7 @@ fn callback_lifetime_bound_scope_object_id(scope: CallbackLifetimeBoundScope) ->
         CallbackLifetimeBoundScope::DeclaredFreeLifetime => "declared_free_lifetime",
         CallbackLifetimeBoundScope::StaticLifetime => "static_lifetime",
         CallbackLifetimeBoundScope::NoLifetimeBound => "no_lifetime_bound",
+        CallbackLifetimeBoundScope::UnresolvedLifetime => "unresolved_lifetime",
     };
     format!("callback_lifetime_bound_scope:{token}")
 }

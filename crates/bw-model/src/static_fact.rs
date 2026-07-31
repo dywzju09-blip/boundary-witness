@@ -204,8 +204,12 @@ pub struct ExternalCallSiteFact {
 /// 把回调绑在 `&'c mut self` 这一次借用上，而真正持有回调的是 C 侧的 sqlite3 句柄，
 /// 它不受那次借用约束；0.26.2 把 bound 收紧成 `'static` 就修好了。
 ///
-/// 四个取值都会产出事实，包括健全的那两个。缺证与"已检查且健全"必须可区分：没有事实
+/// 所有取值都会产出事实，包括健全的那些。缺证与"已检查且健全"必须可区分：没有事实
 /// 只说明这条签名没被分析到，不等于它安全。
+///
+/// **本枚举是语法层观察，判定要用 [`Self::effective_capture_admission`]。** 两者不是
+/// 一一对应：`NoLifetimeBound` 与 `TraitObject` 的默认 `'static` 在「有没有写 outlives
+/// bound」这一点上完全一样，语义却相反。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallbackLifetimeBoundScope {
@@ -216,18 +220,68 @@ pub enum CallbackLifetimeBoundScope {
     /// （例如由另一个参数或返回值引入）。仍然短于 `'static`。
     DeclaredFreeLifetime,
     /// bound 是 `'static`。回调不能借用任何有限存活期的数据。
+    ///
+    /// 也包括 `Box<dyn Fn()>` 这种由容器把省略的 object lifetime 默认到 `'static` 的情况。
     StaticLifetime,
-    /// 有 `Fn` 家族 bound 但完全没有 outlives bound。存活期由推断决定，签名本身不表态。
+    /// 泛型或 APIT 回调参数有 `Fn` 家族 bound，但完全没有 outlives bound。
+    ///
+    /// **这不是「不表态」。** 对 `fn register<F: Fn()>(f: F)`，没有 `'static` 恰恰意味着
+    /// 调用方**可以**传一个捕获了局部借用的闭包——这是候选形状里最强的一种，不是最弱的。
+    /// 把它当成缺证会系统性漏掉整整一类交出点。
     NoLifetimeBound,
+    /// 识别出回调 trait object，但无法确定它省略的 object lifetime 默认成什么。
+    ///
+    /// `Box<dyn Fn()>` 默认 `'static`、`&'a dyn Fn()` 默认 `'a`——两者在 HIR 里的
+    /// lifetime kind **完全相同**，只能靠外层容器区分。容器不在已知集合里时必须落到
+    /// 这一格，不得猜。
+    UnresolvedLifetime,
+}
+
+/// 回调类型**在语义上**是否允许捕获非 `'static` 借用。
+///
+/// 判定必须消费这个取值，而不是 [`CallbackLifetimeBoundScope`] 的语法形状。
+/// 规范定义见 `docs/project/research-thesis.md` §2.8。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectiveCaptureAdmission {
+    /// 调用方可以传一个捕获了有限存活期借用的回调。
+    PermitsNonStaticCapture,
+    /// 类型层排除了借用捕获。**只排除这一个子问题**，不表示回调分配一定存活。
+    RequiresStaticCapture,
+    /// 取值依赖调用点上下文，签名本身不足以判定。
+    ContextDependent,
+    /// 未能解析。
+    Unresolved,
 }
 
 impl CallbackLifetimeBoundScope {
-    /// bound 是否短于 `'static`，即签名允许回调借用有限存活期的数据。
+    /// 把语法层观察映射成语义取值。
+    ///
+    /// 这个映射是 [`EffectiveCaptureAdmission`] 与语法四态之间唯一允许的桥；下游不得
+    /// 自行按 scope 变体判断。
+    #[must_use]
+    pub fn effective_capture_admission(self) -> EffectiveCaptureAdmission {
+        match self {
+            // 绑在一个声明的 lifetime 上 —— 允许捕获借用。
+            Self::DeclaredReceiverLifetime | Self::DeclaredFreeLifetime => {
+                EffectiveCaptureAdmission::PermitsNonStaticCapture
+            }
+            // 没有 outlives bound 的泛型/APIT 参数同样允许捕获借用，见变体文档。
+            Self::NoLifetimeBound => EffectiveCaptureAdmission::PermitsNonStaticCapture,
+            Self::StaticLifetime => EffectiveCaptureAdmission::RequiresStaticCapture,
+            Self::UnresolvedLifetime => EffectiveCaptureAdmission::Unresolved,
+        }
+    }
+
+    /// 签名是否允许回调借用有限存活期的数据。
+    ///
+    /// **2026-07-31 更正**：此前 `NoLifetimeBound` 返回 `false`，等于把最强的一类候选
+    /// 当成健全，下游的判定推导会直接跳过它们。
     #[must_use]
     pub fn is_shorter_than_static(self) -> bool {
         matches!(
-            self,
-            Self::DeclaredReceiverLifetime | Self::DeclaredFreeLifetime
+            self.effective_capture_admission(),
+            EffectiveCaptureAdmission::PermitsNonStaticCapture
         )
     }
 }

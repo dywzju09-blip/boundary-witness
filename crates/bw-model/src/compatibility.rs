@@ -39,6 +39,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::static_fact::EffectiveCaptureAdmission;
+
 /// 交出点身份：跨越语言边界的那一次调用。
 ///
 /// 两侧事实只有在本身份完全相等时才能组合——这就是关系里的 `SameArtifactSlotAndRole`
@@ -75,21 +77,6 @@ pub enum LifetimeSubject {
 
 impl LifetimeSubject {
     pub const ALL: [Self; 2] = [Self::CapturedReferent, Self::CallbackAllocation];
-}
-
-/// 回调类型**在语义上**是否允许捕获非 `'static` 借用。
-///
-/// 取代按签名语法给出的四态。「无 outlives bound」不是一个语义取值：对泛型
-/// `fn register<F: Fn()>(f: F)` 它意味着 [`Self::PermitsNonStaticCapture`]（最强候选），
-/// 而 `Box<dyn Fn()>` 的省略 lifetime 在多数位置默认到 `'static`，是
-/// [`Self::RequiresStaticCapture`]。把两者合并会系统性错估候选池。
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectiveCaptureAdmission {
-    PermitsNonStaticCapture,
-    RequiresStaticCapture,
-    ContextDependent,
-    Unresolved,
 }
 
 /// Rust 侧可能否定「安全客户端能让被捕对象失效而注册仍有效」的 guard 形状。

@@ -21040,7 +21040,7 @@ fn callback_lifetime_bounds<'tcx>(
             .extend(bound_predicate.bounds);
     }
 
-    bounds_by_param
+    let mut observations = bounds_by_param
         .into_iter()
         // 判据是"回调参数"，不是"任何被约束的泛型参数"：没有 `Fn` 家族 bound 的一律不出
         // 事实，否则 `T: Clone + 'c` 也会被当成回调。
@@ -21063,7 +21063,181 @@ fn callback_lifetime_bounds<'tcx>(
                 bound_scope,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    // trait object 形式的回调（`Box<dyn FnMut()>`、`&'c mut dyn FnMut()`）不出现在
+    // `generics.predicates` 里——它们是**参数类型**，不是被约束的泛型参数。上面那段
+    // 完全看不到它们，实测确认过：`boxed_dyn_default` 一条事实都不产出。
+    //
+    // 这是漏报而不是误报，所以更难发现：扫描退出成功、结果看起来正常，只是少了一整类
+    // 交出点。
+    for (index, input) in sig.decl.inputs.iter().enumerate() {
+        let Some(resolved) =
+            callback_trait_object_lifetime(input, ObjectLifetimeContext::Unknown)
+        else {
+            continue;
+        };
+        let (bound_lifetime, bound_scope) =
+            trait_object_callback_scope(&resolved, &declared_lifetimes, &receiver_lifetimes);
+        let callback_param = format!("arg{index}");
+        observations.push(CallbackLifetimeBoundObservation {
+            owner_def_path: owner_def_path.to_owned(),
+            source_path: source_path.clone(),
+            span: stable_span.clone(),
+            mir_location: format!("hir_signature:callback_lifetime_bound:{callback_param}"),
+            api_id: owner_def_path.to_owned(),
+            callback_param,
+            bound_lifetime,
+            bound_scope,
+        });
+    }
+
+    observations
+}
+
+/// 省略的 trait object lifetime 默认成什么，取决于它外层是什么。
+///
+/// `Box<dyn Fn()>` 默认 `'static`、`&'a dyn Fn()` 默认 `'a`——**两者在 HIR 里的
+/// `LifetimeKind` 完全相同（都是 `ImplicitObjectLifetimeDefault`）**，只能靠外层容器区分。
+/// 已实测确认过这一点；按 lifetime kind 直接分类会把其中一半判反。
+#[derive(Clone, Copy)]
+enum ObjectLifetimeContext<'hir> {
+    /// 直接位于 `&'a` / `&'a mut` 之下：省略的 object lifetime 默认为 `'a`。
+    Reference(&'hir hir::Lifetime),
+    /// 位于 `Box` / `Rc` / `Arc` 之下：省略的 object lifetime 默认为 `'static`。
+    StaticContainer,
+    /// 其余位置。**不猜。**
+    Unknown,
+}
+
+/// trait object 形式回调的 object lifetime 解析结果。
+enum TraitObjectCallbackLifetime<'hir> {
+    /// 显式写出的、或由外层引用默认得到的一个 lifetime。
+    Lifetime(&'hir hir::Lifetime),
+    /// 由容器默认到 `'static`。
+    StaticByContainerDefault,
+    /// 识别出回调 trait object，但解析不出它的 object lifetime。
+    Unresolved,
+}
+
+/// 外层容器是否让省略的 object lifetime 默认到 `'static`。
+///
+/// 只认标准库那几个已知的智能指针。用户自定义容器可能带自己的 lifetime bound，
+/// 猜错方向就会把不健全判成健全，所以一律落到 [`ObjectLifetimeContext::Unknown`]。
+fn is_static_defaulting_container(name: &str) -> bool {
+    matches!(name, "Box" | "Rc" | "Arc")
+}
+
+/// 在参数类型里找 `dyn Fn` 家族的 trait object，并解析它的 object lifetime。
+fn callback_trait_object_lifetime<'hir>(
+    ty: &'hir hir::Ty<'hir>,
+    context: ObjectLifetimeContext<'hir>,
+) -> Option<TraitObjectCallbackLifetime<'hir>> {
+    match &ty.kind {
+        hir::TyKind::TraitObject(bounds, lifetime) => {
+            if !bounds.iter().any(hir_poly_trait_ref_is_callable) {
+                return None;
+            }
+            let lifetime: &hir::Lifetime = &**lifetime;
+            Some(match lifetime.kind {
+                hir::LifetimeKind::Param(_) | hir::LifetimeKind::Static => {
+                    TraitObjectCallbackLifetime::Lifetime(lifetime)
+                }
+                hir::LifetimeKind::ImplicitObjectLifetimeDefault => match context {
+                    ObjectLifetimeContext::Reference(outer) => {
+                        TraitObjectCallbackLifetime::Lifetime(outer)
+                    }
+                    ObjectLifetimeContext::StaticContainer => {
+                        TraitObjectCallbackLifetime::StaticByContainerDefault
+                    }
+                    ObjectLifetimeContext::Unknown => TraitObjectCallbackLifetime::Unresolved,
+                },
+                _ => TraitObjectCallbackLifetime::Unresolved,
+            })
+        }
+        hir::TyKind::Ref(lifetime, mut_ty) => {
+            callback_trait_object_lifetime(mut_ty.ty, ObjectLifetimeContext::Reference(lifetime))
+        }
+        hir::TyKind::Ptr(mut_ty) => {
+            callback_trait_object_lifetime(mut_ty.ty, ObjectLifetimeContext::Unknown)
+        }
+        hir::TyKind::Slice(inner) | hir::TyKind::Array(inner, _) => {
+            callback_trait_object_lifetime(inner, ObjectLifetimeContext::Unknown)
+        }
+        hir::TyKind::Tup(types) => types
+            .iter()
+            .find_map(|inner| callback_trait_object_lifetime(inner, ObjectLifetimeContext::Unknown)),
+        hir::TyKind::Path(hir::QPath::Resolved(_, path)) => {
+            let inner_context = path
+                .segments
+                .last()
+                .filter(|segment| is_static_defaulting_container(segment.ident.name.as_str()))
+                .map_or(ObjectLifetimeContext::Unknown, |_| {
+                    ObjectLifetimeContext::StaticContainer
+                });
+            path.segments
+                .iter()
+                .filter_map(|segment| segment.args)
+                .flat_map(|args| args.args.iter())
+                .find_map(|arg| match arg {
+                    hir::GenericArg::Type(inner) => {
+                        callback_trait_object_lifetime(inner.as_unambig_ty(), inner_context)
+                    }
+                    _ => None,
+                })
+        }
+        _ => None,
+    }
+}
+
+fn hir_poly_trait_ref_is_callable(poly_trait_ref: &hir::PolyTraitRef<'_>) -> bool {
+    poly_trait_ref
+        .trait_ref
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| {
+            matches!(
+                segment.ident.name.as_str(),
+                "Fn" | "FnMut" | "FnOnce" | "AsyncFn" | "AsyncFnMut" | "AsyncFnOnce"
+            )
+        })
+}
+
+/// 把 trait object 的 object lifetime 归到一个 scope。
+fn trait_object_callback_scope(
+    resolved: &TraitObjectCallbackLifetime<'_>,
+    declared_lifetimes: &BTreeSet<usize>,
+    receiver_lifetimes: &BTreeSet<usize>,
+) -> (Option<String>, CallbackLifetimeBoundScope) {
+    match resolved {
+        TraitObjectCallbackLifetime::StaticByContainerDefault => (
+            Some("'static".to_owned()),
+            CallbackLifetimeBoundScope::StaticLifetime,
+        ),
+        TraitObjectCallbackLifetime::Unresolved => {
+            (None, CallbackLifetimeBoundScope::UnresolvedLifetime)
+        }
+        TraitObjectCallbackLifetime::Lifetime(lifetime) => {
+            if hir_lifetime_is_static(lifetime) {
+                return (
+                    Some(lifetime.ident.name.to_string()),
+                    CallbackLifetimeBoundScope::StaticLifetime,
+                );
+            }
+            match hir_lifetime_param_index(lifetime) {
+                Some(index) if declared_lifetimes.contains(&index) => {
+                    let scope = if receiver_lifetimes.contains(&index) {
+                        CallbackLifetimeBoundScope::DeclaredReceiverLifetime
+                    } else {
+                        CallbackLifetimeBoundScope::DeclaredFreeLifetime
+                    };
+                    (Some(lifetime.ident.name.to_string()), scope)
+                }
+                _ => (None, CallbackLifetimeBoundScope::UnresolvedLifetime),
+            }
+        }
+    }
 }
 
 /// 被约束的类型是不是本函数声明的一个泛型类型参数。

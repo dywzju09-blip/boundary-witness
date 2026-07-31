@@ -106,6 +106,44 @@ impl Handle {
 
     /// 普通泛型参数，没有 `Fn` 家族 bound，即使 outlives 到声明的 lifetime 也不该产出
     /// 事实。判据是"回调参数"，不是"任何被 lifetime 约束的泛型参数"。
+    /// APIT：`impl FnMut()` 在参数位置。语义上等同于一个无 outlives bound 的泛型参数，
+    /// 因此**允许捕获借用**。
+    pub fn apit_unbounded(&mut self, callback: impl FnMut()) {
+        let _ = callback;
+    }
+
+    /// APIT 加显式 `'static`。
+    pub fn apit_static(&mut self, callback: impl FnMut() + 'static) {
+        let _ = callback;
+    }
+
+    /// `Box<dyn FnMut()>`：省略的 trait object lifetime **默认到 `'static`**。
+    ///
+    /// 它与 `unbounded` 在「有没有写 outlives bound」这一点上完全一样，但语义相反：
+    /// 这里根本不允许捕获借用。把两者合并成同一个取值就是错的。
+    pub fn boxed_dyn_default(&mut self, callback: Box<dyn FnMut()>) {
+        let _ = callback;
+    }
+
+    /// `Box<dyn FnMut() + 'c>`：显式声明的 lifetime，允许捕获借用。
+    pub fn boxed_dyn_declared<'c>(&'c mut self, callback: Box<dyn FnMut() + 'c>) {
+        let _ = callback;
+    }
+
+    /// `&'c mut dyn FnMut()`：引用形式的 trait object，默认 lifetime 取自引用本身。
+    pub fn ref_dyn_default<'c>(&'c mut self, callback: &'c mut dyn FnMut()) {
+        let _ = callback;
+    }
+
+    /// HRTB：`for<'r> FnMut(&'r u8)` 约束的是**回调参数**的 lifetime，不是捕获环境的。
+    /// 它对「能否捕获借用」不表态，不得被读成 `'static`。
+    pub fn hrtb_arg_lifetime<F>(&mut self, callback: F)
+    where
+        F: for<'r> FnMut(&'r u8),
+    {
+        let _ = callback;
+    }
+
     pub fn not_a_callback<'c, T>(&'c mut self, value: T) -> usize
     where
         T: Clone + 'c,
