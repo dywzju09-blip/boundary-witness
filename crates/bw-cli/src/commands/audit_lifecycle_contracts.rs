@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, read_jsonl},
+    commands::{DEFAULT_MAX_LINE_BYTES, hex_digest, read_jsonl},
     exit::{CliError, CommandStatus},
 };
 
@@ -841,14 +841,4 @@ fn sha256_file(path: &Path) -> Result<String, CliError> {
     let bytes = fs::read(path)
         .map_err(|error| CliError::input("BW-IO", format!("{}: {}", path.display(), error)))?;
     Ok(hex_digest(Sha256::digest(bytes)))
-}
-
-fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
 }

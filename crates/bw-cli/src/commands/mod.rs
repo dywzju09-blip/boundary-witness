@@ -14,7 +14,6 @@ mod account_adapter_effort;
 mod analyze;
 mod audit_lifecycle_contracts;
 mod build_failure_taxonomy;
-mod build_lifecycle_graph_v2;
 mod build_lifecycle_graph_v3;
 mod build_precheck;
 mod build_witness_plan;
@@ -112,8 +111,6 @@ pub enum Command {
     ExtractLifecycleEvidence(extract_lifecycle_evidence::ExtractLifecycleEvidenceArgs),
     /// 用 compiler wrapper 批量物化 V3.2.x 静态事实与 MIR 覆盖。
     ExtractStaticFacts(extract_static_facts::ExtractStaticFactsArgs),
-    /// 基于 V3.2.6 证据构建 lifecycle graph v2 与 feature。
-    BuildLifecycleGraphV2(build_lifecycle_graph_v2::BuildLifecycleGraphV2Args),
     /// 基于 V3.2.6 facts/contracts 构建 object-bound lifecycle graph v3。
     BuildLifecycleGraphV3(build_lifecycle_graph_v3::BuildLifecycleGraphV3Args),
     /// 基于 V3.2.6 feature 执行 evidence-driven ranking v2。
@@ -154,7 +151,6 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::RankLifecycle(args) => rank_lifecycle::run(args),
         Command::ExtractLifecycleEvidence(args) => extract_lifecycle_evidence::run(args),
         Command::ExtractStaticFacts(args) => extract_static_facts::run(args),
-        Command::BuildLifecycleGraphV2(args) => build_lifecycle_graph_v2::run(args),
         Command::BuildLifecycleGraphV3(args) => build_lifecycle_graph_v3::run(args),
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),
         Command::BuildWitnessPlan(args) => build_witness_plan::run(args),
@@ -316,6 +312,38 @@ pub(crate) fn write_records<T: serde::Serialize>(
         let mut file = file;
         file.write_all(&bytes)?;
     }
+    Ok(())
+}
+
+/// 把字节序列写成小写十六进制。
+///
+/// 之前每个 stage 命令各带一份（13 份，两种写法但输出逐字节相同）。它的输出进入
+/// checksum 与 manifest，是跨 stage 的产物契约；分散成 13 份意味着任何一处调整都
+/// 可能让某几个 stage 的 hash 与其余不一致，且不会有编译期提示。
+pub(crate) fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
+    let bytes = bytes.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
+}
+
+/// 把一个值写成带尾随换行的 pretty JSON 文件，必要时创建父目录。
+///
+/// 之前 10 个 stage 命令各带一份逐字节相同的实现。另有 4 个命令的变体在换行、
+/// 缩进或错误映射上不同，**它们没有被合并**——那些差异会改变产物字节。
+pub(crate) fn write_json_file(path: &Path, value: &impl serde::Serialize) -> Result<(), CliError> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = File::create(path)?;
+    serde_json::to_writer_pretty(&mut file, value)
+        .map_err(|error| CliError::internal(error.to_string()))?;
+    file.write_all(b"\n")?;
     Ok(())
 }
 

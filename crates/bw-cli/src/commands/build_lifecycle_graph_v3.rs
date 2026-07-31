@@ -19,7 +19,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::{DEFAULT_MAX_LINE_BYTES, load_candidates, read_jsonl, write_records},
+    commands::{
+        DEFAULT_MAX_LINE_BYTES, hex_digest, load_candidates, read_jsonl, write_json_file,
+        write_records,
+    },
     exit::{CliError, CommandStatus},
 };
 
@@ -295,17 +298,6 @@ pub fn run(args: BuildLifecycleGraphV3Args) -> Result<CommandStatus, CliError> {
     Ok(CommandStatus::Success)
 }
 
-fn write_json_file(path: &Path, value: &impl Serialize) -> Result<(), CliError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = File::create(path)?;
-    serde_json::to_writer_pretty(&mut file, value)
-        .map_err(|error| CliError::internal(error.to_string()))?;
-    file.write_all(b"\n")?;
-    Ok(())
-}
-
 fn write_checksums(
     output_dir: &Path,
     graph_paths: &[String],
@@ -341,14 +333,6 @@ fn write_checksums(
 fn sha256_file(path: &Path) -> Result<String, CliError> {
     let bytes = fs::read(path)?;
     Ok(hex_digest(Sha256::digest(bytes)))
-}
-
-fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
-    bytes
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 fn sanitize_id(value: &str) -> String {

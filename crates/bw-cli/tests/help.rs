@@ -17,7 +17,6 @@ fn help_lists_public_commands() {
     assert!(stdout.contains("emit-candidates"));
     assert!(stdout.contains("rank-lifecycle"));
     assert!(stdout.contains("extract-lifecycle-evidence"));
-    assert!(stdout.contains("build-lifecycle-graph-v2"));
     assert!(stdout.contains("build-lifecycle-graph-v3"));
     assert!(stdout.contains("rank-lifecycle-v2"));
     assert!(stdout.contains("build-witness-plan"));

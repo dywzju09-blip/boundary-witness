@@ -942,67 +942,6 @@ extern "C" fn beta_callback(_user_data: *mut c_void) {}
 }
 
 #[test]
-fn build_lifecycle_graph_v2_writes_features() {
-    let temp = public_safe_tempdir();
-    let candidates_dir = temp.path().join("candidates");
-    fs::create_dir_all(&candidates_dir).unwrap();
-    fs::write(
-        candidates_dir.join("part-00000.jsonl"),
-        r#"{"schema_version":"v3.2.candidate.1","run_id":"run:v326","candidate_id":"candidate:borrowed:001","crate_id":"crate:borrowed","boundary_id":"boundary:borrowed:001","pattern_family":"retained_borrowed_callback","confidence":"needs_dynamic_validation","evidence_refs":[{"kind":"source_span","path":"src/lib.rs","line_start":1,"line_end":1}],"api_path":"borrowed::register","recommended_next_step":"generate_lifecycle_subgraph","notes":["synthetic candidate"]}"#,
-    )
-    .unwrap();
-
-    let evidence_path = temp.path().join("lifecycle-evidence.jsonl");
-    fs::write(
-        &evidence_path,
-        r#"{"schema_version":"v3.2.6.lifecycle_evidence.1","run_id":"run:v326","record_id":"evidence:borrowed:0001","crate_id":"crate:borrowed","candidate_id":"candidate:borrowed:001","evidence_kind":"foreign_register","source_ref":{"path":"src/lib.rs","line_start":1,"line_end":1,"symbol_path":null,"text_sha256":null},"confidence":"medium","details":{},"notes":["neutral lifecycle evidence"]}
-{"schema_version":"v3.2.6.lifecycle_evidence.1","run_id":"run:v326","record_id":"evidence:borrowed:0002","crate_id":"crate:borrowed","candidate_id":"candidate:borrowed:001","evidence_kind":"borrow_edge","source_ref":{"path":"src/lib.rs","line_start":2,"line_end":2,"symbol_path":null,"text_sha256":null},"confidence":"medium","details":{},"notes":["neutral lifecycle evidence"]}
-"#,
-    )
-    .unwrap();
-
-    let output_dir = temp.path().join("lifecycle-v2");
-    Command::cargo_bin("bw")
-        .unwrap()
-        .args([
-            "build-lifecycle-graph-v2",
-            "--candidates",
-            candidates_dir.to_str().unwrap(),
-            "--evidence",
-            evidence_path.to_str().unwrap(),
-            "--output-dir",
-            output_dir.to_str().unwrap(),
-            "--run-id",
-            "run:v326",
-        ])
-        .assert()
-        .code(0)
-        .stderr("")
-        .stdout(predicate::str::contains(
-            r#""kind":"v3-2-6-lifecycle-graph-v2""#,
-        ));
-
-    assert!(output_dir.join("lifecycle-features.jsonl.zst").is_file());
-    assert!(output_dir.join("graphs").is_dir());
-
-    Command::cargo_bin("bw")
-        .unwrap()
-        .args([
-            "validate",
-            "--kind",
-            "v3-2-6-lifecycle-feature",
-            output_dir
-                .join("lifecycle-features.jsonl.zst")
-                .to_str()
-                .unwrap(),
-        ])
-        .assert()
-        .code(0)
-        .stderr("")
-        .stdout(predicate::str::contains(r#""record_count":1"#));
-}
-
-#[test]
 fn rank_lifecycle_v2_orders_by_evidence_features() {
     let temp = public_safe_tempdir();
     let features_path = temp.path().join("lifecycle-features.jsonl");

@@ -9,7 +9,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    commands::write_json_stdout,
+    commands::{hex_digest, write_json_stdout},
     exit::{CliError, CommandStatus},
 };
 
@@ -215,14 +215,4 @@ fn sha256_file(path: &Path) -> Result<String, CliError> {
         CliError::input("BW-V32-VERIFY-IO", format!("{}: {error}", path.display()))
     })?;
     Ok(hex_digest(Sha256::digest(bytes)))
-}
-
-fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
 }

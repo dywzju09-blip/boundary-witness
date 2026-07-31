@@ -66,7 +66,6 @@ bw diff \
 | --- | --- | --- |
 | `extract-static-facts` | `--manifest --output-dir --logs-root --run-id --rustc-wrapper` | `--rustc --python --cargo --locked --feature-profile --all-features --no-default-features --features --timeout-seconds` |
 | `extract-lifecycle-evidence` | `--manifest --boundary-index --candidates --output-dir --run-id` | `--static-facts --mir-coverage`；source observation 不是自动权威对象绑定 |
-| `build-lifecycle-graph-v2` | `--candidates --evidence --output-dir --run-id` | compatibility graph-v2 |
 | `build-lifecycle-graph-v3` | `--candidates --evidence --output-dir --run-id` | 可加 `--facts --static-facts --contracts --registry-manifest`；权威 provenance 缺失时保留 incomplete |
 | `rank-lifecycle-v2` | `--features --output-dir --run-id` | `--graph-dir` 默认 `graphs` |
 | `build-witness-plan` | `--ranked-candidates --graphs-dir --output-dir --run-id` | `--limit` 默认 10；只生成 plan，不执行 harness |

@@ -291,7 +291,42 @@ grep -rn 'build-lifecycle-graph-v2\|BuildLifecycleGraphV2' \
 
 **注意**：`V326LifecycleGraphRecord`（`lifecycle_v326.rs:150`）是 graph-v2 的记录类型，与 graph-v3 的 `V326LifecycleGraphV3Record`（`lifecycle_v326.rs:1204`）是两个类型。删除命令后需单独确认该记录类型是否还有其他生产者，**不确认不要连带删除模型**。
 
-### 7.2 不在删除清单上的东西
+### 7.2 已完成的去重（2026-07-31）
+
+`hex_digest` 与 `write_json_file` 各有一组**逐字节相同**的复制，已合并进 `crates/bw-cli/src/commands/mod.rs`，与既有的 `write_records` / `load_candidates` 同处一层。
+
+| helper | 合并前 | 合并后 | 说明 |
+| --- | --- | --- | --- |
+| `hex_digest` | 13 份（两种写法，输出相同） | 1 份 | 输出进 checksum 与 manifest，是跨 stage 的产物契约 |
+| `write_json_file` | 14 份（其中 10 份逐字节相同） | 1 份共享 + 4 份保留 | 保留的 4 份在缩进、换行或错误映射上不同，**合并会改变产物字节** |
+
+**未合并的重复，及其原因：**
+
+| helper | 份数 | 为什么不合并 |
+| --- | ---: | --- |
+| `write_checksums` | 12 | **11 种不同实现**。各命令写的文件集合本就不同，不是重复 |
+| `sha256_file` | 14 | 主要变体只在错误映射上不同（是否把路径写进错误消息）。合并会改变失败路径的输出文本 |
+| `resolve_local_source` | 4 | 3 种不同实现 |
+| `write_log` | 3 | 2 种不同实现 |
+
+### 7.3 已发现但未修的分歧：`sanitize_id`
+
+**这是一个潜在缺陷，不是重复代码，因此不在本轮处理。**
+
+`sanitize_id` 在 6 个文件中有**两种不兼容的定义**：
+
+| 变体 | 出现位置 | 行为 |
+| --- | --- | --- |
+| A | `build_lifecycle_graph_v3`、`build_witness_plan`、`extract_lifecycle_evidence`、`rank_lifecycle_v2` | 只保留 `[A-Za-z0-9]`、`-`、`_`；**`.` 被替换成 `_`** |
+| B | `emit_candidates`、`index_boundaries` | 额外保留 `.` |
+
+它用于从 ID 生成文件名与目录名。**同一个含 `.` 的 ID（例如带版本号的 crate id）在不同 stage 会被清洗成不同的字符串**，产物路径因而可能对不上，且没有任何编译期或运行期提示。
+
+**这与 2026 年早些时候修掉的 `load_candidates` 分片谓词分歧是同一缺陷类**：同一语义在多个消费方各写一份，逐渐漂移，失败方式是静默的。
+
+**不在本轮修复的原因**：两个变体产出不同的字符串，选任何一个都会改变现有产物路径与 checksum。这需要一次有意的决策加回归对照，属于 P0 的范围（`HandOffId` 会重新定义身份到文件名的映射），不适合夹在清理里做。
+
+### 7.4 不在删除清单上的东西
 
 以下**明确不删**，避免执行时误伤：
 
@@ -360,6 +395,7 @@ grep -rn 'build-lifecycle-graph-v2\|BuildLifecycleGraphV2' \
 | D2 | schema 版本目录数量：升版后应为五个，不是七个 |
 | D3 | 生成的 harness 是否包含 `#![forbid(unsafe_code)]`，是否仍依赖 `bw-runtime` |
 | §7.1 | `build_lifecycle_graph_v2.rs` 是否已删除，且 `cli.md` 表格同步 |
+| §7.3 | `sanitize_id` 的两个变体是否已在 P0 期间统一，且有产物路径的回归对照 |
 | 整体 | [current status](../project/current-status.md) 的状态表是否与实际一致 |
 
 ## 12. 相关文档

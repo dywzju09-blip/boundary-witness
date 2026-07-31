@@ -15,7 +15,10 @@ use clap::Args;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::exit::{CliError, CommandStatus};
+use crate::{
+    commands::hex_digest,
+    exit::{CliError, CommandStatus},
+};
 
 const REGISTRY_MANIFEST_SCHEMA_V1: &str = "v3.2.6.callback_retention_registry.1";
 
@@ -364,12 +367,4 @@ fn write_checksums(
 fn sha256_file(path: &Path) -> Result<String, CliError> {
     let bytes = fs::read(path)?;
     Ok(hex_digest(Sha256::digest(bytes)))
-}
-
-fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
-    bytes
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
