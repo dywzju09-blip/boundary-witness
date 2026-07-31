@@ -4,6 +4,7 @@ mod adapter_effort;
 mod boundary_index;
 mod buildability;
 mod candidate;
+mod compatibility;
 mod contract;
 mod corpus;
 mod error;
@@ -37,6 +38,12 @@ pub use buildability::{
 pub use candidate::{
     V3_2_CANDIDATE_SCHEMA_V1, V32CandidateConfidence, V32CandidateRecord, V32CandidateSummary,
     V32PatternFamily, V32RecommendedNextStep, candidate_from_boundary, validate_v3_2_candidates,
+};
+pub use compatibility::{
+    AllocationOwnership, CompatibilityVerdict, EffectiveCaptureAdmission, EvidenceGrade,
+    ForeignBehaviorFact, ForeignClear, ForeignInvocation, ForeignRetention, HandOffId,
+    LifetimeSubject, RegistrationGuard, RustContractFact, StaticVerdict, WitnessObligation,
+    WitnessStatus, hand_off_is_incompatible, judge, judge_hand_off,
 };
 pub use contract::{
     CALLBACK_RETENTION_API_MAP_SCHEMA_V01, CallbackApiEntry, CallbackRetentionApiMap,

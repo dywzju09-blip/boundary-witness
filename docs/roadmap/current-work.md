@@ -14,23 +14,33 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 | C2 类型契约 × 外部 effect 的精化检查 | 未成立——两侧事实还不是真正的两侧（roadmap P1/P2/P3） |
 | C3 生态级度量与新发现 | 未开始 |
 
-## 下一步：PF 核心关系与四个 matched fixture
+## 已完成：PF 核心关系与四个 matched fixture（Gate R）
 
-**这是当前唯一应该做的事。** 它取代了此前「先跑 Gate P」的安排——2026-07-31 的复审证明旧的 2×2 判定矩阵有可构造的假阳性与假阴性，**关系错了，猎物探针数出来的候选也是错的**。
+2026-07-31 完成。落点：
 
-| 字段 | 内容 |
+| 内容 | 位置 |
 | --- | --- |
-| 服务 | [Gate R](milestone-gates.md#gate-r关系正确性) |
-| 状态 | `Planned` |
-| 前置 | 无。**外部侧用手写 C stub，不需要 LLVM IR 流水线** |
-| 要做 | 实现 [research thesis §2.4](../project/research-thesis.md) 的轨迹可行性关系，三类生命周期 R/A/G 分开建模，构造四个 matched fixture |
-| 完成谓词 | 四条 fixture 全判对；fixture 2 与 3 的 Rust 侧逐字节相同、只有 C stub 不同，Full 能分开而 Rust-only 不能 |
-| 成本 | 小 |
-| 失败动作 | fixture 2/3 分不开 → 外部侧对 C2 无判别力，转路线 B |
+| 关系实现 | `crates/bw-model/src/compatibility.rs` |
+| 四个 fixture 的判定断言 | `crates/bw-model/tests/compatibility.rs`（14 项） |
+| Rust 侧三种形状 | `benchmarks/compiler-fixtures/callback-retention-relation/src/lib.rs` |
+| 外部侧四个 C stub | 同目录 `foreign/`，对应关系见其 `README.md` |
 
-**fixture 3 是重点。** 它检验一个可能否定 C2 的推论：外部侧的判别力若真在 Q4′（清槽）而不在 Q1（是否保存），这一条就必须能分开。**若 Rust-only 也能分开，那是 Gate A 的提前失败信号——不必等到规模化对照。**
+**结果**：四个 fixture 全部判对。fixture 2 与 3 的 Rust 事实完全相同、只有 C stub 的注销是否真清槽不同——**Full 能分开，Rust-only 只能记缺证**。按 [Gate R](milestone-gates.md#gate-r关系正确性) 这是通过，且不构成 Gate A 的提前失败信号。
 
-## 并行：PC `EffectiveCaptureAdmission`
+**非空性检查已做**：故意让 guard 分支忽略 Q4′ 证据后，恰好 6 项依赖该分支的断言失败、8 项不依赖的仍通过，失败位置符合预期。
+
+### 这一步证明了什么，没证明什么
+
+- **证明了**：关系本身能分开该分开的情况；外部侧的判别力确实落在 Q4′（清槽）上；`'static` 不约束回调分配这一漏报已被 fixture 4 覆盖。
+- **没证明**：Q4′ 能从真实的 LLVM IR 推导出来。外部侧取值当前由 C stub **手工标注**（评估设计里的 `manual foreign oracle` 变体）。这一半由 P1/P2 回答。
+
+### 一处顺带的边界发现
+
+并非关系的每一项都需要外部证据：**回调分配的归属是纯 Rust 侧事实**，`ForeignOwnedUntilUnregister` 时 Rust-only 就能正确判为相容。外部证据的净贡献集中在 guard 分支。
+
+**[Gate A](milestone-gates.md#gate-a外部证据必要性) 的增益必须归因到那里**，不能笼统地说「因为我们看了外部侧」。
+
+## 下一步：PC `EffectiveCaptureAdmission`
 
 | 字段 | 内容 |
 | --- | --- |

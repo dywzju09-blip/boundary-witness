@@ -18,7 +18,9 @@
 
 外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。**注意该记录显示本系统排除那 8 条误报只用了 Rust 侧签名形状、没有用外部证据**，因此 n=1 数据不构成「外部侧信息消除了误报」的证据。
 
-当前最高优先级是 [Gate R](../roadmap/milestone-gates.md#gate-r关系正确性)：核心关系于 2026-07-31 复审后重写，四个 matched fixture 未构造。
+**[Gate R](../roadmap/milestone-gates.md#gate-r关系正确性) 的关系正确性部分已通过**（2026-07-31）：四个 matched fixture 全部判对；fixture 2 与 3 的 Rust 事实完全相同、只有外部侧清槽行为不同，Full 能分开而 Rust-only 只能记缺证。非空性检查已做——故意让 guard 分支忽略 Q4′ 证据后，恰好 6 项依赖该分支的断言失败、8 项不依赖的仍通过。
+
+**Gate R 证明的是关系本身，不是 Q4′ 可实现。** 外部侧取值目前由 C stub 手工标注；能否从真实构建的 LLVM IR 推导出同样的取值，由 P1/P2 回答。当前最高优先级转为 [PC `EffectiveCaptureAdmission`](../roadmap/implementation-plan.md)。
 
 ## 状态总览
 
@@ -34,7 +36,7 @@
 | `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound，**语法**四态，无需 API 清单；健全与不健全两侧都产出事实。**取值语义待修正**，见 roadmap PC |
 | `Implemented` | 返回借用寿命不受输入约束的定义点识别 | 从 HIR 签名比较输入与输出的 lifetime 参数集合，无需 API 清单。此维度与 Yuga 重叠，不作创新点 |
 | `Implemented` | 持有期维度的两侧联结与判定来源记录 | 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；两路结论不一致时都留在产物中 |
-| `Planned` | 核心关系与四个 matched fixture（roadmap PF） | 未开始。**当前最高优先级**，外部侧用 C stub，不需要 IR 流水线 |
+| `Implemented` | 核心关系与四个 matched fixture（roadmap PF） | `crates/bw-model/src/compatibility.rs` + `crates/bw-model/tests/compatibility.rs`（14 项）+ `benchmarks/compiler-fixtures/callback-retention-relation/`。四个 fixture 全部判对，Full 能分开 2 与 3、Rust-only 不能。**外部侧事实由 C stub 手工标注**（manual foreign oracle），不是从 IR 推导 |
 | `Planned` | `EffectiveCaptureAdmission`（roadmap PC） | 未开始。现有取值是语法四态，把语义相反的两种情况合并了。是 Gate P 的前置 |
 | `Planned` | 猎物存在性探针（roadmap PP） | 未测量。判据已于 2026-07-31 重做（Tier A / L1 / 置信界 / sealed split），前置是 PC |
 | `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
