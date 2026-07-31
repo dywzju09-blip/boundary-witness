@@ -18,12 +18,13 @@
 
 1. [安装](development/setup.md)
 2. [仓库结构](development/repository-layout.md)
-3. [测试策略](development/testing-strategy.md)
-4. [CLI 参考](reference/cli.md)
-5. [Schema 索引](reference/schema-index.md)
-6. [Contract 索引](reference/contract-index.md)
-7. [发布与版本](development/release-and-versioning.md)
-8. [贡献规范](../CONTRIBUTING.md)
+3. [代码库对齐审计与处置决定](development/codebase-realignment.md)（保留/冻结/重构/删除，有约束力）
+4. [测试策略](development/testing-strategy.md)
+5. [CLI 参考](reference/cli.md)
+6. [Schema 索引](reference/schema-index.md)
+7. [Contract 索引](reference/contract-index.md)
+8. [发布与版本](development/release-and-versioning.md)
+9. [贡献规范](../CONTRIBUTING.md)
 
 ## 实验执行者
 

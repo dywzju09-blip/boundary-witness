@@ -66,6 +66,18 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 降级的确切代价、必须量化的三个指标、完整实现的 F1–F4 分阶段计划，见 [implementation plan 的 P2](implementation-plan.md#p2-外部侧-q3晚调含降级方案)。
 
+## 代码处置
+
+逐组件的保留 / 冻结 / 重构 / 删除见 [代码库对齐审计](../development/codebase-realignment.md)。结论是**补充优化而非重构**：编译器 Rust 侧在新路线中价值上升，身份模型是可扩展的 builder，外部侧属纯新增。
+
+三条具名决定：
+
+| 编号 | 决定 |
+| --- | --- |
+| D1 | 冻结 returned-borrow 维度——不删除、不新增投入、不作为贡献陈述 |
+| D2 | `HandOffId` + 三态判定 + 外部侧事实合并为**一次** schema 升版 |
+| D3 | 重写 `generate_witness_harness.rs` 的产出目标，保留其推导逻辑 |
+
 ## 已推迟的决定
 
 **跨外部库家族的数量下限推迟到认证期。** 取得多个外部库 LLVM IR 的工程可行性是已知风险，但按当前决定不构成现阶段的实现约束——P1/P2 只要求单库端到端打通。见 [Gate C](milestone-gates.md#gate-c跨库泛化)。
