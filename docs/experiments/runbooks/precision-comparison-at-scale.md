@@ -1,6 +1,8 @@
 # Runbook：规模化精度对照
 
-本 runbook 执行 [research thesis §5](../../project/research-thesis.md) 的第 1、2 项，是 [Gate 0](../../roadmap/milestone-gates.md) 未完成部分的**规模**那一半。
+本 runbook 是 [Gate A 外部证据必要性](../../roadmap/milestone-gates.md#gate-a外部证据必要性)的组成部分，执行 [research thesis §7](../../project/research-thesis.md) 实验表中「vs Yuga / FFIChecker」这一行。
+
+**执行顺序**：本实验排在 [Gate P 猎物存在性探针](prey-existence-probe.md)**之后**。Gate P 决定这条路线是否值得继续；本实验决定 C2（跨界精化检查）是否成立。
 
 前置阅读：[Gate 0 外部基线对照](../results/gate0-baseline-comparison-2026-07-31.md)、[Yuga 误报归因](../results/gate0-yuga-precision-triage-2026-07-31.md)。构建两个工具的环境障碍与绕过见 [baseline comparison runbook](baseline-comparison.md)，本文不重复。
 
@@ -12,8 +14,10 @@
 
 | 结果 | 后果 |
 | --- | --- |
-| 更大样本上 Yuga 误报率仍高，且根因统一 | N1（跨界判别）成立，继续按 [implementation plan](../../roadmap/implementation-plan.md) 投入 P2 |
-| 更大样本上 Yuga 精度并不差 | **精度方向不成立，研究方向需要第三次重估。** 届时只剩 N3 与未被覆盖的其余维度 |
+| 更大样本上 Yuga 误报率仍高，且根因统一 | C2（类型契约 × 外部 effect 的精化检查）的动机成立，继续按 [implementation plan](../../roadmap/implementation-plan.md) 投入 P1/P2 |
+| 更大样本上 Yuga 精度并不差 | **C2 失去动机**，按 [Gate A](../../roadmap/milestone-gates.md#gate-a外部证据必要性) 的失败动作转路线 B：以 C1 反证合成为主线，外部分析只服务触发规划 |
+
+注意本实验**不能单独证明 C2**：它只说明先验工具误报率高。C2 成立还需要 Gate A 的另一半——matched pair 上 Full 相对 Rust-only 的信息增益。**「别人不准」不等于「我们的机制有效」。**
 
 **如实报告。不要为了让结论好看而调整样本或判定标准。** 本项目已经因为「假设别人做不到」而返工一次，第二次返工的代价更高。
 
@@ -65,17 +69,17 @@ Yuga 需要 `nightly-2022-11-18`。太新的 crate 可能无法用该工具链�
 
 ### 3.2 FP 必须归类到约束机制
 
-判为 FP 时，必须记录是哪一种 Rust 侧机制使其安全。已知的四类来自单 crate triage：
+判为 FP 时，必须记录是哪一种 Rust 侧机制使其安全。已知的四类来自单 crate triage。**代号用 `M` 前缀，不要与创新点编号 C1/C2/C3 混淆。**
 
 | 代号 | 机制 | 单 crate 实例 |
 | --- | --- | --- |
-| C1 | 值存进受借用检查器约束的 Rust 结构体，未跨边界 | `MappedRows<'stmt, F> { rows, map: F }` |
-| C2 | `Arc` / `Rc` 等引用计数锚点 | `InterruptHandle { db_lock: Arc::clone(..) }` |
-| C3 | 结构体自身的 lifetime 参数约束 | `Backup<'a, 'b>` |
-| C4 | 返回值 lifetime 由输入参数约束 | `fn prepare<'a>(&mut self, conn: &'a Connection) -> Result<Statement<'a>>` |
-| C5+ | 新机制，需描述并编号 | — |
+| M1 | 值存进受借用检查器约束的 Rust 结构体，未跨边界 | `MappedRows<'stmt, F> { rows, map: F }` |
+| M2 | `Arc` / `Rc` 等引用计数锚点 | `InterruptHandle { db_lock: Arc::clone(..) }` |
+| M3 | 结构体自身的 lifetime 参数约束 | `Backup<'a, 'b>` |
+| M4 | 返回值 lifetime 由输入参数约束 | `fn prepare<'a>(&mut self, conn: &'a Connection) -> Result<Statement<'a>>` |
+| M5+ | 新机制，需描述并编号 | — |
 
-**这一栏是本实验的核心产出。** N1 主张误报根因统一为「分不清跨界交出与 Rust 内部存储」；若 FP 大量落在 C1 之外的新机制上，说明根因不统一，主张要相应削弱。
+**这一栏是本实验的核心产出。** C2 的动机建立在「误报根因统一为分不清跨界交出与 Rust 内部存储」之上；若 FP 大量落在 M1 之外的新机制上，说明根因不统一，动机要相应削弱。
 
 ### 3.3 差分作为辅助判据
 
@@ -129,7 +133,7 @@ cargo ffi-checker --all-features > ffichecker-<crate>-<version>.report 2>&1; ech
 
 | 机制 | Yuga FP 数 | 本系统 FP 数 |
 
-**这张表回答 N1 成不成立。**
+**这张表回答 C2 的动机成不成立。**
 
 ### 5.3 分歧表
 
@@ -140,7 +144,7 @@ cargo ffi-checker --all-features > ffichecker-<crate>-<version>.report 2>&1; ech
 允许的结论形式：
 
 - 「在 N 个未调优 crate 上，Yuga 精度 X%、本系统 Y%，误报机制分布如表」
-- 「Yuga 的误报中 Z% 落在 C1，支持 / 不支持根因统一的主张」
+- 「Yuga 的误报中 Z% 落在 M1，支持 / 不支持根因统一的主张」
 
 不允许的结论形式：
 
@@ -151,4 +155,4 @@ cargo ffi-checker --all-features > ffichecker-<crate>-<version>.report 2>&1; ech
 
 产出放入 [results](../results/)，遵循 [data alignment](../data-alignment.md)。
 
-在本实验完成前，[research thesis](../../project/research-thesis.md) 的 N1 仍标为 `Planned`，不得表述为已成立。
+在本实验完成前，[research thesis](../../project/research-thesis.md) 的 C2 仍标为 `Planned`，不得表述为已成立。

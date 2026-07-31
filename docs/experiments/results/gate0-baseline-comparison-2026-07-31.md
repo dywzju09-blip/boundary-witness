@@ -6,7 +6,9 @@
 - 目标数据：`corpus.gate0.external-baseline.rusqlite-0.26.1.20260731`
 - 目标源码 SHA-256：`18e0b0ea8f15c26b5c0c846d00d85e2089cf4aacac942ffac0386c5b16dd1c94`
 - 运行主机类别：x86_64 Linux，`x86_64-unknown-linux-gnu`
-- 状态：**外部基线子项得到反例；N1 当前立论受威胁，必须重做或重新界定。Gate 0 整体未通过。**
+- 状态：**外部基线子项得到反例；当时的立论受威胁，必须重做或重新界定。Gate 0 整体未通过。**
+
+> **本文是一份历史运行记录，不是当前路线。** 数据与结论保持原样。研究方向已于 2026-07-30 重写：创新点编号由 N1/N2/N3 改为 C1/C2/C3，「Gate 0」已被 [Gate P/A/B/C/D](../../roadmap/milestone-gates.md) 取代，本文对应新体系中 Gate A 的第一个数据点。当前方向以 [research thesis](../../project/research-thesis.md) 为准。
 
 ## 1. 执行结论
 

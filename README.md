@@ -16,9 +16,11 @@ V3.3 gate 未通过。当前工作树中的静态主链、proof-layer split、op
 
 ## 研究主线
 
-论题：**安全 Rust API 包装外部组件时的健全性，等价于「Rust 侧类型层契约」与「外部侧跨界实际行为」之间是否存在逐维错配。** 生命周期持有期是其中一维，别名、线程、重入、展开、释放责任、值域、初始化各是一维。
+统领主张：**Rust 的全部安全价值建立在「不写 `unsafe` 的代码不可能触发 UB」之上。本项目度量这条保证在 FFI 边界上被打破的频率与形态，并对每一次打破给出只使用 safe Rust 的可执行反证。**
 
-方向权威是 [research thesis](docs/project/research-thesis.md)，任何实现都必须落到其中一条创新点上。实现阶段见 [roadmap](docs/roadmap/roadmap.md)。
+判定的一般形态是逐维契约错配——某一维上 Rust 侧类型允许的比外部侧实际发生的宽。当前只完整实例化**持有期**一维；别名、线程、重入、展开、释放责任、值域、初始化七维是框架的其他实例，属 future work。**八维错配不等价于安全 API 整体健全性。**
+
+三条创新点：C1 safe-only 可执行反证合成、C2 类型契约作为规约与外部 effect 的精化检查、C3 生态级度量与新发现。方向权威是 [research thesis](docs/project/research-thesis.md)，任何实现都必须落到其中一条上。实现阶段见 [roadmap](docs/roadmap/roadmap.md)。
 
 ## 能力与非目标
 
@@ -26,7 +28,9 @@ V3.3 gate 未通过。当前工作树中的静态主链、proof-layer split、op
 
 **外部侧行为分析尚未实现**，因此论题声称的跨语言联结尚未成立：持有期维度的外部侧证据目前由 API 清单分类推断而来。接入新组件仍必须先有人手写清单。
 
-当前不承诺跨语言契约错配判定已达成、不读 API 清单也能识别回调注册 API、通用 0-day 自动发现、静态候选直接确认漏洞、任意深度全程序 points-to、任意候选自动 harness、可利用性评估或 V3.3 已通过。前三项是路线上的目标，其余是范围之外。逐维覆盖状态见 [scope and boundaries](docs/project/scope-and-boundaries.md)。
+当前不承诺跨语言契约不相容判定已达成、通用 0-day 自动发现、静态候选直接确认漏洞、任意深度全程序 points-to、任意候选自动 harness、可利用性评估或 V3.3 已通过。前两项是路线上的目标，其余是范围之外。
+
+以下表述已被实测否定或主动撤销，不得使用：「现有工作检不出这一缺陷类」（2026-07-31 外部基线证明 Yuga 能报 5/7）；「不需要人工 API 清单」作为创新点（同日撤销，结构化推断仍实现但只作工程属性）。逐维覆盖状态与完整的允许/禁止表述清单见 [scope and boundaries](docs/project/scope-and-boundaries.md)。
 
 ## 工作原理
 

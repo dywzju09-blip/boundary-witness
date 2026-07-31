@@ -6,15 +6,17 @@
 
 ## 相对研究主线的位置
 
-论题声称健全性判定需要联结 Rust 侧契约与外部侧行为。**外部侧分析尚未开始**，因此三条创新点均未成立：
+[research thesis](research-thesis.md) 于 2026-07-30 重写，创新点编号由 N1/N2/N3 改为 C1/C2/C3。**外部侧分析尚未开始，三条创新点均未成立：**
 
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
-| N1 跨界判别（原「检出」，2026-07-31 重定位） | `Planned` | 外部侧有界分析（roadmap P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
-| N2 消除人工 API 清单 | **`Deprecated`** | 已撤销。Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立 |
-| N3 定向见证 | `Planned` | 见证生成（roadmap P4）未开始。外部基线后更重要：先验工具只给「probably / potential」 |
+| C1 safe-only 可执行反证合成 | `Planned` | 反证合成（roadmap P4）未开始。这是重排后的**首要**创新点 |
+| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 外部侧 Q1/Q3（roadmap P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
+| C3 生态级度量与新发现 | `Planned` | 猎物存在性尚未测量（roadmap PP），无法判断新发现目标是否可达 |
 
-外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。
+**artifact-aligned hand-off identity 不再列为创新点**，降为实现属性（roadmap P0）。**旧 N2「消除人工 API 清单」已于 2026-07-31 撤销**：Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立；结构化角色推断仍会实现，但作为工程属性。
+
+外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。当前最高优先级是 [Gate P 猎物存在性探针](../experiments/runbooks/prey-existence-probe.md)。
 
 ## 状态总览
 
@@ -30,10 +32,11 @@
 | `Implemented` | 持有期维度的 Rust 侧契约抽取 | 从 HIR 签名判定回调 bound 是声明 lifetime 还是 `'static`，四态取值，无需 API 清单；健全与不健全两侧都产出事实 |
 | `Implemented` | 返回借用寿命不受输入约束的定义点识别 | 从 HIR 签名比较输入与输出的 lifetime 参数集合，无需 API 清单。此维度与 Yuga 重叠，不作创新点 |
 | `Implemented` | 持有期维度的两侧联结与判定来源记录 | 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；两路结论不一致时都留在产物中 |
-| `Planned` | 外部侧有界分析（roadmap P2） | 逃逸、写穿、调用与存储、释放契约四个查询均未实现。这是 N1 的前提 |
-| `Planned` | 边界事实模型二元化（roadmap P0） | 现有事实全部单侧；`hand_off_id` 未引入 |
-| `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现 |
-| `Planned` | 定向见证生成与动态确认（roadmap P4） | witness plan 到自动 harness/executor/receipt 的闭环不完整 |
+| `Planned` | 猎物存在性探针（roadmap PP） | 未测量。所需能力已实现，只差跑到规模上。**当前最高优先级** |
+| `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
+| `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |
+| `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现，属 future work，持有期一维闭环前不扩维 |
+| `Planned` | safe-only 反证合成与执行（roadmap P4） | witness plan 到自动 harness/executor/receipt 的闭环不完整。这是 C1 的全部内容 |
 | `Planned` | 排名把可绑定的注册候选排进默认输出上限 | 默认上限取不到它们，默认扫描看不到判定结果 |
 | `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状 |
 | `Blocked` | V3.3、约 100 crate pilot、sealed holdout | clean method commit、完整 public regression、pilot、freeze 与新 sealed smoke 尚未全部完成 |

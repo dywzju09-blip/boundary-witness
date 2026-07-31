@@ -40,6 +40,38 @@
 
 oracle 将 static facts、runtime events 与 contract 组合后产生的规则级结构化结果。finding 必须保留 evidence lineage、对象、顺序、规则和运行标识；后续仍需用负对照、sanitizer/UB 证据和人工核验区分其确认等级。
 
+## 跨界判定
+
+### hand-off（交出点）
+
+一次跨越语言边界的调用，Rust 侧把回调或 user data 交给外部组件。它是本项目全部判定的基本单位，由 `HandOffId` 标识：至少包含 Rust/外部两侧的 artifact hash、单态化实例、调用出现次序、外部符号与符号版本、callback/userdata 参数索引、registration key 与构建配置。
+
+**源码位置与函数名只能作为诊断字段，不能单独充当联结主键。** 按函数名、API 名或候选分片联结两侧事实是明确禁止的做法。
+
+### analyzed fragment（分析片段）
+
+判定结论成立的前提集合，包括支持的 IR 获取级别、过程间分析深度、假设与未覆盖路径。所有精度、召回与覆盖结论只在片段内成立；论文与结果文档必须显式给出片段定义。
+
+### `SupportedIncompatibility`
+
+两侧证据共同支持某交出点上的回调持有期不相容。**它是接口层结论，不等于可执行的 UB**——升级到后者需要一份合格的 safe-only 反证。
+
+外部侧晚调证据来自降级查询时，判定记为 `SupportedIncompatibility (weak)`，反证义务待补。
+
+### `CompatibleWithinAnalyzedFragment`
+
+在明确给出的分析片段与假设内，未形成该类不相容。**它只排除回调持有期这一个子问题，不表示 API 整体健全。**
+
+### `InsufficientEvidence`
+
+任一侧事实、联结身份或外部行为证据不足。**缺证不是安全**：没有观察到逃逸不得判定为不逃逸。
+
+### safe-only counterexample（safe-only 反证）
+
+一段带 `#![forbid(unsafe_code)]` 的最小 Rust 客户端，链接与静态分析绑定的精确外部构建，使外部组件在被借对象失效之后真的回调进来，并由独立 oracle 出证。它证明的是**安全抽象不健全**：纯 safe 代码可触发 UB。
+
+harness 文件、witness plan、编译成功或单次 crash 都不是反证。本项目自有的 runtime/oracle 只能作辅助定位证据，不能单独构成 UB 结论。
+
 ## 运行与数据
 
 ### run manifest

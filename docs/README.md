@@ -32,10 +32,13 @@
 3. [D0 runbook](experiments/runbooks/d0.md)
 4. [D1 runbook](experiments/runbooks/d1.md)
 5. [D2 runbook](experiments/runbooks/d2.md)
-6. [Public regression runbook](experiments/runbooks/public-regression.md)
-7. [Sealed holdout runbook](experiments/runbooks/sealed-holdout.md)
-8. [历史结果索引](experiments/results/README.md)
-9. [VPS 与本地工作流](development/vps-local-workflow.md)
+6. [猎物存在性探针 runbook](experiments/runbooks/prey-existence-probe.md)（Gate P，当前最高优先级）
+7. [规模化精度对照 runbook](experiments/runbooks/precision-comparison-at-scale.md)
+8. [外部基线对照 runbook](experiments/runbooks/baseline-comparison.md)
+9. [Public regression runbook](experiments/runbooks/public-regression.md)
+10. [Sealed holdout runbook](experiments/runbooks/sealed-holdout.md)
+11. [历史结果索引](experiments/results/README.md)
+12. [VPS 与本地工作流](development/vps-local-workflow.md)
 
 ## 审查者
 
@@ -46,9 +49,9 @@
 5. [排序与报告](architecture/ranking-and-reporting.md)
 6. [错误分类](reference/error-taxonomy.md)
 7. [事件格式](reference/event-formats.md)
-8. [里程碑 gate](roadmap/milestone-gates.md)
-9. [规模化精度对照 runbook](experiments/runbooks/precision-comparison-at-scale.md)
-9. [ADR 索引](decisions/README.md)
+8. [里程碑 gate](roadmap/milestone-gates.md)（研究 gate P/A/B/C/D 与工程 gate 1–6）
+9. [实现计划](roadmap/implementation-plan.md)（含 Q3 降级记录与 adapter 边界定义）
+10. [ADR 索引](decisions/README.md)
 
 ## 项目与治理
 

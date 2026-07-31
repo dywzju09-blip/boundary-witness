@@ -1,19 +1,65 @@
 # Milestone gates
 
-本文定义 gate。Gate 0 是研究前提，其余是从 V3.2.x 进入 V3.3 的工程 gate。任何单项成功都不能替代完整 gate。方向权威见 [research thesis](../project/research-thesis.md)。
+本文定义 gate。**研究 gate（P、A、B、C、D）决定论题能不能立住；工程 gate（1–6）决定能不能从 V3.2.x 进入 V3.3。两者互不替代**——任何工程 gate 通过都不能推出创新点成立，反之亦然。
 
-## Gate 0：研究前提
+方向权威见 [research thesis](../project/research-thesis.md)。本文于 2026-07-30 重写研究 gate 部分，旧的「Gate 0：研究前提」已被 Gate P/A/B/C/D 取代。
 
-工程 gate 通过与否与创新点是否成立无关。以下三项决定论题能不能立住，必须独立通过：
+---
 
-- **外部基线对照**：在同一 corpus 上运行 Yuga 与 FFIChecker，记录它们在持有期维度上的检出情况。若 Yuga 能检出该维度，N1 的立论需重做。执行步骤见 [baseline comparison runbook](../experiments/runbooks/baseline-comparison.md)；
-- **外部侧分析端到端**：至少一个库上产出可回查的逃逸证据（roadmap P2）。这是 N1 的前提，缺它则「跨语言联结」无证据；
-- **消融可执行**：关闭外部侧分析后精度回落多少（roadmap P2）。这是 N1 的机制证据——若关掉外部侧精度不变，说明贡献不来自跨界证据。
+# 研究 gate
 
-第一项已于 2026-07-31 执行，**结论是反例**：Yuga 能报出主线缺陷类的 5/7，原立论被否定。N1 已重定位为「判别」，见 [research thesis](../project/research-thesis.md)。该项现在的未完成部分是**规模**——单 crate 不构成证据，需扩大到 10–20 个 FFI crate 并在未参与开发的 crate 上复现。
+按执行顺序排列。每一道都是研究方向的止损点。
 
-完成谓词：三项各有一份可复现的运行记录，且漏报有归因分析。**在 Gate 0 通过前，不得在任何对外材料中表述跨语言契约错配判定已达成。**
+## Gate P：猎物存在性
 
+**最先做，成本最低，否定力最强。**
+
+在投入任何外部侧分析之前必须回答：生态里还有多少个「safe API + 非 `'static` 的 Fn bound + 同函数内 FFI 注册」的位置。
+
+这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，许多维护者早已收紧 bound。**若猎物池只有个位数，[research thesis §7.2](../project/research-thesis.md) 的新发现硬要求无法满足，路线 A 直接死。**
+
+- **通过**：候选池规模足以支撑确认集与新发现目标，且未调优 crate 上有非平凡占比。
+- **No-Go**：候选池过小，或全部集中在已修复的历史版本。
+- **失败动作**：转路线 C（经验研究），不再投入外部侧实现。
+
+执行步骤见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。所需能力（回调 bound 四态判定）已实现，成本约为外部侧实现的百分之一。
+
+## Gate A：外部证据必要性
+
+- **通过**：matched pair 中 Full 能区分同步与保存；Rust-only 对两者给出相同结果或必须 abstain；在真实未调优样本上，Full 相对 Rust-only 有可解释的 precision/coverage 增益。
+- **No-Go**：关闭外部分析后结果不变；所谓增益主要来自更窄的候选范围；外部行为仍主要由 API map 预先给定。
+- **失败动作**：放弃 C2 作为主角，转路线 B（以反证合成为主）。
+
+与 Yuga / FFIChecker 的同任务同分母精度对照是本 gate 的组成部分，步骤见 [规模化精度对照 runbook](../experiments/runbooks/precision-comparison-at-scale.md)。2026-07-31 的单 crate 对照见 [Gate 0 结果](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)——**n=1 且该 crate 参与过开发，不构成证据。**
+
+## Gate B：反证真实性
+
+- **通过**：unseen 候选能自动生成 safe-only harness；外部组件真实晚调回调；回调实际访问失效对象；独立 oracle 在 vulnerable 上产生证据；fixed 与全部负对照干净。
+- **No-Go**：只能产生 contract trace；必须手写每个 crate 的专用 harness；结果依赖 synthetic 桥接才成立；无法建立反证与原候选的 identity lineage。
+- **失败动作**：C1 降级为 contract-path synthesis，不得称为不健全性确认。
+
+「专用 harness」与「声明式 adapter」的界线是本 gate 的核心判据，定义见 [implementation plan 的 P4](implementation-plan.md#p4-反证合成与执行)：adapter 只描述如何合法使用 API，不得包含任何与缺陷相关的信息，且必须在判定跑出来之前冻结。
+
+## Gate C：跨库泛化
+
+**认证期决定，当前不设下限。**
+
+跨外部库家族的泛化是投稿认证期的问题。**本阶段不对家族数量设置实现约束**——P1/P2 的完成谓词只要求单库端到端打通。取得外部库 LLVM IR 的工程可行性是已知风险，但按当前决定推迟到认证期处理，不构成现在的 gate。
+
+认证期需要报告：外部库家族数、新 API 的接入方式与成本、生成成功率、coverage gap。
+
+## Gate D：确认性评估
+
+- **通过**：冻结后的 unseen corpus；公平 baseline 与全套消融；双人 ground truth；coverage、Unknown、cluster 与置信区间完整；**至少一个有独立外部确认的实际发现**。
+- **No-Go**：结论仍来自开发集；100% precision 依赖大量 abstention；指标单位在 alert、API、crate 与 root cause 之间混用；没有新发现。
+
+**在 Gate P、A、B、D 全部通过前，不得在任何对外材料中表述跨语言契约不相容判定已达成。**
+
+---
+
+# 工程 gate
+
+从 V3.2.x 进入 V3.3 的条件。任何单项成功都不能替代完整 gate。
 
 ## Gate 1：Clean method commit
 
@@ -50,6 +96,8 @@
 - crash、finding、sanitizer 与 method negative 分开。
 
 完成谓词：至少一个公开设计家族在当前 commit 上形成 plan 到 receipt 的可重放闭环。
+
+**注意**：Gate 4 是工程闭环，不等于研究 Gate B。Gate B 额外要求客户端是 safe-only、晚调由外部组件真实触发、证据来自独立 oracle。
 
 ## Gate 5：约 100 crate 工程 pilot
 
