@@ -10,9 +10,11 @@
 
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
-| N1 跨语言契约错配判定 | `Planned` | 外部侧有界分析（roadmap P2）未开始；持有期维度的外部侧证据目前是从 API 清单推断 |
-| N2 消除人工 API 清单 | `Planned` | 清单仍是必需输入，消融实验无法进行 |
-| N3 定向见证 | `Planned` | 见证生成（roadmap P4）未开始 |
+| N1 跨界判别（原「检出」，2026-07-31 重定位） | `Planned` | 外部侧有界分析（roadmap P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
+| N2 消除人工 API 清单 | **`Deprecated`** | 已撤销。Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立 |
+| N3 定向见证 | `Planned` | 见证生成（roadmap P4）未开始。外部基线后更重要：先验工具只给「probably / potential」 |
+
+外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。
 
 ## 状态总览
 
