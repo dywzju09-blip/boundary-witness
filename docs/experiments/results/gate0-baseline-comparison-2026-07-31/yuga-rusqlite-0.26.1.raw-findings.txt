@@ -1,0 +1,95 @@
+# Yuga target: rusqlite 0.26.1 --all-features
+# exit_code=0 finding_count=13 advisory_function_hits=5 same_defect_hits=5
+# Each block preserves the first finding paragraphs from the generated report.md.
+
+## commit_hook-uaf
+f7143fbc1529113905cf05af2bf2b72b801caaaafdb51c76965fc081692f257a  report.md
+<p>src/hooks.rs:348:5: 350:40</p>
+<p><code>*(hook.0)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## create_collation-uaf
+438459f9357f5551039f31629699946193e65853c4960f031ab87590346961bc  report.md
+<p>src/collation.rs:19:5: 21:64</p>
+<p><code>*(x_compare)</code> is of type <code>C</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## create_scalar_function-uaf
+9c54661a307445e2ca8e31e1f6e88a4e3ec70747c2aacb57ba3ead2bc851760c  report.md
+<p>src/functions.rs:383:5: 392:18</p>
+<p><code>*(x_func)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## get_interrupt_handle-uaf
+f3796c6d5177c961cfa6fa18c99e7b04b99f18ae4c0e4300591c49316d636abb  report.md
+<p>src/inner_connection.rs:181:5: 181:58</p>
+<p><code>*(*(self).interrupt_lock.0.0)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.db_lock.0.0)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## get_interrupt_handle-uaf-1
+7ef009e13a50664404a1d6435e14f00a89fcf2ee1698b6c2b4fe5a09fb6ea27a  report.md
+<p>src/lib.rs:886:5: 886:58</p>
+<p><code>*(*(self).db.0.db)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.db_lock.0.0)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## new-uaf
+c9288b6d9b6a1a7805d29c7c34a6acd5450cfbd8a3bef83863b961684ef9bbde  report.md
+<p>src/backup.rs:187:5: 187:95</p>
+<p><code>*(*(from).db.0.db)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'a</code>,</p>
+<p>It is (probably) assigned to <code>*(*(to).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## prepare-uaf
+72848e13a3dbf34a3072cb4cab6d7d9a4940415d0b489da609a0249c3ac9ee08  report.md
+<p>src/inner_connection.rs:222:5: 222:92</p>
+<p><code>*(*(self).db)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(conn).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_and_then-uaf
+acf31fd864ae8c077f3b9ad8ece0577c9b01d17173918b540b86450cdaaf2095  report.md
+<p>src/statement.rs:387:5: 391:44</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).stmt.ptr)</code> which is of type <code>ffi::sqlite3_stmt</code>, and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_and_then_named-uaf
+4836e1befffa9cacf26206f83d6c19ccd9a9082459d46e5e4152ce88471330cc  report.md
+<p>src/statement.rs:413:5: 420:44</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(*(self).conn).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_map-uaf
+a33b18260b46bf557f3849471c8f0f210003369e8c0dbe8c09dff6e809ef8cf6  report.md
+<p>src/statement.rs:293:5: 296:41</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).stmt.ptr)</code> which is of type <code>ffi::sqlite3_stmt</code>, and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_map_named-uaf
+2810951996ed08ce8db4b93ce58ff72430c49cad3f4836d6529f0194293739a3  report.md
+<p>src/statement.rs:320:5: 326:41</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(*(self).conn).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## rollback_hook-uaf
+d9525f98e7f10055499172ccc1629c617f6f21d2f529431c803867743f7df3c9  report.md
+<p>src/hooks.rs:360:5: 362:32</p>
+<p><code>*(hook.0)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## update_hook-uaf
+3450c4b1796a7c134c9e76dbbed48c58042f0cee0735fa4cbcc41491ebaf79e6  report.md
+<p>src/hooks.rs:378:5: 380:55</p>
+<p><code>*(hook.0)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+

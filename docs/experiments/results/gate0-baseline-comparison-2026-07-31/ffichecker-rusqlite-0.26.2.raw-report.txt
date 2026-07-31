@@ -1,0 +1,8 @@
+# FFIChecker fixed-version control: rusqlite 0.26.2 --all-features
+# exit_code=0 finding_count=4 advisory_function_name_hits=3 same_defect_hits=0
+# Raw analyzer diagnostics follow.
+
+("rusqlite::vtab::<impl rusqlite::inner_connection::InnerConnection>::create_module", Bug info: LLVM IR of C code is unknown. Possible bugs: Memory Leakage, FFI sqlite3_create_module_v2 is unknown, argument is in state `Forgotten`., seriousness: Medium, function: rusqlite::vtab::<impl rusqlite::inner_connection::InnerConnection>::create_module)
+("rusqlite::hooks::<impl rusqlite::inner_connection::InnerConnection>::commit_hook", Bug info: LLVM IR of C code is unknown. Possible bugs: Memory Leakage, FFI sqlite3_commit_hook is unknown, argument is in state `Forgotten`., seriousness: Medium, function: rusqlite::hooks::<impl rusqlite::inner_connection::InnerConnection>::commit_hook)
+("rusqlite::hooks::<impl rusqlite::inner_connection::InnerConnection>::update_hook", Bug info: LLVM IR of C code is unknown. Possible bugs: Memory Leakage, FFI sqlite3_update_hook is unknown, argument is in state `Forgotten`., seriousness: Medium, function: rusqlite::hooks::<impl rusqlite::inner_connection::InnerConnection>::update_hook)
+("rusqlite::hooks::<impl rusqlite::inner_connection::InnerConnection>::rollback_hook", Bug info: LLVM IR of C code is unknown. Possible bugs: Memory Leakage, FFI sqlite3_rollback_hook is unknown, argument is in state `Forgotten`., seriousness: Medium, function: rusqlite::hooks::<impl rusqlite::inner_connection::InnerConnection>::rollback_hook)

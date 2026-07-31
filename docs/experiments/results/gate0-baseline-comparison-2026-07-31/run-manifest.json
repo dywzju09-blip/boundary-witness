@@ -1,0 +1,230 @@
+{
+  "schema_version": "boundary-witness/external-baseline-run-manifest/v1",
+  "run_id": "gate0-baseline-rusqlite-0.26.1-20260730T163351Z",
+  "date_local": "2026-07-31",
+  "started_at_utc": "2026-07-30T16:33:51Z",
+  "ended_at_utc": "2026-07-30T17:42:27Z",
+  "code_commit": "f40aa3b77781dc4265a71ee1ddabb43fa1ac2b8c",
+  "code_dirty_at_start": false,
+  "contract_hash": null,
+  "contract_alignment": "not-applicable: external baselines consumed no BoundaryWitness Contract or API map",
+  "schema_versions": {
+    "run_manifest": "boundary-witness/external-baseline-run-manifest/v1",
+    "yuga_report": "upstream-unversioned/html-fragment-in-markdown",
+    "ffichecker_report": "upstream-unversioned/stdout-tuple"
+  },
+  "dataset_version": "corpus.gate0.external-baseline.rusqlite-0.26.1.20260731",
+  "dataset_hash": "18e0b0ea8f15c26b5c0c846d00d85e2089cf4aacac942ffac0386c5b16dd1c94",
+  "dataset_artifact": "artifact:dataset:corpus.gate0.external-baseline.rusqlite-0.26.1.20260731:source-tar",
+  "published_crate_sha256": "8a82b0b91fad72160c56bf8da7a549b25d7c31109f52cc1437eac4c0ad2550a7",
+  "config_hash": "8d6ccd30164c227af5363bf73446261d057788fbcbeeea11e90baad26eb69647",
+  "experiment_config": {
+    "config_version": "gate0-external-baseline-config/v1",
+    "target": {
+      "crate": "rusqlite",
+      "version": "0.26.1",
+      "cargo_feature_mode": "all-features",
+      "required_surfaces": [
+        "hooks",
+        "functions",
+        "collation"
+      ],
+      "affected_functions": [
+        "create_scalar_function",
+        "create_aggregate_function",
+        "create_window_function",
+        "commit_hook",
+        "rollback_hook",
+        "update_hook",
+        "create_collation"
+      ]
+    },
+    "positive_controls": {
+      "yuga": "pulse-binding@5db934446759f51aedeee51895b4ea74a385f591",
+      "ffichecker": "c-in-rust-uaf@rust-ffi-checker-master"
+    },
+    "fixed_version_control": {
+      "crate": "rusqlite",
+      "version": "0.26.2",
+      "cargo_feature_mode": "all-features"
+    },
+    "tools": {
+      "yuga": {
+        "ref": "refs/heads/master",
+        "commit": "0d4180b82cf51f7b1718590e89e78be104bca109"
+      },
+      "ffichecker": {
+        "ref": "refs/heads/master",
+        "commit": "5ab17582e8b6171bfc866565e590e87778d7dda7",
+        "precision_filter": "default"
+      }
+    }
+  },
+  "host_class": "x86_64 Linux server; x86_64-unknown-linux-gnu",
+  "toolchains": {
+    "yuga": {
+      "channel": "nightly-2022-11-18",
+      "rustc": "1.67.0-nightly (83356b78c 2022-11-17)",
+      "rustc_commit": "83356b78c4ff3e7d84e977aa6143793545967301",
+      "target": "x86_64-unknown-linux-gnu",
+      "rustc_llvm": "15.0.4",
+      "components": [
+        "rustc-dev",
+        "llvm-tools-preview"
+      ]
+    },
+    "ffichecker": {
+      "channel": "nightly-2021-12-05",
+      "rustc": "1.59.0-nightly (efec54529 2021-12-04)",
+      "rustc_commit": "efec545293b9263be9edfb283a7aa66350b3acbf",
+      "cargo": "1.58.0-nightly (294967c53 2021-11-29)",
+      "target": "x86_64-unknown-linux-gnu",
+      "rustc_llvm": "13.0.0",
+      "system_llvm": "13.0.1",
+      "clang": "13.0.1-2ubuntu2.2",
+      "lld": "13.0.1",
+      "components": [
+        "rustc-dev",
+        "llvm-tools-preview"
+      ]
+    }
+  },
+  "tools": {
+    "yuga": {
+      "version": "0.1.0",
+      "commit": "0d4180b82cf51f7b1718590e89e78be104bca109",
+      "source_tar_sha256": "e7a0fc9683f5c045f4e89e086c87638f79ceb4e9c82b456af739ee8c7836e934",
+      "cargo_yuga_sha256": "88baeacd083580dacacb2ec4bd71333a44175b46f4896b1084560438a59f003f",
+      "yuga_sha256": "dcb4b4b7968f580959451345a3e60be40d511386ac7f84fd1c26024485242cd1",
+      "upstream_manifest_sha256": "e9aea24e0e8400c96ec664a8cd9fac45aef632832743c12b10cae09b8a212886",
+      "upstream_lock_sha256": "e02429fec2922a53704982a76499a8e851b31e3af66c431155c0f1b02142292c",
+      "compat_lock_sha256": "ce48ef8fde2cef318e4a9976b5e32bf1867c8ac6d91516690bbc423df77b97e5"
+    },
+    "ffichecker": {
+      "version": "0.1.0",
+      "commit": "5ab17582e8b6171bfc866565e590e87778d7dda7",
+      "source_tar_sha256": "5130a78ba53be9a5757cc71ef70721da4491f636fbb75fae877dc1e966641733",
+      "cargo_ffi_checker_sha256": "9806bc56aa04d24aff2c2e3d3b50ef066d6c558f79a80f35319bfa7c05ecb8fe",
+      "analyzer_sha256": "7d5e6d0be3e2657896d926c34a3a422c5c0f8ce83834759176e718dcb7279fb4",
+      "entry_collector_sha256": "b6f42ad742b6f6bab67c38c116f99aec8288c2afa5482325304b43b8460358d2",
+      "upstream_manifest_sha256": "f893e5cf0b24ad31c2dac6d91d9c2801adbf82b19bb0a35692c9bba3b94f31b0",
+      "build_linkage_manifest_sha256": "9fb493b57167e39a4fa83b8e129f9f5cba67d10210abc6003f8684c60568611e",
+      "build_linkage_adjustment": "llvm-sys no-llvm-linking feature; analysis source unchanged"
+    }
+  },
+  "dependency_alignment": {
+    "yuga_tool_compat_lock_sha256": "ce48ef8fde2cef318e4a9976b5e32bf1867c8ac6d91516690bbc423df77b97e5",
+    "yuga_target_0_26_1_compat_lock_sha256": "24c219cc067cff455b9ab20efd18ad8cd4d4dcac23b4e1df5aedfdf6e21b89f0",
+    "ffichecker_positive_compat_lock_sha256": "a02f67c6205ababe7b6194701242da411059b9b4292d7df82f32c401f40e0bc3",
+    "ffichecker_target_0_26_1_compat_lock_sha256": "74951fa14484e24e34791e736b496bc72b04152d778f5bcbcd76df4faaccaab1",
+    "ffichecker_target_0_26_2_compat_lock_sha256": "f4785ea91e2e60ea3d483341381fc1e7792354c89b20110a8b0e165a2b7eb8b4",
+    "ffichecker_vendor_config_sha256": "11b55a8c6124298548bde7f64be3b80a68c881c8100dd19bf47c2b3e5843ffae",
+    "yuga_target_0_26_2_compat_lock_sha256": "b366b758c72879ba9a099add1545f5ac257a6e34877ae6f87aa5e7fef83c2379"
+  },
+  "runs": [
+    {
+      "id": "yuga-positive-pulse-binding-20260730T163351Z",
+      "exit_code": 0,
+      "finding_count": 9,
+      "valid_positive": true,
+      "full_stdout_sha256": "5b4eb0c951ba5ee95e8b4962c8e072c1560c6910e340ce380448a9d572a033d1",
+      "full_stdout_bytes": 123413,
+      "artifact_id": "artifact:run:gate0-baseline-rusqlite-0.26.1-20260730T163351Z:yuga-positive-full-stdout"
+    },
+    {
+      "id": "yuga-rusqlite-0.26.1-all-features-20260730T165209Z",
+      "exit_code": 0,
+      "finding_count": 13,
+      "advisory_function_name_hits": 5,
+      "same_defect_hits": 5,
+      "full_stdout_sha256": "9b81600f1a11ea830168e2a9c4c7dec535aeb37654b91756887424c693388f06",
+      "full_stdout_bytes": 61572,
+      "artifact_id": "artifact:run:gate0-baseline-rusqlite-0.26.1-20260730T163351Z:yuga-target-full-stdout"
+    },
+    {
+      "id": "yuga-rusqlite-0.26.2-all-features-20260730T173420Z",
+      "exit_code": 0,
+      "finding_count": 8,
+      "advisory_function_name_hits": 0,
+      "full_stdout_sha256": "8eeddf5a85a092f203ddce2c7d91ce96e81989d46f67800516e6d5397e9675e6",
+      "full_stdout_bytes": 61290,
+      "artifact_id": "artifact:run:gate0-baseline-rusqlite-0.26.1-20260730T163351Z:yuga-fixed-full-stdout"
+    },
+    {
+      "id": "ffichecker-positive-c-in-rust-uaf-20260730T171624Z",
+      "exit_code": 0,
+      "finding_count": 1,
+      "valid_positive": true,
+      "full_stdout_sha256": "a6a0ed95e4167c38102e3718e3144e33e74a32fe6a5e03b4ba8e3378bccfa9f0",
+      "full_stdout_bytes": 435,
+      "artifact_id": "artifact:run:gate0-baseline-rusqlite-0.26.1-20260730T163351Z:ffichecker-positive-full-stdout"
+    },
+    {
+      "id": "ffichecker-rusqlite-0.26.1-all-features-20260730T172320Z",
+      "exit_code": 0,
+      "finding_count": 4,
+      "advisory_function_name_hits": 3,
+      "same_defect_hits": 0,
+      "full_stdout_sha256": "f67a9d208eb60ed389a80a542bc228313311bc7a55f9e3641c40a473969d0530",
+      "full_stdout_bytes": 3943,
+      "bitcode_path_count": 78,
+      "c_bitcode_object_count": 0,
+      "artifact_id": "artifact:run:gate0-baseline-rusqlite-0.26.1-20260730T163351Z:ffichecker-target-full-stdout"
+    },
+    {
+      "id": "ffichecker-rusqlite-0.26.2-all-features-20260730T174227Z",
+      "exit_code": 0,
+      "finding_count": 4,
+      "advisory_function_name_hits": 3,
+      "same_defect_hits": 0,
+      "full_stdout_sha256": "bcb1902d9aec3dd472ae2ac2fcfde3141bdfd7ec45b0f9268c5744839e6c8776",
+      "full_stdout_bytes": 3653,
+      "artifact_id": "artifact:run:gate0-baseline-rusqlite-0.26.1-20260730T163351Z:ffichecker-fixed-full-stdout"
+    }
+  ],
+  "public_artifacts": [
+    {
+      "path": "yuga-positive-control.raw-findings.txt",
+      "sha256": "2f5fbb69b5a82cca5d88c93c298f1b12bd82454de767ffccdaeb8d0651455792",
+      "bytes": 5689
+    },
+    {
+      "path": "yuga-rusqlite-0.26.1.raw-findings.txt",
+      "sha256": "59682bd06f3392919c7d04a7b458b234e06b2b93a723ee7d54cb96ee3897be35",
+      "bytes": 6540
+    },
+    {
+      "path": "yuga-rusqlite-0.26.2.raw-findings.txt",
+      "sha256": "a16cb838a6b6ca4b637cd9b66580e7bbbad619b56e5d2c859c697211ff0f5476",
+      "bytes": 4228
+    },
+    {
+      "path": "ffichecker-positive-control.raw-report.txt",
+      "sha256": "681fdfa2ad6f892504252e4cd01fc7cb0f40f14757d938c9a8d4d7b5972e613d",
+      "bytes": 273
+    },
+    {
+      "path": "ffichecker-rusqlite-0.26.1.raw-report.txt",
+      "sha256": "e91620bc1d3f0126d314b28230d1d00d90e34296b3b447104d74a2cd35dc2f58",
+      "bytes": 1540
+    },
+    {
+      "path": "ffichecker-rusqlite-0.26.2.raw-report.txt",
+      "sha256": "b71dc9db6e33e3180e6cf30f028cef6275114aa63113f1b7a71c296a04ea80a1",
+      "bytes": 1555
+    }
+  ],
+  "diagnostic_attempts_excluded": [
+    "Yuga upstream stale lock resolved to an edition-2024 dependency under Cargo 1.67",
+    "current Yuga master pulse-binding directory contained reports but no buildable sample source",
+    "Cargo 1.58 did not support the configured sparse source replacement; cargo vendor fallback used",
+    "FFIChecker default static llvm-sys linkage duplicated LLVM command-line registration; build-only no-llvm-linking feature used"
+  ],
+  "conclusion_bound": "This run evaluates only Gate 0 external-baseline item 1. It neither passes Gate 0 as a whole nor establishes cross-language contract-mismatch detection.",
+  "fixed_version_source": {
+    "crate": "rusqlite",
+    "version": "0.26.2",
+    "tag": "v0.26.2",
+    "source_tar_sha256": "25398736b4cb4893269680b2a2457d06cda73ee213ae8dbbcae250bef58dd77b"
+  }
+}

@@ -1,0 +1,67 @@
+# Yuga positive control: pulse-binding @ 5db934446759f51aedeee51895b4ea74a385f591
+# exit_code=0 finding_count=9
+# Each block preserves the first finding paragraphs from the generated report.md.
+
+## device_manager-uaf
+5ad8773ba76882c0aef451368fa067ea169448ec1069b3870506d283bb913568  report.md
+<p>pulse-binding/src/context/ext_device_manager.rs:131:5: 131:50</p>
+<p><code>*(*(self).ptr)</code> is of type <code>ContextInternal</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.context)</code> which is of type <code>ContextInternal</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## device_restore-uaf
+5cddf084a2e0422dcb2076cd6aa73b80deb26ce1027c2cd8bfc27b579024a8e4  report.md
+<p>pulse-binding/src/context/ext_device_restore.rs:84:5: 84:50</p>
+<p><code>*(*(self).ptr)</code> is of type <code>ContextInternal</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.context)</code> which is of type <code>ContextInternal</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## get_api-uaf
+d5a13b5f90604297d2acbd3f37b5968f4923aedbbe2fcc9fc86909d40c5f4117  report.md
+<p>pulse-binding/src/mainloop/standard.rs:410:5: 410:49</p>
+<p><code>*(*(self)._inner.0.api)</code> is of type <code>MainloopApi</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret)</code> which is of type <code>MainloopApi</code>, and outlives the lifetime corresponding to <code>'a</code>, . Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## get_api-uaf-1
+e3cdddfd188454646e170fed969ccf84102be2cca9161e4b6fc36af8e3074091  report.md
+<p>pulse-binding/src/mainloop/threaded.rs:544:5: 544:49</p>
+<p><code>*(*(self)._inner.0.api)</code> is of type <code>MainloopApi</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret)</code> which is of type <code>MainloopApi</code>, and outlives the lifetime corresponding to <code>'a</code>, . Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## get_api_ptr-uaf
+9552edc036124ab13eefd211e7547e9cc8eac7a77fff32fd3e3e63faab5ed740  report.md
+<p>pulse-binding/src/mainloop/api.rs:124:5: 124:48</p>
+<p><code>*(*(*(self).api).userdata)</code> is of type <code>c_void</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(*(ret).userdata)</code> which is of type <code>c_void</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## inner-uaf
+79a266abb25026139f337a5bcd8d950a83ba13d8ce7c7cedfc5d7c340a3053cb  report.md
+<p>pulse-binding/src/mainloop/standard.rs:277:5: 277:71</p>
+<p><code>*(*(self)._inner.0.ptr)</code> is of type <code>MainloopInternal</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.0.ptr)</code> which is of type <code>MainloopInternal</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## inner-uaf-1
+7598f064b04ac5f113c9c19fcd74f75c61b91e2b1473e96dd6ec494eb2e2acc2  report.md
+<p>pulse-binding/src/mainloop/threaded.rs:420:5: 420:59</p>
+<p><code>*(*(self)._inner.0.ptr)</code> is of type <code>MainloopInternal</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.0.ptr)</code> which is of type <code>MainloopInternal</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## introspect-uaf
+e343f49a78b8bf24bee8c649aaeaf78f79dd83de4b5d5321ec0fdb41235069ad  report.md
+<p>pulse-binding/src/context/introspect.rs:235:5: 235:45</p>
+<p><code>*(*(self).ptr)</code> is of type <code>ContextInternal</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.context)</code> which is of type <code>super::ContextInternal</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## stream_restore-uaf
+3b1a4735c3452824cb8beba6ccd36f2df520c9008a1e0d1e0eb7d9a7d032ff5d  report.md
+<p>pulse-binding/src/context/ext_stream_restore.rs:93:5: 93:50</p>
+<p><code>*(*(self).ptr)</code> is of type <code>ContextInternal</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.context)</code> which is of type <code>ContextInternal</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+

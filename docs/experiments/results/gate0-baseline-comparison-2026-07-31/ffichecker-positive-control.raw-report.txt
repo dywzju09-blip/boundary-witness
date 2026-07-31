@@ -1,0 +1,5 @@
+# FFIChecker positive control: c-in-rust-uaf
+# exit_code=0 finding_count=1
+# Raw analyzer diagnostic follows.
+
+("c_func", Bug info: LLVM IR of C code is known. Possible bugs: Use After Free, Double Free, Taint source meets taint sink., seriousness: High, function: c_func)

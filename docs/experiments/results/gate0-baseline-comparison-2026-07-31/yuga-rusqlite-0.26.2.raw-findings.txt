@@ -1,0 +1,60 @@
+# Yuga fixed-version control: rusqlite 0.26.2 --all-features
+# exit_code=0 finding_count=8 advisory_function_hits=0
+# Each block preserves the first finding paragraphs from the generated report.md.
+
+## get_interrupt_handle-uaf
+f3796c6d5177c961cfa6fa18c99e7b04b99f18ae4c0e4300591c49316d636abb  report.md
+<p>src/inner_connection.rs:181:5: 181:58</p>
+<p><code>*(*(self).interrupt_lock.0.0)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.db_lock.0.0)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## get_interrupt_handle-uaf-1
+70e7ce375126c477766b2ab8842d24e31d2b2abbd544eb08bbf49ecda2be6f32  report.md
+<p>src/lib.rs:892:5: 892:58</p>
+<p><code>*(*(self).db.0.db)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) returned as <code>*(ret.db_lock.0.0)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned. Here, <code>ret</code> denotes the value returned by the function.</p>
+<p>The latter can be longer than the former, which could lead to use-after-free!</p>
+
+## new-uaf
+c9288b6d9b6a1a7805d29c7c34a6acd5450cfbd8a3bef83863b961684ef9bbde  report.md
+<p>src/backup.rs:187:5: 187:95</p>
+<p><code>*(*(from).db.0.db)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'a</code>,</p>
+<p>It is (probably) assigned to <code>*(*(to).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## prepare-uaf
+72848e13a3dbf34a3072cb4cab6d7d9a4940415d0b489da609a0249c3ac9ee08  report.md
+<p>src/inner_connection.rs:222:5: 222:92</p>
+<p><code>*(*(self).db)</code> is of type <code>ffi::sqlite3</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(conn).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_and_then-uaf
+83aba36e2918894f2facda9d2fa90dc6dc5caf61cb30e6d49f46e90e8d16da59  report.md
+<p>src/statement.rs:386:5: 390:44</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).stmt.ptr)</code> which is of type <code>ffi::sqlite3_stmt</code>, and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_and_then_named-uaf
+70f947ad2414c7cb75e4ccf0ac18b0fe658feca387d812e5ed7715bcbc9833db  report.md
+<p>src/statement.rs:412:5: 419:44</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(*(self).conn).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_map-uaf
+a33b18260b46bf557f3849471c8f0f210003369e8c0dbe8c09dff6e809ef8cf6  report.md
+<p>src/statement.rs:293:5: 296:41</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(self).stmt.ptr)</code> which is of type <code>ffi::sqlite3_stmt</code>, and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>This is a potential use-after-free bug!</p>
+
+## query_map_named-uaf
+2810951996ed08ce8db4b93ce58ff72430c49cad3f4836d6529f0194293739a3  report.md
+<p>src/statement.rs:320:5: 326:41</p>
+<p><code>*(f)</code> is of type <code>F</code> and outlives the lifetime corresponding to <code>'_</code>,</p>
+<p>It is (probably) assigned to <code>*(*(*(self).conn).db.0.db)</code> which is of type <code>ffi::sqlite3</code>, and lives for the entire duration that it is owned</p>
+<p>This is a potential use-after-free bug!</p>
+
