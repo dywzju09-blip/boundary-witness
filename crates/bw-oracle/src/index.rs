@@ -115,6 +115,13 @@ impl StaticFactIndex {
                         .site_semantics
                         .insert(fact.site_id.clone(), fact.semantic_site_key.clone());
                 }
+                // guard 事实的消费方是 P3 的判定关系，不是 oracle 的规则层。这里只登记
+                // site 语义，让它与其他事实一样能按 site 回查。
+                StaticFact::RegistrationGuard(fact) => {
+                    index
+                        .site_semantics
+                        .insert(fact.site_id.clone(), fact.semantic_site_key.clone());
+                }
                 StaticFact::ReturnedBorrowRelation(fact) => {
                     index
                         .site_semantics

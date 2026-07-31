@@ -78,23 +78,58 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 **由谁执行不改变判据。** [runbook](../experiments/runbooks/prey-existence-probe.md) 的四条方法学要求仍然有效，缺一条结论就不可用：以 `EffectiveCaptureAdmission` 语义取值为准（不用语法四态）；只数 Tier A（dataflow 到达精确 extern 参数，不是语法共现）；只算 L1 可分析（否则候选进不了 P1/P2）；用置信界而非「足够」这类事后可移动的措辞。**运行前必须完成 family-level sealed split**，否则整个前瞻池变成开发集。
 
-## 下一步：PG Rust 侧剩余的两个事实
+## 已完成：PG-1 `RegistrationGuard`
 
-**这是当前 Agent 侧应该做的第一件事。**
+2026-07-31 完成。落点：`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `registration_guards`、
+`crates/bw-model/src/static_fact.rs`（`RegistrationGuard` + `RegistrationGuardFact`）、
+golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。
 
-判定关系需要三个 Rust 侧事实，PC 只做完了第一个：
+在 Gate R fixture 的 Rust 侧上，编译器产出的取值与 `tests/compatibility.rs` 手写的那组一致：
+`register_guarded` → `TiesSlotToSubject`（guard 类型 `Registration`，`Drop` 里调 `fixture_unregister`）；
+其余三个 → `None`。
+
+### 第 3 条判据改了措辞
+
+计划原文是「`Drop` impl 里有指向**注销角色 API** 的调用」，实现改为「有指向**外部函数**的调用」。
+角色分类目前只能来自人工 API map（`registration.rs`），拿它当必要条件有两个后果：guard 检测只能
+在有清单的 crate 上工作，规模化探针拿不到这个事实；而且那是人工标注的语义，不是 Rust 侧观察。
+
+**更重要的是，「Rust 只能看到 `Drop` 调了某个外部函数、判断不了它是否真的清空槽位」正是要外部侧
+证据的那条论证本身**（[research thesis §2.6](../project/research-thesis.md)）。所以只判 Rust 侧看得见的形状，
+是否真的注销由 Q4′ 回答。有 API map 时角色信息仍在 `RegistrationSiteFact` 里，可作交叉验证。
+
+### 非空性检查（两半都做了）
+
+| 扰动 | 结果 |
+| --- | --- |
+| 让「`Drop` 里调了外部函数」判据失效 | `register_guarded` 从 `TiesSlotToSubject` 落到 `Unresolved`，失败落在 golden 的第 31 行；其余断言不受影响 |
+| 把 fixture 2/3 手写事实的 guard 改成 `Unresolved` | 14 项里恰好 5 项失败，且 **`full_separates_fixtures_2_and_3` 是其中之一**——guard 取值错了，Full 就分不开 fixture 2 与 3 |
+
+第二项值得单独记：**Gate R 的分离能力依赖这个事实**，而它此前是手写的。
+
+### 没有覆盖的形状
+
+- **不产出 `OwnerDropUnregisters`**：那一取值的判据是 owner 类型 drop 路径的证明，与 `ReleasePathProofFact` 同源，不是返回值形状；
+- `Result<Registration<'a>, E>` 这类包一层的返回值落 `Unresolved`，是已知覆盖缺口，不是判「无 guard」；
+- guard 类型定义在别的 crate 时拿不到 `Drop` 的 MIR，落 `Unresolved`。
+
+## 下一步：PG-2 `AllocationOwnership`
 
 | 事实 | 状态 |
 | --- | --- |
-| `EffectiveCaptureAdmission` | ✅ PC 已完成 |
-| `RegistrationGuard` | ❌ **零行代码** |
+| `EffectiveCaptureAdmission` | ✅ PC |
+| `RegistrationGuard` | ✅ PG-1 |
 | `AllocationOwnership` | ❌ **零行代码** |
 
-**guard 那一项尤其要紧**：整个「为什么必须看外部侧」的论证建立在「Rust 看得到 guard、但判断不了它是否真的有效」之上——现在连「看得到」都还没有。
+**这一项是漏报来源**：`'static` 只管住回调借了什么，管不住 `Box<F>` 还活着没有。PF 的 fixture 4 就是这一类。
 
-**分配归属那一项是漏报来源**：`'static` 只管住回调借了什么，管不住 `Box<F>` 还活着没有。PF 的 fixture 4 就是这一类。
+**原材料已经在产出。** PG-1 的探针顺带确认：同一个 fixture 上，`register_static_then_free` 产出
+`RawPointerTransfer{IntoRaw}` + `RawPointerTransfer{FromRaw}` + `DropSite{Explicit}`，而只差一行
+`Box::from_raw` 的 `register_static_owned` 只产出 `IntoRaw`。两者的区别在事实层**已经可见**，
+需要的是按交出点聚合再加一层分类。
 
-另有一处：**目前没有任何代码把编译器输出装成 `RustContractFact`**，PF 那四个 fixture 的 Rust 侧事实是手写的。这一步属于 P0。
+另有一处：**目前没有任何代码把编译器输出装成 `RustContractFact`**，PF 那四个 fixture 的 Rust 侧事实
+仍是手写的。这一步属于 P0。
 
 细化、可复用原材料与非空性检查见 [implementation plan 的 PG](implementation-plan.md#pg-rust-侧剩余的两个事实)。
 
@@ -154,6 +189,7 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 | 项 | 影响 |
 | --- | --- |
+| `CallbackLifetimeBoundFact` 不记录该 API 是不是 `unsafe fn` | Gate P 的 Tier A 判据第一条是「是安全 API」，事实层没有这个字段。PG-1 探针实测：fixture 的 `unsafe extern "C" fn trampoline<F: FnMut()>` 也产出了一条 callback bound 事实。**PP 探针必须能过滤掉它**，否则猎物池被高估 |
 | 排名未把可绑定的注册候选排进默认输出上限 | 默认扫描看不到判定结果，每次都要手动放宽上限 |
 | 保护性特征仍依赖源码文本匹配 | 同类候选内部排序不可靠 |
 | n-day 度量仪器只接入了单一库 | 召回率数字不具代表性 |

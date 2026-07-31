@@ -19,7 +19,7 @@ use bw_model::{
     AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
     CallbackReleaseUseOrdering, CallbackUserDataReconstructionKind, DropKind, DropPreventionKind,
     ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
-    ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
+    RegistrationGuard, ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
 };
 use sha2::{Digest, Sha256};
 
@@ -32,9 +32,9 @@ use crate::{
         DropPreventionObservation, ExternalBufferBindingObservation, ExternalCallObservation,
         ObjectBindingGapObservation, ObjectFlowEndpointObservation, ObjectFlowObservation,
         ObjectFlowStaticSiteObservation, PersistedReturnedBorrowObservation, RawPointerReference,
-        RawPointerTransferObservation, RegistrationObservation, ReleasePathProofObservation,
-        ReturnedBorrowInvalidationOrderObservation, ReturnedBorrowRelationObservation,
-        closure_capture_object_flow_field_path,
+        RawPointerTransferObservation, RegistrationGuardObservation, RegistrationObservation,
+        ReleasePathProofObservation, ReturnedBorrowInvalidationOrderObservation,
+        ReturnedBorrowRelationObservation, closure_capture_object_flow_field_path,
     },
     registration::{self, CallClassification, CallContext, RegistrationArgumentKind},
 };
@@ -51,6 +51,7 @@ pub struct MirSiteObservations {
     pub callback_release_use_orders: Vec<CallbackReleaseUseOrderObservation>,
     pub external_calls: Vec<ExternalCallObservation>,
     pub callback_lifetime_bounds: Vec<CallbackLifetimeBoundObservation>,
+    pub registration_guards: Vec<RegistrationGuardObservation>,
     pub returned_borrow_relations: Vec<ReturnedBorrowRelationObservation>,
     pub persisted_returned_borrows: Vec<PersistedReturnedBorrowObservation>,
     pub returned_borrow_invalidation_orders: Vec<ReturnedBorrowInvalidationOrderObservation>,
@@ -200,6 +201,9 @@ pub fn collect_mir_sites<'tcx>(
         observations
             .callback_lifetime_bounds
             .extend(callback_lifetime_bounds(tcx, def_id, &owner_def_path));
+        observations
+            .registration_guards
+            .extend(registration_guards(tcx, def_id, &owner_def_path));
         let mut visitor = MirSiteVisitor {
             tcx,
             body,
@@ -21093,6 +21097,237 @@ fn callback_lifetime_bounds<'tcx>(
     }
 
     observations
+}
+
+/// registration guard：安全 API 是否返回一个把注册存活绑到被捕对象上的值。
+///
+/// 判据来自 `docs/roadmap/implementation-plan.md` 的 PG-1，三条同时成立才算 guard：
+///
+/// 1. 返回类型带**本函数声明的** lifetime 参数；
+/// 2. 该 lifetime 与回调 bound 指向**同一个**声明——绑到别的 lifetime 上，约束的就不是
+///    这个回调捕获的东西；
+/// 3. 返回类型的 `Drop` impl 里有一次指向外部函数的调用。
+///
+/// # 第 3 条为什么不查 API map 的注销角色
+///
+/// 计划原文写的是"指向注销角色 API 的调用"，而角色分类目前只能来自人工 API map
+/// （`registration.rs` 的 `classify_call`）。用它做必要条件有两个后果：guard 检测只能在
+/// 有清单的 crate 上工作，规模化的猎物探针拿不到这个事实；而且它把人工标注的语义当成了
+/// Rust 侧观察。
+///
+/// 更重要的是，**"Rust 只能看到 `Drop` 调了某个外部函数、判断不了它是否真的清空槽位"
+/// 正是要外部侧证据的那条论证本身**（research thesis §2.6）。所以这里只判"调了外部
+/// 函数"这个 Rust 侧看得见的形状，是否真的注销由 Q4′ 回答。有 API map 时角色信息仍在
+/// `RegistrationSiteFact` 里，可作为交叉验证，不作必要条件。
+///
+/// # 不产出 `OwnerDropUnregisters`
+///
+/// 那一取值的判据是 owner 类型 drop 路径的证明，与 `ReleasePathProofFact` 同源，不是
+/// 返回值形状。PG-1 不覆盖它。
+fn registration_guards<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+    owner_def_path: &str,
+) -> Vec<RegistrationGuardObservation> {
+    let node = tcx.hir_node_by_def_id(def_id);
+    let Some(sig) = node.fn_sig() else {
+        return Vec::new();
+    };
+    let Some(generics) = node.generics() else {
+        return Vec::new();
+    };
+    let Ok(source_path) = source_path(tcx, sig.span) else {
+        return Vec::new();
+    };
+    let Ok(stable_span) = stable_span(tcx, sig.span) else {
+        return Vec::new();
+    };
+
+    let declared_lifetimes = function_declared_lifetime_params(generics);
+    let callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    if callback_params.is_empty() {
+        return Vec::new();
+    }
+
+    // 返回类型上出现的、本函数声明的 lifetime。空集意味着返回值没有把任何东西绑住。
+    let mut return_lifetimes = BTreeSet::<usize>::new();
+    let return_ty = match sig.decl.output {
+        hir::FnRetTy::Return(ty) => {
+            collect_hir_lifetime_params_from_ty(ty, &mut return_lifetimes);
+            Some(ty)
+        }
+        hir::FnRetTy::DefaultReturn(_) => None,
+    };
+    return_lifetimes.retain(|index| declared_lifetimes.contains(index));
+
+    let guard_adt = return_ty.and_then(|ty| return_type_adt(tcx, ty));
+    let drop_evidence = guard_adt.map(|adt| adt_drop_foreign_call(tcx, adt));
+
+    callback_params
+        .into_iter()
+        .map(|(callback_param, bound_lifetimes)| {
+            let ties_to_callback_bound = bound_lifetimes
+                .iter()
+                .any(|index| return_lifetimes.contains(index));
+            let (guard, foreign_release_callee) = if return_lifetimes.is_empty() {
+                // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的任何东西上。
+                (RegistrationGuard::None, None)
+            } else if !ties_to_callback_bound {
+                if bound_lifetimes.is_empty() {
+                    // 回调没有显式 outlives bound，返回值却带 lifetime。形状像 guard，但
+                    // 类型层没有写下"注册活得不比被捕对象久"这句话。**不猜。**
+                    (RegistrationGuard::Unresolved, None)
+                } else {
+                    // 绑在另一个声明 lifetime 上——约束的不是这个回调捕获的对象。
+                    (RegistrationGuard::None, None)
+                }
+            } else {
+                match &drop_evidence {
+                    // 解析不到 ADT（`impl Trait`、类型别名、投影……），说不出它 drop 时做什么。
+                    None => (RegistrationGuard::Unresolved, None),
+                    Some(DropForeignCall::Foreign(callee)) => {
+                        (RegistrationGuard::TiesSlotToSubject, Some(callee.clone()))
+                    }
+                    // 没有 `Drop` impl：guard 消失时不注销任何东西，与没有 guard 等价。
+                    Some(DropForeignCall::NoDestructor) => (RegistrationGuard::None, None),
+                    // drop 里一次调用都没有，同样不可能注销。
+                    Some(DropForeignCall::NoCalls) => (RegistrationGuard::None, None),
+                    // 只调了 Rust 函数：外部调用可能藏在被调方里，有界分析看不到。
+                    Some(DropForeignCall::OnlyRustCalls) => (RegistrationGuard::Unresolved, None),
+                    // 跨 crate 的 ADT 拿不到 drop 的 MIR。
+                    Some(DropForeignCall::MirUnavailable) => (RegistrationGuard::Unresolved, None),
+                }
+            };
+            RegistrationGuardObservation {
+                owner_def_path: owner_def_path.to_owned(),
+                source_path: source_path.clone(),
+                span: stable_span.clone(),
+                mir_location: format!("hir_signature:registration_guard:{callback_param}"),
+                api_id: owner_def_path.to_owned(),
+                callback_param,
+                guard_type: guard_adt.map(|adt| tcx.def_path_str(adt)),
+                foreign_release_callee,
+                guard,
+            }
+        })
+        .collect()
+}
+
+/// 每个回调泛型参数，以及约束它的、本函数声明的 lifetime 参数集合。
+///
+/// 与 [`callback_lifetime_bounds`] 用同一个"什么算回调参数"的判据（有 `Fn` 家族 bound），
+/// 两处必须一致：guard 事实要能按 `callback_param` 与 bound 事实配对。
+fn callback_param_bound_lifetimes(
+    generics: &hir::Generics<'_>,
+    declared_lifetimes: &BTreeSet<usize>,
+) -> Vec<(String, BTreeSet<usize>)> {
+    let mut bounds_by_param = BTreeMap::<String, Vec<&hir::GenericBound<'_>>>::new();
+    for predicate in generics.predicates {
+        let hir::WherePredicateKind::BoundPredicate(bound_predicate) = predicate.kind else {
+            continue;
+        };
+        let Some(param_name) = declared_type_param_name(generics, bound_predicate.bounded_ty)
+        else {
+            continue;
+        };
+        bounds_by_param
+            .entry(param_name)
+            .or_default()
+            .extend(bound_predicate.bounds);
+    }
+
+    bounds_by_param
+        .into_iter()
+        .filter(|(_, bounds)| {
+            bounds
+                .iter()
+                .any(|bound| hir_bound_is_callable_trait(bound))
+        })
+        .map(|(param_name, bounds)| {
+            let mut lifetimes = BTreeSet::<usize>::new();
+            for bound in bounds {
+                if let hir::GenericBound::Outlives(lifetime) = bound {
+                    collect_hir_lifetime_param(lifetime, &mut lifetimes);
+                }
+            }
+            lifetimes.retain(|index| declared_lifetimes.contains(index));
+            (param_name, lifetimes)
+        })
+        .collect()
+}
+
+/// 返回类型直接解析到的 ADT。
+///
+/// 只认直接写在返回位置上的具名类型；`Result<Registration<'a>, E>` 这类包一层的形状
+/// 当前不展开，会落到 [`RegistrationGuard::Unresolved`]，是已知的覆盖缺口而不是判"无 guard"。
+fn return_type_adt<'tcx>(tcx: TyCtxt<'tcx>, ty: &hir::Ty<'_>) -> Option<DefId> {
+    let hir::TyKind::Path(hir::QPath::Resolved(None, path)) = ty.kind else {
+        return None;
+    };
+    let def_id = match path.res {
+        hir::def::Res::Def(DefKind::Struct | DefKind::Enum | DefKind::Union, def_id) => def_id,
+        _ => return None,
+    };
+    // ADT 必须真的是 ADT：`def_kind` 已经保证了，这里只是把 `tcx` 用上以便未来扩展。
+    let _ = tcx.def_kind(def_id);
+    Some(def_id)
+}
+
+/// guard 类型 `Drop` impl 里能观察到什么。每一格都是一个可测量的区别，不是一句"不确定"。
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DropForeignCall {
+    /// `Drop::drop` 调用了一个外部函数。def path 仅作诊断。
+    Foreign(String),
+    /// `Drop::drop` 里有调用，但都指向 Rust 函数。
+    OnlyRustCalls,
+    /// `Drop::drop` 里一次调用都没有。
+    NoCalls,
+    /// 该类型没有 `Drop` impl。
+    NoDestructor,
+    /// 有 `Drop` impl，但拿不到它的 MIR（跨 crate 等）。
+    MirUnavailable,
+}
+
+fn adt_drop_foreign_call<'tcx>(tcx: TyCtxt<'tcx>, adt_def_id: DefId) -> DropForeignCall {
+    let Some(destructor) = tcx.adt_destructor(adt_def_id) else {
+        return DropForeignCall::NoDestructor;
+    };
+    let drop_def_id = destructor.did;
+    if !tcx.is_mir_available(drop_def_id) {
+        return DropForeignCall::MirUnavailable;
+    }
+    let body = tcx.optimized_mir(drop_def_id);
+    let mut saw_call = false;
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, .. } = &terminator.kind else {
+            continue;
+        };
+        let Some((callee, _)) = func.const_fn_def() else {
+            // 间接调用：被调方未知，不能据此判定。
+            saw_call = true;
+            continue;
+        };
+        saw_call = true;
+        if callee_is_foreign(tcx, callee) {
+            return DropForeignCall::Foreign(tcx.def_path_str(callee));
+        }
+    }
+    if saw_call {
+        DropForeignCall::OnlyRustCalls
+    } else {
+        DropForeignCall::NoCalls
+    }
+}
+
+/// 被调方是否位于边界另一侧。
+///
+/// `extern {}` 块里的声明是外部项；本地定义但标了 `extern "C"` 的函数不是——它的函数体
+/// 仍在本 crate 里，Rust 侧看得见。
+fn callee_is_foreign<'tcx>(tcx: TyCtxt<'tcx>, callee: DefId) -> bool {
+    tcx.is_foreign_item(callee)
 }
 
 /// 省略的 trait object lifetime 默认成什么，取决于它外层是什么。

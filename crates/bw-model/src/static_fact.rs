@@ -302,6 +302,60 @@ pub struct CallbackLifetimeBoundFact {
     pub bound_scope: CallbackLifetimeBoundScope,
 }
 
+/// Rust 侧可能否定「安全客户端能让被捕对象失效而注册仍有效」的 guard 形状。
+///
+/// **这些形状本身不足以否定。** guard 是否真的保护，取决于它 drop 时调用的外部函数
+/// **是否真的清空了槽位**——Rust 侧只能看到「`Drop` impl 里调了某个外部函数」这个形状。
+/// 因此没有外部侧的清槽证据（Q4′）时，guard 只能得出缺证，不能得出「相容」。规范定义见
+/// `docs/project/research-thesis.md` §2.4 与 §2.6。
+///
+/// 本枚举住在事实层、由关系层 import，与 [`EffectiveCaptureAdmission`] 同一处理方式：
+/// 两处各存一份定义会分叉，这在本项目已经发生过一次。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationGuard {
+    /// 没有把注册存活绑到被捕对象上的返回值。注册后客户端不受类型层约束。
+    ///
+    /// 也包括「返回了带 lifetime 的类型、但该类型没有 `Drop` impl」——那样的返回值
+    /// 不注销任何东西，guard 消失后注册仍然有效，与没有 guard 等价。
+    None,
+    /// 返回值的类型把槽位的存活绑到被捕对象上（例如 `Registration<'a>`），
+    /// 且其 `Drop` 调用外部函数。
+    TiesSlotToSubject,
+    /// owner 的 drop 必然触发注销。
+    ///
+    /// **PG-1 不产出这一取值**：它的判据是 owner 类型的 drop 路径证明，不是返回值形状，
+    /// 与 [`ReleasePathProofFact`] 同源。见 `docs/roadmap/implementation-plan.md` 的 PG-1。
+    OwnerDropUnregisters,
+    /// 存在疑似 guard 的形状，但无法确定它约束了什么。
+    ///
+    /// 返回类型解析不到 ADT、该 ADT 定义在别的 crate 因而取不到 `Drop` 的 MIR、
+    /// 或 `Drop` 里只调用了 Rust 函数（外部调用可能藏在被调方里）——一律落这里，**不猜**。
+    Unresolved,
+}
+
+/// 一个回调交出点上，Rust 侧是否有把注册存活绑到被捕对象的 guard。
+///
+/// 判据是定义点属性，只读签名与该类型的 `Drop` MIR，不需要任何调用代码。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrationGuardFact {
+    pub site_id: SiteId,
+    pub semantic_site_key: SemanticSiteKey,
+    pub api_id: String,
+    /// 与本事实配对的回调泛型参数名，与 [`CallbackLifetimeBoundFact::callback_param`] 同值。
+    pub callback_param: String,
+    /// guard 类型的名字，例如 `Registration`。仅作诊断，**不参与联结**。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_type: Option<String>,
+    /// guard 的 `Drop` 里被调用的外部函数 def path。仅作诊断。
+    ///
+    /// Rust 侧只能看到调了它，**看不到它是否真的清空槽位**——那是 Q4′ 的问题。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreign_release_callee: Option<String>,
+    pub guard: RegistrationGuard,
+}
+
 /// 返回值借用关系：API 返回的引用可追溯到输入或本地 owner。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -502,6 +556,7 @@ pub enum StaticFact {
     CallbackReleaseUseOrder(CallbackReleaseUseOrderFact),
     ExternalCallSite(ExternalCallSiteFact),
     CallbackLifetimeBound(CallbackLifetimeBoundFact),
+    RegistrationGuard(RegistrationGuardFact),
     ReturnedBorrowRelation(ReturnedBorrowRelationFact),
     PersistedReturnedBorrow(PersistedReturnedBorrowFact),
     ReturnedBorrowInvalidationOrder(ReturnedBorrowInvalidationOrderFact),
@@ -658,6 +713,17 @@ impl StaticFact {
                     && has_required_text(&fact.api_id)
                     && has_required_text(&fact.callback_param)
                     && fact.bound_lifetime.as_deref().is_none_or(has_required_text)
+            }
+            Self::RegistrationGuard(fact) => {
+                has_required_text(fact.site_id.as_str())
+                    && has_required_text(fact.semantic_site_key.as_str())
+                    && has_required_text(&fact.api_id)
+                    && has_required_text(&fact.callback_param)
+                    && fact.guard_type.as_deref().is_none_or(has_required_text)
+                    && fact
+                        .foreign_release_callee
+                        .as_deref()
+                        .is_none_or(has_required_text)
             }
             Self::ReturnedBorrowRelation(fact) => {
                 has_required_text(fact.site_id.as_str())

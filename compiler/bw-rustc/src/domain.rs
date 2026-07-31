@@ -16,11 +16,11 @@ use bw_model::{
     DropPreventionKind, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
     ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
     ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
-    RawPointerTransferFact, RawPointerTransferKind, RecordId, RegistrationRole,
-    RegistrationSiteFact, ReleasePathProofFact, ReturnedBorrowInvalidationOrderFact,
-    ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationFact, ReturnedBorrowRelationKind,
-    STATIC_SCHEMA_V02, SiteId, StaticArtifactIdentity, StaticFact, StaticFactEnvelope,
-    StaticSourceRef,
+    RawPointerTransferFact, RawPointerTransferKind, RecordId, RegistrationGuard,
+    RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
+    ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
+    ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, STATIC_SCHEMA_V02, SiteId,
+    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef,
 };
 use bw_rustc::{SiteDescriptor, SiteIdentityError, SiteRole, stable_relative_path};
 use serde::Serialize;
@@ -182,6 +182,24 @@ pub struct CallbackLifetimeBoundObservation {
     pub callback_param: String,
     pub bound_lifetime: Option<String>,
     pub bound_scope: CallbackLifetimeBoundScope,
+}
+
+/// 一个回调交出点上观察到的 registration guard 形状。
+///
+/// 与 [`CallbackLifetimeBoundObservation`] 一一配对：同一个 `owner_def_path` +
+/// `callback_param` 上，前者说"回调 bound 允不允许捕获借用"，本观察说"有没有 guard
+/// 把注册的存活绑到被捕对象上"。判定关系需要两者齐备。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistrationGuardObservation {
+    pub owner_def_path: String,
+    pub source_path: PathBuf,
+    pub span: String,
+    pub mir_location: String,
+    pub api_id: String,
+    pub callback_param: String,
+    pub guard_type: Option<String>,
+    pub foreign_release_callee: Option<String>,
+    pub guard: RegistrationGuard,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -499,6 +517,7 @@ pub fn facts_from_mir_sites(
     callback_release_use_orders: &[CallbackReleaseUseOrderObservation],
     external_calls: &[ExternalCallObservation],
     callback_lifetime_bounds: &[CallbackLifetimeBoundObservation],
+    registration_guards: &[RegistrationGuardObservation],
     returned_borrow_relations: &[ReturnedBorrowRelationObservation],
     persisted_returned_borrows: &[PersistedReturnedBorrowObservation],
     returned_borrow_invalidation_orders: &[ReturnedBorrowInvalidationOrderObservation],
@@ -881,6 +900,43 @@ pub fn facts_from_mir_sites(
                     callback_param: bound.callback_param.clone(),
                     bound_lifetime: bound.bound_lifetime.clone(),
                     bound_scope: bound.bound_scope,
+                }),
+            )?,
+        );
+    }
+
+    for guard in registration_guards {
+        if !source_is_stable(context, &guard.source_path) {
+            continue;
+        }
+        let descriptor = SiteDescriptor::new(
+            &context.package,
+            &context.target,
+            &guard.owner_def_path,
+            SiteRole::RegistrationGuard,
+            source_path(context, &guard.source_path),
+        )
+        .with_repo_root(&context.repo_root)
+        .with_mir_location(&guard.mir_location)
+        .with_span(&guard.span);
+        let site_id = descriptor.try_site_id()?;
+        insert_fact(
+            &mut facts,
+            envelope_with_source(
+                context,
+                "registration_guard",
+                &site_id,
+                &guard.source_path,
+                &guard.span,
+                Some(&guard.owner_def_path),
+                StaticFact::RegistrationGuard(RegistrationGuardFact {
+                    site_id: site_id.clone(),
+                    semantic_site_key: descriptor.semantic_key(),
+                    api_id: guard.api_id.clone(),
+                    callback_param: guard.callback_param.clone(),
+                    guard_type: guard.guard_type.clone(),
+                    foreign_release_callee: guard.foreign_release_callee.clone(),
+                    guard: guard.guard,
                 }),
             )?,
         );

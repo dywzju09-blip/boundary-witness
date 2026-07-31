@@ -11,7 +11,7 @@
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
 | C1 safe-only 可执行反证合成 | `Planned` | 反证合成（roadmap P4）未开始。这是重排后的**首要**创新点。**delta 已收窄**：deepSURF 已生成 safe-only harness 并用 ASan，safe-only 本身不是创新点 |
-| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 关系已实现并通过 Gate R（PF）。**Rust 侧三个事实只做完一个**（PC），guard 与分配归属为零行代码（PG）。外部侧 Q1/Q3/Q4′（P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
+| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 关系已实现并通过 Gate R（PF）。**Rust 侧三个事实做完两个**（PC 的 `EffectiveCaptureAdmission`、PG-1 的 `RegistrationGuard`），分配归属（PG-2）仍为零行代码。外部侧 Q1/Q3/Q4′（P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
 | C3 生态级度量与新发现 | `Planned` | 猎物存在性尚未测量（roadmap PP），无法判断新发现目标是否可达 |
 
 **artifact-aligned hand-off identity 不再列为创新点**，降为实现属性（roadmap P0）。**旧 N2「消除人工 API 清单」已于 2026-07-31 撤销**：Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立；结构化角色推断仍会实现，但作为工程属性。
@@ -38,7 +38,7 @@
 | `Implemented` | 持有期维度的两侧联结与判定来源记录 | 要求同一函数上既有非 `'static` 的 bound、又有外部边界事实；两路结论不一致时都留在产物中 |
 | `Implemented` | 核心关系与四个 matched fixture（roadmap PF） | `crates/bw-model/src/compatibility.rs` + `crates/bw-model/tests/compatibility.rs`（14 项）+ `benchmarks/compiler-fixtures/callback-retention-relation/`。四个 fixture 全部判对，Full 能分开 2 与 3、Rust-only 不能。**外部侧事实由 C stub 手工标注**（manual foreign oracle），不是从 IR 推导 |
 | `Implemented` | `EffectiveCaptureAdmission`（roadmap PC） | 语法 scope 到语义取值的映射 + `dyn Fn` 覆盖。`crates/bw-model/src/static_fact.rs`、`compiler/bw-rustc/src/rustc_api/mir.rs`。golden 与模型测试覆盖 APIT / HRTB / `Box<dyn>` / `&mut dyn` / 显式 lifetime |
-| `Planned` | `RegistrationGuard` 检测（roadmap PG-1） | **零行代码。** 关系需要它才能判断 guard 保护型 API；缺它则「必须看外部侧」的论证落空 |
+| `Implemented` | `RegistrationGuard` 检测（roadmap PG-1） | 从 HIR 签名与 guard 类型的 `Drop` MIR 判定，无需 API map。`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `registration_guards`、`crates/bw-model/src/static_fact.rs` 的 `RegistrationGuard`/`RegistrationGuardFact`。golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。**不产出 `OwnerDropUnregisters`**——那一取值的判据是 owner drop 路径证明，不是返回值形状 |
 | `Planned` | `AllocationOwnership` 检测（roadmap PG-2） | **零行代码。** `'static` 只管住捕获、不管 `Box<F>` 存活；缺它漏掉整类问题。原材料（raw pointer transfer / release path proof）已有 |
 | `Planned` | 把编译器输出装成 `RustContractFact`（roadmap P0） | 目前无生产者；PF 阶段的 Rust 侧事实是手写的 |
 | `Planned` | 猎物存在性探针（roadmap PP） | 未测量。判据已于 2026-07-31 重做（Tier A / L1 / 置信界 / sealed split），前置是 PC |

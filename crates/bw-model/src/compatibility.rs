@@ -39,7 +39,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::static_fact::EffectiveCaptureAdmission;
+use crate::static_fact::{EffectiveCaptureAdmission, RegistrationGuard};
 
 /// 交出点身份：跨越语言边界的那一次调用。
 ///
@@ -77,23 +77,6 @@ pub enum LifetimeSubject {
 
 impl LifetimeSubject {
     pub const ALL: [Self; 2] = [Self::CapturedReferent, Self::CallbackAllocation];
-}
-
-/// Rust 侧可能否定「安全客户端能让被捕对象失效而注册仍有效」的 guard 形状。
-///
-/// **这些形状本身不足以否定**——见模块文档：guard 是否真的保护取决于外部侧的清槽行为。
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RegistrationGuard {
-    /// 没有 guard：注册后客户端不受任何类型层约束。
-    None,
-    /// 返回值的类型把槽位的存活绑到被捕对象上（例如 `Registration<'a>`），
-    /// 且其 `Drop` 调用注销。
-    TiesSlotToSubject,
-    /// owner 的 drop 必然触发注销。
-    OwnerDropUnregisters,
-    /// 存在疑似 guard 的形状，但无法确定它约束了什么。
-    Unresolved,
 }
 
 /// 回调分配（`Box<F>` / userdata）的归属。

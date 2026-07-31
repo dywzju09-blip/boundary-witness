@@ -12,7 +12,7 @@
 
 **已有**：Rust 侧 HIR/MIR 事实抽取、候选生成、生命周期证据与图、排序、witness plan、runtime/oracle/fuzz observer 基础、单一库的 harness。
 
-持有期维度的 Rust 侧契约可以从签名读出（四态：绑在 receiver 声明的 lifetime / 绑在其他声明的 lifetime / `'static` / 无 outlives bound），并已与外部边界事实联结、把判定与判定来源写入产物。
+持有期维度的 Rust 侧契约可以从签名读出——`EffectiveCaptureAdmission` 的语义取值（PC）与 `RegistrationGuard`（PG-1）都已从 HIR/MIR 产出，并已与外部边界事实联结、把判定与判定来源写入产物。**语法四态 `CallbackLifetimeBoundScope` 只作底层观察，不得用于判定**，见本文末尾的已撤销计划项。
 
 **缺口：外部侧不存在。** 持有期维度的外部侧那一半目前由 API 清单分类出的注册/注销事实**推断**得来，不是外部代码行为。三条创新点因此都未成立。
 
@@ -25,6 +25,7 @@
 ```text
 PF 关系与四 fixture ──（Gate R）── 已完成
 PC EffectiveCaptureAdmission ───── 已完成
+PG-1 RegistrationGuard ─────────── 已完成
                                   ↓
                      PP 猎物存在性探针（Gate P）──（决定后续是否投入）──┐
                                                                         │
@@ -114,14 +115,18 @@ P1 外部侧 Q1 逃逸 ──────┴─→ P2 外部侧 Q3 晚调 + Q4�
 | 事实 | 状态 | 缺了会怎样 |
 | --- | --- | --- |
 | `EffectiveCaptureAdmission` 回调 bound 允不允许捕获借用 | **已完成**（PC） | — |
-| `RegistrationGuard` 有没有 guard 把注册绑在被捕对象上 | **零行代码** | **「为什么必须看外部侧」的论证落空**——那条论证建立在「Rust 看得到 guard、但判断不了它是否有效」上，现在连看到都做不到 |
+| `RegistrationGuard` 有没有 guard 把注册绑在被捕对象上 | **已完成**（PG-1） | **「为什么必须看外部侧」的论证落空**——那条论证建立在「Rust 看得到 guard、但判断不了它是否有效」上 |
 | `AllocationOwnership` 回调分配交出后归谁 | **零行代码** | `'static` 只管住捕获、管不住 `Box<F>` 的存活。这一整类漏报看不见（PF 的 fixture 4 就是它） |
 
 **另有一处**：目前没有任何代码把编译器输出装成 `RustContractFact`。PF 阶段那四个 fixture 的 Rust 侧事实是**手写**的。这一步属于 P0。
 
 ### 要做
 
-**PG-1 `RegistrationGuard`**：判定一个安全 API 是否返回「其 `Drop` 调用注销 API、且类型上把注册存活绑到被捕对象」的值。判据大致是：返回类型带 lifetime 参数；该 lifetime 与回调 bound 指向同一个声明；该类型的 `Drop` impl 里有指向注销角色 API 的调用。
+**PG-1 `RegistrationGuard`**（**已完成**）：判定一个安全 API 是否返回「其 `Drop` 调用外部函数、且类型上把注册存活绑到被捕对象」的值。三条判据：返回类型带本函数声明的 lifetime 参数；该 lifetime 与回调 bound 指向同一个声明；该类型的 `Drop` impl 的 MIR 里有指向**外部函数**的调用。
+
+> **第 3 条的措辞较原计划收窄。** 原文写的是「指向注销角色 API 的调用」，而角色分类只能来自人工 API map，用它当必要条件会让 guard 检测无法规模化，也把人工标注的语义当成了 Rust 侧观察。**「Rust 只能看到 `Drop` 调了某个外部函数、判断不了它是否真的清空槽位」正是 [§2.6](../project/research-thesis.md) 那条论证本身**，因此只判这个形状，有效性交给 Q4′。有 API map 时角色信息仍在 `RegistrationSiteFact` 里，作交叉验证而非必要条件。
+
+**不产出 `OwnerDropUnregisters`**：其判据是 owner 类型 drop 路径的证明，与 `ReleasePathProofFact` 同源，不是返回值形状。已知覆盖缺口：`Result<Registration<'a>, E>` 这类包一层的返回值、以及定义在别的 crate 因而拿不到 `Drop` MIR 的 guard 类型，都落 `Unresolved`（不是判「无 guard」）。
 
 **PG-2 `AllocationOwnership`**：判定回调分配交出之后是否仍可能被 Rust 侧提前释放。
 
@@ -137,7 +142,16 @@ P1 外部侧 Q1 逃逸 ──────┴─→ P2 外部侧 Q3 晚调 + Q4�
 
 ### 非空性检查
 
-把 guard 判据的「`Drop` 里调了注销」这一条去掉，确认 `register_guarded` 的取值从 `TiesSlotToSubject` 落回 `None`，且 PF 的 fixture 2 判定随之翻转。
+**PG-1 已做，两半都做了**（2026-07-31）：
+
+| 扰动 | 结果 |
+| --- | --- |
+| 让「`Drop` 里调了外部函数」判据失效 | `register_guarded` 从 `TiesSlotToSubject` 落到 **`Unresolved`**，失败落在 golden 的预期断言上；其余断言不受影响 |
+| 把 fixture 2/3 手写事实的 guard 改成 `Unresolved` | 14 项里 5 项失败，含 `full_separates_fixtures_2_and_3`——**Gate R 的分离能力依赖这个事实** |
+
+第一项的落点是 `Unresolved` 而不是本文原先预测的 `None`：`Registration::drop` 里确实有调用，只是分类不出来，那是缺证而不是「没有 guard」。取值阶梯按可测量的区别分格，见实现的 `DropForeignCall`。
+
+**PG-2 待做**：把分配归属判据的「注册后存在 `FromRaw` 释放路径」这一条去掉，确认 `register_static_then_free` 的取值从 `RustRetainsAndMayFreeEarly` 落回 `ForeignOwnedUntilUnregister`，且 PF 的 fixture 4 判定随之翻转。
 
 ---
 

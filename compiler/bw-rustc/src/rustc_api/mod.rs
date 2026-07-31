@@ -80,6 +80,7 @@ fn analyze_crate<'tcx>(
         &mir_sites.callback_release_use_orders,
         &mir_sites.external_calls,
         &mir_sites.callback_lifetime_bounds,
+        &mir_sites.registration_guards,
         &mir_sites.returned_borrow_relations,
         &mir_sites.persisted_returned_borrows,
         &mir_sites.returned_borrow_invalidation_orders,

@@ -816,6 +816,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         StaticFact::RegistrationSite(fact) => Some(fact.api_id.clone()),
         StaticFact::ExternalCallSite(fact) => Some(fact.api_id.clone()),
         StaticFact::CallbackLifetimeBound(fact) => Some(fact.api_id.clone()),
+        StaticFact::RegistrationGuard(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowRelation(fact) => Some(fact.api_id.clone()),
         StaticFact::PersistedReturnedBorrow(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowInvalidationOrder(fact) => Some(fact.api_id.clone()),
@@ -884,6 +885,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<String> {
             .chain(std::iter::once(fact.site_id.to_string()))
             .collect(),
         StaticFact::CallbackLifetimeBound(fact) => vec![fact.site_id.to_string()],
+        StaticFact::RegistrationGuard(fact) => vec![fact.site_id.to_string()],
         StaticFact::ReturnedBorrowRelation(fact) => vec![
             fact.site_id.to_string(),
             fact.source_site_id.to_string(),
@@ -6158,6 +6160,16 @@ pub fn lifecycle_fact_from_static_fact(
 fn lifecycle_static_fact_fields(
     envelope: &StaticFactEnvelope,
 ) -> Option<(V326LifecycleFactKind, Option<String>, Vec<String>)> {
+    // registration guard 事实不进 v3.2.6 的 lifecycle-fact 层。它服务的是
+    // `compatibility.rs` 的判定关系，消费方是 P3 的判定器，不是候选打分链。
+    //
+    // 给它一个 `V326LifecycleFactKind` 会动 `schemas/v3-2-6/lifecycle-fact.schema.json`
+    // 的 kind 枚举，而 `docs/development/codebase-realignment.md` 的 D2 要求
+    // `HandOffId` + 三态判定 + 外部侧事实**合并为一次**升版，且必须等 P0/P1 字段定稿。
+    // 在那之前本事实只停在静态事实层。
+    if matches!(envelope.payload, StaticFact::RegistrationGuard(_)) {
+        return None;
+    }
     Some(match &envelope.payload {
         StaticFact::ObjectSite(fact) => (
             V326LifecycleFactKind::OwnedMoveCapture,
@@ -6443,6 +6455,9 @@ fn lifecycle_static_fact_fields(
                 object_ids,
             )
         }
+        // 上面已提前返回，这条分支不可达；写成 `unreachable!` 而不是通配，
+        // 是为了让**下一个**新增的事实种类仍然撞上穷尽匹配。
+        StaticFact::RegistrationGuard(_) => unreachable!("registration guard returns early"),
     })
 }
 
