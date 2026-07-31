@@ -40,3 +40,4 @@
 # Python tooling caches
 __pycache__/
 *.pyc
+tools/remote/
