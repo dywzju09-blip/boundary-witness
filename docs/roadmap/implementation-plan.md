@@ -23,19 +23,20 @@
 2026-07-31 复审后调整：**关系正确性排在一切之前**，它不依赖外部侧流水线。
 
 ```text
-PF 关系与四 fixture ──（Gate R）──┐
-PC EffectiveCaptureAdmission ─────┤
+PF 关系与四 fixture ──（Gate R）── 已完成
+PC EffectiveCaptureAdmission ───── 已完成
                                   ↓
                      PP 猎物存在性探针（Gate P）──（决定后续是否投入）──┐
                                                                         │
-P0 hand-off 身份与双侧事实模型 ─────────────────────────────────────────┼─→ P3 判定器 ─→ P4 反证合成 ─→ P5 评估
-                                                                        │
-P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 + Q4′ 清槽 ──────────────────────┘
+PG Rust 侧剩余两个事实 ─┐                                               │
+                        ├─→ P0 hand-off 身份与双侧事实模型 ─────────────┼─→ P3 判定器 ─→ P4 反证合成 ─→ P5 评估
+P1 外部侧 Q1 逃逸 ──────┴─→ P2 外部侧 Q3 晚调 + Q4′ 清槽 ───────────────┘
 ```
 
-- **PF 排在一切之前**：关系错了，后面所有测量都在测错的东西。它的外部侧用手写 C stub，**与 P1/P2 完全解耦**。
-- **PC 是 PP 的前置**：语法四态会让 PP 系统性错估猎物池。
-- **PP 决定是否投入外部侧实现。**
+- **PF 排在一切之前**：关系错了，后面所有测量都在测错的东西。它的外部侧用手写 C stub，**与 P1/P2 完全解耦**。已完成。
+- **PC 是 PP 的前置**：语法四态会让 PP 系统性错估猎物池。已完成。
+- **PP 决定是否投入外部侧实现。由维护者自行执行**，见该节。
+- **PG 是 P3 能吃到真实数据的前提**：关系需要三个 Rust 侧事实，PC 只做完其中一个。
 - **Q4′ 已从附属查询升为主查询**，见 P2。
 
 ---
@@ -102,9 +103,49 @@ P1 外部侧 Q1 逃逸 ─→ P2 外部侧 Q3 晚调 + Q4′ 清槽 ────
 
 ---
 
+## PG — Rust 侧剩余的两个事实
+
+**服务 C2。前置：无，可与 P1 并行。风险：中。**
+
+### 问题
+
+[research thesis §2.4](../project/research-thesis.md) 的关系需要**三个** Rust 侧事实。PC 只做完了第一个：
+
+| 事实 | 状态 | 缺了会怎样 |
+| --- | --- | --- |
+| `EffectiveCaptureAdmission` 回调 bound 允不允许捕获借用 | **已完成**（PC） | — |
+| `RegistrationGuard` 有没有 guard 把注册绑在被捕对象上 | **零行代码** | **「为什么必须看外部侧」的论证落空**——那条论证建立在「Rust 看得到 guard、但判断不了它是否有效」上，现在连看到都做不到 |
+| `AllocationOwnership` 回调分配交出后归谁 | **零行代码** | `'static` 只管住捕获、管不住 `Box<F>` 的存活。这一整类漏报看不见（PF 的 fixture 4 就是它） |
+
+**另有一处**：目前没有任何代码把编译器输出装成 `RustContractFact`。PF 阶段那四个 fixture 的 Rust 侧事实是**手写**的。这一步属于 P0。
+
+### 要做
+
+**PG-1 `RegistrationGuard`**：判定一个安全 API 是否返回「其 `Drop` 调用注销 API、且类型上把注册存活绑到被捕对象」的值。判据大致是：返回类型带 lifetime 参数；该 lifetime 与回调 bound 指向同一个声明；该类型的 `Drop` impl 里有指向注销角色 API 的调用。
+
+**PG-2 `AllocationOwnership`**：判定回调分配交出之后是否仍可能被 Rust 侧提前释放。
+
+### 可复用的原材料
+
+**PG-2 不是从零开始。** 编译器已有：`RawPointerTransferKind::{IntoRaw, FromRaw, FromRawParts}`（所有权转移方向）、`ReleasePathProofFact`（释放路径的控制流证明）、`DropPreventionFact`。需要的是把它们按交出点聚合，再加一层分类。
+
+**PG-1 是新的**，但形状不复杂：`Drop` impl 的 MIR 里找注销角色的调用，注册角色分类已有（`compiler/bw-rustc/src/registration.rs`）。
+
+### 完成谓词
+
+三个 Rust 侧事实都能从真实 crate 的签名与 MIR 产出；在 `benchmarks/compiler-fixtures/callback-retention-relation/` 的 Rust 形状上，产出的取值与 PF 阶段手写的那组**逐字段一致**。
+
+### 非空性检查
+
+把 guard 判据的「`Drop` 里调了注销」这一条去掉，确认 `register_guarded` 的取值从 `TiesSlotToSubject` 落回 `None`，且 PF 的 fixture 2 判定随之翻转。
+
+---
+
 ## PP — 猎物存在性探针
 
-**服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：PC（否则系统性错估）。风险：低。成本：约为 P1+P2 的百分之一。**
+**服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：PC（已完成）。风险：低。成本：约为 P1+P2 的百分之一。**
+
+> **执行归属：由维护者自行执行**（2026-07-31 决定）。维护者已确认猎物池中存在相当数量的相关问题，因此本阶段不由 Agent 推进。判据与统计口径仍以本节及 [runbook](../experiments/runbooks/prey-existence-probe.md) 为准——**由谁执行不改变 Gate P 的判据**，尤其是 Tier A、L1 可分析、置信界与 family-level sealed split 四条。
 
 ### 问题
 

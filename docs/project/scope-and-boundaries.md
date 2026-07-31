@@ -24,7 +24,7 @@
 
 | 维度 | Rust 侧契约 | 外部侧行为 | 联结判定 |
 | --- | --- | --- | --- |
-| 持有期 | **部分**：从 HIR 签名判定回调 bound，但当前是**语法**四态。按 [research thesis §2.8](research-thesis.md) 需改为 `EffectiveCaptureAdmission` 语义取值——现状把「无 bound」的泛型与默认 `'static` 的 `dyn Fn` 合并了 | **未实现**：当前由 API 清单分类出的注册/注销事实**推断**，不是外部代码行为 | 已实现但证据来源为推断；人工版本边界作交叉验证 |
+| 持有期 | **部分（三缺二）**：`EffectiveCaptureAdmission` 已实现（语义取值，覆盖泛型 / APIT / HRTB / trait object）。**`RegistrationGuard` 与 `AllocationOwnership` 均为零行代码**，见 [roadmap PG](../roadmap/implementation-plan.md) | **未实现**：当前由 API 清单分类出的注册/注销事实**推断**，不是外部代码行为 | 已实现但证据来源为推断；人工版本边界作交叉验证 |
 | 别名与可变性 | 未实现 | 未实现 | 未实现 |
 | 线程 | 未实现 | 未实现 | 未实现 |
 | 重入 | 未实现 | 未实现 | 未实现 |
@@ -86,13 +86,15 @@
 ## 7. 当前允许的表述
 
 - 能在给定组件版本上定位并排序生命周期敏感的静态候选。对回调家族，此表述仅在 API 清单已覆盖的 API 范围内成立；
-- 能从签名判定回调 bound 的**语法形状**，无需 API 清单。**尚不能给出语义取值**（`EffectiveCaptureAdmission`）；
+- 能从签名判定回调 bound 的语义取值（`EffectiveCaptureAdmission`），无需 API 清单；
 - 能在受控样本上形成可审计的动态验证闭环。
 
 ## 8. 当前不允许的表述
 
 - 现有工作检不出本项目的主线缺陷类（**已被 2026-07-31 外部基线否定**，Yuga 能报 5/7）；
 - 「不需要人工 API 清单」是本项目的创新点（该主张已撤销，见 [research thesis §11](research-thesis.md)）；
+- **Rust 侧的契约抽取已完成**——判定关系需要三个 Rust 侧事实，当前只实现了一个；
+- 能识别 registration guard，或能判断回调分配交出后归谁；
 - 八维错配等价于安全 API 整体健全性；
 - 跨语言契约不相容判定已达成（外部侧未实现）；
 - 不读 API 清单也能识别回调注册 API；

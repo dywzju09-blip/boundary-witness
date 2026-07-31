@@ -72,11 +72,33 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 `EffectiveCaptureAdmission` 一度在 `compatibility.rs` 与 `static_fact.rs` 各有一份定义——正是 [代码库审计 §7.3](../development/codebase-realignment.md) 记的 `sanitize_id` 那种分歧。已合并成一份，放在事实层，关系层 import。
 
-## 之后：PP 猎物存在性探针
+## Gate P（PP 猎物存在性探针）：由维护者自行执行
 
-## 之后：PP 猎物存在性探针
+**2026-07-31 决定。** 维护者已确认猎物池中存在相当数量的相关问题，本阶段不由 Agent 推进。
 
-PC 已完成，可以启动。判据已重做，见 [runbook](../experiments/runbooks/prey-existence-probe.md)：以 `EffectiveCaptureAdmission` 语义取值为准；只数 **Tier A**（dataflow 到达精确 extern 参数）；只算 **L1 可分析**；用置信界而非「足够」；**运行前必须完成 family-level sealed split，默认只返回盲化聚合统计**——否则整个前瞻池变成开发集。
+**由谁执行不改变判据。** [runbook](../experiments/runbooks/prey-existence-probe.md) 的四条方法学要求仍然有效，缺一条结论就不可用：以 `EffectiveCaptureAdmission` 语义取值为准（不用语法四态）；只数 Tier A（dataflow 到达精确 extern 参数，不是语法共现）；只算 L1 可分析（否则候选进不了 P1/P2）；用置信界而非「足够」这类事后可移动的措辞。**运行前必须完成 family-level sealed split**，否则整个前瞻池变成开发集。
+
+## 下一步：PG Rust 侧剩余的两个事实
+
+**这是当前 Agent 侧应该做的第一件事。**
+
+判定关系需要三个 Rust 侧事实，PC 只做完了第一个：
+
+| 事实 | 状态 |
+| --- | --- |
+| `EffectiveCaptureAdmission` | ✅ PC 已完成 |
+| `RegistrationGuard` | ❌ **零行代码** |
+| `AllocationOwnership` | ❌ **零行代码** |
+
+**guard 那一项尤其要紧**：整个「为什么必须看外部侧」的论证建立在「Rust 看得到 guard、但判断不了它是否真的有效」之上——现在连「看得到」都还没有。
+
+**分配归属那一项是漏报来源**：`'static` 只管住回调借了什么，管不住 `Box<F>` 还活着没有。PF 的 fixture 4 就是这一类。
+
+另有一处：**目前没有任何代码把编译器输出装成 `RustContractFact`**，PF 那四个 fixture 的 Rust 侧事实是手写的。这一步属于 P0。
+
+细化、可复用原材料与非空性检查见 [implementation plan 的 PG](implementation-plan.md#pg-rust-侧剩余的两个事实)。
+
+## 再之后：P0 与 P1 并行起步
 
 ## 再之后：P0 与 P1 并行起步
 
