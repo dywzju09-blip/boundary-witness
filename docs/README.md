@@ -47,6 +47,7 @@
 6. [错误分类](reference/error-taxonomy.md)
 7. [事件格式](reference/event-formats.md)
 8. [里程碑 gate](roadmap/milestone-gates.md)
+9. [规模化精度对照 runbook](experiments/runbooks/precision-comparison-at-scale.md)
 9. [ADR 索引](decisions/README.md)
 
 ## 项目与治理

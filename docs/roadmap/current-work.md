@@ -41,7 +41,9 @@
 
 ## 待决
 
-**跑 Yuga 作为地基验证**（步骤见 [baseline comparison runbook](../experiments/runbooks/baseline-comparison.md)）。 若 Yuga 能检出持有期维度的缺陷，N1 的立论需要重做。这是最便宜也最关键的一次外部验证，建议在 P2 投入之前完成。
+~~跑 Yuga 作为地基验证~~ **已于 2026-07-31 完成，结论是反例**：Yuga 能报出主线缺陷类的 5/7，原立论被否定，N1 已重定位为「判别」。见 [Gate 0 结果](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。
+
+**现在的待决是规模**：单 crate 数据不构成证据，需扩大到 10–20 个未参与开发的 FFI crate。步骤见 [规模化精度对照 runbook](../experiments/runbooks/precision-comparison-at-scale.md)。**该实验优先级高于任何代码工作**——它决定精度方向是否成立。
 
 ## 已知未收口项
 
