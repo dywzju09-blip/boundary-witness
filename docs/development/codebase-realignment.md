@@ -358,25 +358,29 @@ grep -rn 'build-lifecycle-graph-v2\|BuildLifecycleGraphV2' \
 
 2026-07-31 复审后调整：**关系正确性排到最前**，猎物探针相应后移。
 
-| 步 | 事项 | 依赖 | 规模 |
-| --- | --- | --- | ---: |
-| 1 | 删除 `build_lifecycle_graph_v2`（先跑 §7.1 验证） | 无 | 小 |
-| 2 | **PF：核心关系 + 四个 matched fixture（Gate R）** | 无。外部侧用手写 C stub | 中 |
-| 3 | PC：`EffectiveCaptureAdmission` | 无，可与 2 并行 | 中 |
-| 4 | PP 批量驱动器 | 3 | 小 |
-| 5 | **跑 Gate P** | 4 | 实验 |
-| 6 | `SiteDescriptor` 扩展 + 外部符号记录 | Gate P 通过 | 中 |
-| 7 | 外部侧新 crate 的 Q1 骨架 + Q4′ | 6 | 大 |
-| 8 | 一次性 schema 升版（D2） | 6、7 定稿 | 中 |
-| 9 | Q3 降级版 + 关系判定器 | 8 | 大 |
-| 10 | 反证生成器重写（D3） | 9 | 大 |
+**本表只记录代码处置的先后，完整执行顺序与依赖类型以 [execution plan](../roadmap/execution-plan.md) 为准。**
+
+| 步 | 事项 | 依赖 | 规模 | 状态 |
+| --- | --- | --- | ---: | --- |
+| 1 | 删除 `build_lifecycle_graph_v2`（先跑 §7.1 验证） | 无 | 小 | ✅ 已完成 |
+| 2 | **PF：核心关系 + 四个 matched fixture（Gate R）** | 无。外部侧用手写 C stub | 中 | ✅ 已完成 |
+| 3 | PC：`EffectiveCaptureAdmission` | 无，可与 2 并行 | 中 | ✅ 已完成 |
+| 4 | **PG-1：`RegistrationGuard`** | 无 | 中 | ✅ 已完成 |
+| 5 | **PG-2：`AllocationOwnership`** | 无 | 小–中 | ⬜ 下一步 |
+| 6 | Tier A 判据修正 + PP 批量驱动器 | 3、5 | 小 | ⬜ |
+| 7 | **跑 Gate P** | 6 | 实验 | ⬜ |
+| 8 | `SiteDescriptor` 扩展 + 分层身份 + 外部符号记录 | Gate P 通过 | 中 | ⬜ |
+| 9 | 外部侧新 crate：Q1 → Q4′ → 降级 Q3 | 8 | 大 | ⬜ |
+| 10 | 一次性 schema 升版（D2） | 8、9 定稿 | 中 | ⬜ |
+| 11 | 联合关系判定器 | 10 | 大 | ⬜ |
+| 12 | 反证生成器重写（D3） | 11 | 大 | ⬜ |
 
 **两条硬约束：**
 
-- **第 2 步之前不要做第 6 步及以后。** 关系错了，后面所有实现都在实现错的判据。
-- **第 5 步之前不要做第 6 步及以后。** Gate P 的结论可能是「转路线 C」，那样第 6 步之后的全部工作都不该发生。
+- **第 2 步之前不要做第 8 步及以后。** 关系错了，后面所有实现都在实现错的判据。
+- **第 7 步之前不要做第 8 步及以后。** Gate P 的结论可能是「转路线 C」，那样第 8 步之后的全部工作都不该发生。**这一条同样约束目标架构文档的落地**：[target verifier pipeline](../architecture/target-verifier-pipeline.md) 全文状态为 `Planned`，Gate P No-Go 时其实现部分作废。
 
-第 1 步不受任何 gate 影响，可以随时做。
+第 1–6 步不受 Gate P 影响。
 
 ## 10. 本次审计明确不做的事
 

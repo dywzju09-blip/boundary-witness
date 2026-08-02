@@ -117,6 +117,21 @@ cargo ffi-checker --all-features > ffichecker-<crate>-<version>.report 2>&1; ech
 
 **`--all-features` 不可省。** 本项目已实测：默认 feature 下回调表面根本不参与编译，空结果没有意义。
 
+### 4.2.1 feature 策略必须与猎物探针一致
+
+**只跑 `--all-features` 是不够的。** 若本实验的 feature 策略与 [猎物存在性探针](prey-existence-probe.md) 不同，两者的 candidate universe 就不一致——而 [research thesis §11](../../project/research-thesis.md) 第 12 条明确禁止用不同候选范围比较工具 precision。
+
+统一策略（两个实验共用）：
+
+| 配置 | 用途 |
+| --- | --- |
+| `default` | 反映真实下游默认使用 |
+| `--all-features` | 暴露非默认 feature 之后的回调表面 |
+| 预注册 feature bundle | 该 crate 常见的实际组合 |
+| one-feature-at-a-time | 定位是哪个 feature 引入了交出点 |
+
+**跨配置按交出点身份去重**——同一个 hand-off 在多个 feature 配置下出现只算一次，否则 feature 多的 crate 会被系统性放大。
+
 ### 4.3 正对照
 
 每次环境变更后都要重跑正对照，确认工具确实在工作。正对照为空则整批结果作废。
@@ -128,6 +143,30 @@ cargo ffi-checker --all-features > ffichecker-<crate>-<version>.report 2>&1; ech
 | crate | 版本 | 组 | Yuga TP | Yuga FP | Yuga Unknown | 本系统 TP | 本系统 FP | 本系统 Unknown |
 
 由此计算两边的精度与召回，并给出置信区间或至少给出样本量。
+
+### 5.1.1 必须同时报告的九项指标
+
+只报 precision 会掩盖 abstention 与构建失败。**九项缺一不可**：
+
+| 指标 | 为什么不能省 |
+| --- | --- |
+| raw-alert precision | 工具原始输出的直观口径 |
+| eligible-hand-off precision | 限定到本研究可判定范围后的口径 |
+| conditional precision `TP/(TP+FP)` | 排除 Unknown 后的条件精度 |
+| conservative precision `TP/(TP+FP+Unknown)` | **把 Unknown 计入分母的下界** |
+| decision coverage `decided/eligible` | 判定了多大比例 |
+| Unknown / unsupported / build failure | **不得从分母中删除** |
+| known-defect recall | 已知缺陷能检出多少 |
+| independent root-cause recall | 按根因而非按 alert 计的召回 |
+| build / analyzability coverage | 有多少 crate 根本进不了分析 |
+
+**聚类单位**：按 repository、外部库家族与 root cause 聚类。同一 advisory 的多个 API **不得**计成多个独立问题。
+
+### 5.1.2 判定纪律
+
+- **「无公告」不是安全负例**——没有 advisory 只说明没人报过；
+- **vulnerable/fixed 差分只是证据之一**，不自动决定 TP/FP；
+- **两名独立标注者 + 第三人裁决**是正式确认集的要求。资源不足时把该结论标 `Blocked`，**不得把抽查等价成双人 ground truth**。
 
 ### 5.2 误报机制分布
 

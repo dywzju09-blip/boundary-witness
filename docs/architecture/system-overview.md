@@ -2,6 +2,8 @@
 
 BoundaryWitness 是一条面向 Rust–C 生命周期边界的可审计分析链。当前阶段是 **V3.2.x core-effect hardening**；V3.3 gate 未通过。系统先产生中性事实，再把事实组织成候选与静态风险链，最后为受控动态验证提供输入。静态排序、工具退出成功或报告措辞都不等同于漏洞确认。
 
+> **本文描述当前实现。目标形态与它有实质差别**——目标形态里 candidate 降为下游投影、两侧事实按分层身份联结、外部证据来自 IR 抽取而非 API 清单推断。见 [target verifier pipeline](target-verifier-pipeline.md)（全文 `Planned`）。**不要把本文的当前数据流当成目标设计，也不要把目标设计当成已实现能力。**
+
 ## 端到端数据流
 
 ```text

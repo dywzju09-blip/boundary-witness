@@ -4,15 +4,19 @@
 
 ## 固定阅读顺序
 
-1. [project overview](../project/overview.md)
-2. [current status](../project/current-status.md)
-3. [scope and boundaries](../project/scope-and-boundaries.md)
-4. [system overview](../architecture/system-overview.md)
-5. [lifecycle ObjectFlow](../architecture/lifecycle-object-flow.md)
-6. [dynamic validation](../architecture/dynamic-validation.md)
-7. [methodology](../experiments/methodology.md)
-8. [current work](../roadmap/current-work.md)
-9. 本文和 [testing strategy](testing-strategy.md)
+1. [research thesis](../project/research-thesis.md)（**方向权威**）
+2. [execution plan](../roadmap/execution-plan.md)（**执行顺序权威**：做什么、什么顺序、每步做出什么功能）
+3. [project overview](../project/overview.md)
+4. [current status](../project/current-status.md)
+5. [scope and boundaries](../project/scope-and-boundaries.md)
+6. [system overview](../architecture/system-overview.md)（当前实现）与 [target verifier pipeline](../architecture/target-verifier-pipeline.md)（目标形态，`Planned`）
+7. [lifecycle ObjectFlow](../architecture/lifecycle-object-flow.md)
+8. [dynamic validation](../architecture/dynamic-validation.md)
+9. [methodology](../experiments/methodology.md)
+10. [current work](../roadmap/current-work.md)
+11. 本文和 [testing strategy](testing-strategy.md)
+
+**开工前先看 execution plan 的「现在在哪」一节。** 该节列出各阶段的真实状态；不要按其他文档里的历史描述推断进度。
 
 ## 事实优先级
 

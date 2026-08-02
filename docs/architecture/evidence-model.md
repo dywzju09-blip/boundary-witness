@@ -41,7 +41,9 @@ graph-v3 的对象、边与 `V326ObjectChain` 连接 candidate-scoped facts：
 - chain 记录对象集合、边集合、事实集合、`verified_layers`、`missing_layers` 和兼容 `chain_status`；
 - mutation/reassignment `ObjectBindingGap` 是阻断或降级证据，不能当作全 crate 结论。
 
-proof layers 固定为 `identity_transport`、`lifecycle_ordering`、`complete_risk_chain`。完整定义见[生命周期对象流](lifecycle-object-flow.md)。
+**正式 proof layer 固定为三层**：`identity_transport`、`lifecycle_ordering`、`complete_risk_chain`。完整定义见[生命周期对象流](lifecycle-object-flow.md)。
+
+[ADR-0002](../decisions/ADR-0002-layered-object-chain-evidence.md) 另外拆出了 `release_ordering` 与 `use_ordering`。**这两者是 `lifecycle_ordering` 的子证据，不是额外的正式层**——`lifecycle_ordering` 的语义是二者的并集。消费方可以读细分子证据以区分「release coverage 已证明但 use 顺序未知」与「两者都未证明」，但**层的计数与 gate 判据一律按三层**。
 
 ### 动态事件与 finding
 
@@ -55,6 +57,14 @@ finding 是规则级输出，不自动等于已确认漏洞。`Exposure` 与 `Co
 
 - **oracle engine**：运行时分析组件，消费 static facts、Contract 与 trace，产生 finding；
 - **oracle ground truth**：检测流程之外维护的标签、advisory、补丁差分与人工核验，运行后才参与效果评估。
+
+**可接受的 oracle 按缺陷类分别定义**，一把 sanitizer 不覆盖所有 Rust lifetime / provenance UB：referent 失效后被访问（stack-use-after-scope）、allocation 提前释放（heap use-after-free）、清槽失败后仍被调用（callback-after-clear）三类各有各的观测手段，每类都要有正负对照。**本项目自有的 runtime 事件不能单独构成 UB 结论。** 见 [ADR-0005](../decisions/ADR-0005-evidence-trust-and-experiment-statistics.md)。
+
+### 人工 Role map 的信任边界
+
+人工 API / Role map **只能**声明符号绑定、callback / userdata 参数角色、register / unregister / replace 的**候选**角色与接入元数据。它**不得**声明实际是否保留、实际是否晚调、是否所有路径清槽、guard 是否有效——这些是待验证的外部行为，必须来自外部 IR 抽取。
+
+**手工 foreign oracle 必须带独立的 provenance 与来源等级**（`Planned`），只能用于 fixture、交叉验证与消融，不得伪装成自动分析结果。
 
 ground truth 不能进入 boundary scan、candidate、ranking、witness search 或初始 seed。blind public manifest/observation 与 private ground truth/reveal 分离，避免标签泄漏。
 

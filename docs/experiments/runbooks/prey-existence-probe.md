@@ -16,23 +16,48 @@
 
 > **生态里还剩多少个这样的位置？**
 
-判据用置信界，不用「足够」这类事后可移动的词：
+判据用置信界与**换算公式**，不用「足够」这类事后可移动的词。
+
+**候选数不能直接推出确认发现数**，中间隔着一个转化率。因此本 gate 拆成两个子探针：
+
+| 子 gate | 问题 | 样本 |
+| --- | --- | --- |
+| **Gate P-a** | 未调优、L1、Tier A 的交出点还有多少 | 前瞻池（盲化） |
+| **Gate P-b** | 这些候选里有多大比例能真正走到确认 | **开发集**（不消耗前瞻池） |
+
+判定：
+
+```text
+可用猎物估计 = eligible_pool_lower_bound × conversion_rate_lower_bound
+```
 
 | 结果 | 判据 | 后果 |
 | --- | --- | --- |
-| `Pass` | 未调优 + L1 + Tier A 候选数的**下置信界**仍足以支撑预定确认集 | 按计划投入 P1/P2 |
-| `No-Go` | **上置信界**仍不足以支撑预定确认集 | 转路线 C（经验研究），不投入外部侧实现 |
+| `Pass` | 该乘积仍足以支撑预注册的确认集规模 | 按计划投入 P1/P2 |
+| `No-Go` | 上置信界仍不足 | 转路线 C（经验研究），不投入外部侧实现 |
 | `Amber` | 介于两者之间 | 扩大样本或增加人工审计，不得直接判 Pass |
 
-预定确认集的规模见 [research thesis §7.8](../../project/research-thesis.md)。
+**聚类单位**：crate / repository / 外部库家族**不是独立同分布样本**。同一仓库下的多个 crate、同一外部库的多个绑定共享设计习惯与维护者。**必须按这三个单位分别聚类报告**，按 alert 计数会系统性高估。
+
+**referent 与 allocation 两支分别套用上式，分别判定。**
+
+预定确认集的规模见 [research thesis §7.8](../../project/research-thesis.md)。**全部参数必须在探针运行之前预注册**，见 [ADR-0005](../../decisions/ADR-0005-evidence-trust-and-experiment-statistics.md)。
+
+> **口头判断不构成 Gate P 通过。** 维护者对猎物池规模的印象可以决定是否值得跑这个实验，但不能替代预注册的正式结果。
 
 **这个实验的成本约为 P1+P2 的百分之一。** 它排在 P1/P2 之前的唯一理由是：它能用最小代价否定最大投入。**但它排在 [Gate R](../../roadmap/milestone-gates.md#gate-r关系正确性) 之后**——关系错了，数出来的候选也是错的。
 
 ## 2. 前置能力
 
-Rust 侧的回调 bound 判定已实现（`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`），不依赖外部侧、不依赖人工 API 清单。
+Rust 侧的回调 bound 判定已实现（`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`），不依赖外部侧、不依赖人工 API 清单。语义取值 `EffectiveCaptureAdmission`（PC）与 `RegistrationGuard`（PG-1）均已实现。
 
-但**当前取值是语法四态，不能直接用**——见 §3.2。本 runbook 的前置是 [implementation plan 的 PC](../../roadmap/implementation-plan.md)：把它改成语义取值 `EffectiveCaptureAdmission`，并补上 Tier A 所需的 dataflow 判据。
+**仍缺三项，缺任何一项数出来的候选池都不可信**，见 [execution plan 的 0.3](../../roadmap/execution-plan.md)：
+
+| 缺口 | 后果 | 状态 |
+| --- | --- | --- |
+| 事实层不记录该 API 是不是 `unsafe fn` | C-1 在事实层过滤不掉。实测：fixture 中的 `unsafe extern "C" fn trampoline<F: FnMut()>` 也产出了 callback bound 事实 | `Planned` |
+| 没有 safe-entry lineage | C-1 的「公开路径上可达」无法证明，藏在内部 helper 里、安全客户端够不着的交出点会被计入 | `Planned` |
+| `AllocationOwnership` 未实现 | Tier A-A 无法统计，allocation 类猎物全部记零 | `Planned`（PG-2） |
 
 ## 3. 判据
 
@@ -40,18 +65,39 @@ Rust 侧的回调 bound 判定已实现（`compiler/bw-rustc/src/rustc_api/mir.r
 
 | 级别 | 定义 | 用途 |
 | --- | --- | --- |
-| **Tier A** | 满足下列全部五条 | **Gate P 的唯一判据** |
+| **Tier A-R** | 满足 C-1、C-2、C-4、C-5，且 C-3R 成立 | **Gate P referent 子路线的判据** |
+| **Tier A-A** | 满足 C-1、C-2、C-4、C-5，且 C-3A 成立 | **Gate P allocation 子路线的判据** |
 | **Tier B** | 回调表面与 `extern` 调用只发生**语法共现**（同一函数体内出现 extern 调用） | 仅探索性筛选 |
 
-Tier A 的五条：
+共同的四条：
 
 | 条件 | 判据 | 数据来源 |
 | --- | --- | --- |
-| C-1 安全 API | 不是 `unsafe fn`，且在 crate 的公开路径上可达 | HIR |
+| C-1 安全 API | 不是 `unsafe fn`，**且存在一条从 public safe 入口经 wrapper/helper 到达该交出点的可回查 lineage** | HIR + 调用图，见 §3.5 |
 | C-2 有回调参数 | 存在 Fn 家族的泛型参数或 trait object 参数 | 签名 |
-| C-3 允许捕获借用 | `EffectiveCaptureAdmission = PermitsNonStaticCapture` | **语义取值，见 §3.2** |
 | C-4 真的交出去了 | 回调 / trampoline / userdata 经过程内或**有界过程间 dataflow 到达精确的 extern 参数** | MIR dataflow |
 | C-5 外部侧可分析 | 能绑定到精确的外部 LLVM IR（L1 tier） | 构建方式，见 §3.4 |
+
+**互斥的第三条**，它把 Tier A 分成两支：
+
+| 条件 | 判据 | 对应缺陷类 |
+| --- | --- | --- |
+| C-3R 允许捕获借用 | `EffectiveCaptureAdmission = PermitsNonStaticCapture` | referent 被捕后失效 |
+| C-3A 分配可提前释放 | `EffectiveCaptureAdmission = RequiresStaticCapture` **且** `AllocationOwnership = RustRetainsAndMayFreeEarly` | `Box<F>` 提前回收、外部调用悬垂指针 |
+
+### 3.1.1 为什么必须分两支
+
+**这是本 runbook 最容易出错、后果也最严重的一处。**
+
+allocation 类缺陷的 `EffectiveCaptureAdmission` 恰恰是 `RequiresStaticCapture`——`F: 'static` 保证闭包没捕获借用，但**对 `Box<F>` 本身的存活完全不表态**。如果只用 C-3R 作 Tier A 判据，**这一整类猎物会被判据直接排除、记成零**，而 Gate P 的 No-Go 会按 [research thesis §8](../../project/research-thesis.md) 触发"转路线 C，不再投入外部侧"。
+
+**结果就是一条从未被测量过的子路线被一个没测过它的实验杀掉。**
+
+因此：
+
+- 两支**分别统计、分别判定**；
+- **不得因 Tier A-R 的 No-Go 自动放弃 A 子路线**；
+- 若 `AllocationOwnership`（PG-2）尚未实现导致 Tier A-A 无法统计，必须明确写：**Gate P 本次只决定 R 子路线，A 保持 `Unknown` 并单独设 gate**，不得默认为零。
 
 **Tier B 既不是精确候选，也不是上界。** 它同时**高估**（把无关的 extern 调用计为候选）和**低估**（漏掉 helper 函数、RAII 构造器、宏生成的桥、多层 wrapper 里发生的交出）。旧版本把它当作上界是错的。**不得用 Tier B 的数字作 Go/No-Go。**
 
@@ -65,18 +111,34 @@ Tier A 的五条：
 
 规范取值：
 
-| 取值 | 是否计入 Tier A |
+| 取值 | 计入哪一支 |
 | --- | --- |
-| `PermitsNonStaticCapture` | **是** |
-| `RequiresStaticCapture` | 否——但对 X = A（分配提前释放）这一子问题仍可能是候选，单列统计 |
-| `ContextDependent` | 否，单列 |
-| `Unresolved` | 否，单列，且计入分母 |
+| `PermitsNonStaticCapture` | **Tier A-R** |
+| `RequiresStaticCapture` | **Tier A-A**（当且仅当 `AllocationOwnership = RustRetainsAndMayFreeEarly` 一并成立），否则单列 |
+| `ContextDependent` | 都不计入，单列 |
+| `Unresolved` | 都不计入，单列，且计入分母 |
 
 ### 3.3 保护性形状不在本探针内排除
 
 `Arc` 锚点、结构体 lifetime 参数、registration guard、`unregister` 路径等 Rust 侧约束机制**不在本探针的判据内**。探针给出的是**候选上界**（在 Tier A 的意义上），不是最终候选集。
 
-这是有意的：探针的作用是判断池子的数量级，过早收紧会把「不确定」误判成「没有」。**但 guard 形状必须单独统计**——按 [research thesis §2.4](../../project/research-thesis.md)，guard 是否真的保护取决于外部侧的清槽行为，Rust 侧看到 guard 不等于该候选无效。
+这是有意的：探针的作用是判断池子的数量级，过早收紧会把「不确定」误判成「没有」。**但 guard 形状必须单独统计**——按 [research thesis §2.4](../../project/research-thesis.md)，guard 是否真的保护取决于外部侧的清槽行为，Rust 侧看到 guard 不等于该候选无效。`RegistrationGuard`（PG-1）已实现，可以在探针里直接分列。
+
+**因此 Tier A 是"带保护性形状的候选上界"，不是最终候选集。** Gate P-b 的转化率下界正是用来把这个上界折算成可确认量的；两者必须配套使用，单用 Tier A 计数会高估。
+
+### 3.5 C-1 的 safe-entry lineage
+
+**只证明"回调到达 extern 参数"不足以证明"安全客户端能到达这个交出点"。**
+
+研究对象是 public safe API：缺陷的含义是"不写 `unsafe` 的调用方能触发 UB"。一个藏在内部 helper 里、公开 API 根本够不着的交出点不构成本研究的缺陷，把它计入会高估猎物池。
+
+因此 C-1 要求保留一条可回查的链：
+
+```text
+public safe 入口 → wrapper / helper → 具体的 extern 交出点
+```
+
+lineage 断裂、或只能到达 `unsafe fn` 入口的交出点，**单列为 `unreachable-from-safe-entry`，不计入 Tier A**。该字段与身份分层的"安全入口身份"同源，见 [ADR-0003](../../decisions/ADR-0003-target-verifier-dataflow-and-identity.md)。
 
 ### 3.4 C-5 必须与 L1 分析片段对齐
 

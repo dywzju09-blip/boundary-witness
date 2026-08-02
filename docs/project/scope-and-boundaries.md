@@ -24,7 +24,7 @@
 
 | 维度 | Rust 侧契约 | 外部侧行为 | 联结判定 |
 | --- | --- | --- | --- |
-| 持有期 | **部分（三缺二）**：`EffectiveCaptureAdmission` 已实现（语义取值，覆盖泛型 / APIT / HRTB / trait object）。**`RegistrationGuard` 与 `AllocationOwnership` 均为零行代码**，见 [roadmap PG](../roadmap/implementation-plan.md) | **未实现**：当前由 API 清单分类出的注册/注销事实**推断**，不是外部代码行为 | 已实现但证据来源为推断；人工版本边界作交叉验证 |
+| 持有期 | **部分（三缺一）**：`EffectiveCaptureAdmission`（语义取值，覆盖泛型 / APIT / HRTB / trait object）与 `RegistrationGuard`（从签名与 guard 类型的 `Drop` MIR 判定）已实现。**`AllocationOwnership` 仍为零行代码**，见 [implementation plan 的 PG](../roadmap/implementation-plan.md#pg-rust-侧剩余的两个事实) | **未实现**：当前由 API 清单分类出的注册/注销事实**推断**，不是外部代码行为 | 已实现但证据来源为推断；人工版本边界作交叉验证 |
 | 别名与可变性 | 未实现 | 未实现 | 未实现 |
 | 线程 | 未实现 | 未实现 | 未实现 |
 | 重入 | 未实现 | 未实现 | 未实现 |
@@ -42,7 +42,7 @@
 
 因此：**接入一个新组件仍然必须先有人手写 API 清单。** 已经不需要人工声明的只有两项：回调 bound 的形状，以及「bound 从哪个版本开始收紧」这条版本边界。
 
-**第三，Rust 侧的 bound 判定本身尚未语义化。** 见上表持有期一行——这是 [Gate P](../roadmap/milestone-gates.md#gate-p猎物存在性) 的前置。
+**第三，Rust 侧的契约事实还差一项。** 判定关系需要三个 Rust 侧事实：回调 bound 的语义取值、registration guard、回调分配归属。前两项已实现，**分配归属仍是零行代码**——`'static` 只约束回调捕获的 referent，管不住 `Box<F>` 本身的存活，缺这一项就看不见"分配提前释放、外部随后调用悬垂指针"这一整类。
 
 ## 4. 判定的三态纪律与三个正交维度
 
@@ -87,14 +87,16 @@
 
 - 能在给定组件版本上定位并排序生命周期敏感的静态候选。对回调家族，此表述仅在 API 清单已覆盖的 API 范围内成立；
 - 能从签名判定回调 bound 的语义取值（`EffectiveCaptureAdmission`），无需 API 清单；
+- 能从签名与 guard 类型的 `Drop` MIR 判定是否存在 registration guard，无需 API 清单。**但只能判出"`Drop` 里调了某个外部函数"这个形状**——那次调用是否真的清空槽位属于外部侧问题（Q4′），因此**不得表述为"能判断 guard 是否有效"**；
 - 能在受控样本上形成可审计的动态验证闭环。
 
 ## 8. 当前不允许的表述
 
 - 现有工作检不出本项目的主线缺陷类（**已被 2026-07-31 外部基线否定**，Yuga 能报 5/7）；
 - 「不需要人工 API 清单」是本项目的创新点（该主张已撤销，见 [research thesis §11](research-thesis.md)）；
-- **Rust 侧的契约抽取已完成**——判定关系需要三个 Rust 侧事实，当前只实现了一个；
-- 能识别 registration guard，或能判断回调分配交出后归谁；
+- **Rust 侧的契约抽取已完成**——判定关系需要三个 Rust 侧事实，当前实现了两个；
+- 能判断 registration guard **是否有效**（只能看到形状，有效性需要 Q4′）；
+- 能判断回调分配交出后归谁（`AllocationOwnership` 未实现）；
 - 八维错配等价于安全 API 整体健全性；
 - 跨语言契约不相容判定已达成（外部侧未实现）；
 - 不读 API 清单也能识别回调注册 API；

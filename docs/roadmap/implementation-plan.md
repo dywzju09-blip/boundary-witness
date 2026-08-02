@@ -2,6 +2,8 @@
 
 本文是 [roadmap](roadmap.md) 各阶段的可执行细化。方向权威是 [research thesis](../project/research-thesis.md)：**任何一项如果不能落到 C1/C2/C3 之一，就不该做。**
 
+> **执行顺序与依赖类型以 [execution plan](execution-plan.md) 为准**，本文只给技术细节。两者冲突时改本文。
+
 本文于 2026-07-30 全量重写，取代此前所有版本。旧版本的 P0–P7 编号、`Mismatch`/`NoMismatch` 判定表、以及「P1 消除人工 API 清单」阶段一律作废。
 
 当前阶段是 **V3.2.x core-effect hardening**。本文描述计划，不是已达成能力。
@@ -329,9 +331,11 @@ Q1 仍然必须做——它提供槽位身份，Q3 与 Q4′ 都建立在它之�
 
 ---
 
-## P2 — 外部侧 Q3 晚调 与 Q4′ 清槽
+## P2 — 外部侧 Q4′ 清槽 与降级 Q3 晚调
 
 **服务 C2。前置：P1。风险：全路线最高。**
+
+**内部顺序是 Q1 → Q4′ → 降级 Q3**，不按查询编号排。理由：Q1 只提供槽位身份、答案在候选集合上可能恒为真；判别力全在 Q4′；降级 Q3 只产出反证义务。**先做完 Q4′ 再做 Q3**，否则会在没有判别项的情况下先投入产出最弱的一段。
 
 **Q4′ 已从附属查询升为主查询之一**，见 2.5。它是外部侧真正有判别力的部分。
 
@@ -368,15 +372,21 @@ S2 与 S3 是昂贵的：
 
 **降级版不证明的事**：它**不证明**存在一条真实的返回后调用路径。它只证明「存在一个从同一槽位取出函数指针的间接调用点」。该调用点可能不可达、可能被路径条件排除、可能读的是同类型的另一个分配。
 
-**因此降级版单独不足以下 `SupportedIncompatibility`。** 按 [research thesis §2.7](../project/research-thesis.md) 的三个正交维度，它的正确输出是：
+**因此降级版单独不足以下 `SupportedIncompatibility`。** 按 [research thesis §2.7](../project/research-thesis.md) 的正交维度，它的正确输出是：
 
 ```text
-StaticVerdict   = InsufficientEvidence
-EvidenceGrade   = SameSlotInvokeCandidate
-WitnessObligation = EstablishLateInvoke
+StaticVerdict      = InsufficientEvidence
+InvokeReachability = 同槽调用点级别（最低档）
+WitnessObligation  = EstablishLateInvoke
 ```
 
 **不得输出 `SupportedIncompatibility (weak)` 或任何第四态**——旧版本引入的那个写法破坏三态模型，已废除。必须由 C1 的反证补上真实可达性证明：反证真的跑起来、外部组件真的回调进来，才产生 `WitnessStatus = ConfirmedCounterexample`。**动态确认不改变静态 verdict 的语义。**
+
+### 2.3.1 这条输出必须能被 P4 消费
+
+**降级 Q3 永远输出 `InsufficientEvidence`，永不输出 `SupportedIncompatibility`。** 若 P4 只接受后者，首期实现里 P4 就没有合法输入——这是计划里的死锁，不是措辞问题。
+
+**解法**：P4 的合格输入是两类之一，见 [P4 的输入接口](#p4-的输入接口)与 [ADR-0004](../decisions/ADR-0004-joint-trace-verdict-semantics.md)。
 
 **降级并非纯粹的损失。** 对能够生成反证的候选，动态执行证据的强度**高于**静态可达性证明——前者是真实发生的，后者是 may-behavior。降级 Q3 的真正损失落在**不能生成反证的候选上**：那里只能停在 `StaticVerdict = InsufficientEvidence` + `EvidenceGrade = SameSlotInvokeCandidate`，无法给出结论。
 
@@ -501,6 +511,28 @@ WitnessObligation = EstablishLateInvoke
 
 **服务 C1（首要创新点）。前置：P3。风险：中高。**
 
+### P4 的输入接口
+
+**合格输入有两类**，不只是不相容判定：
+
+1. `StaticVerdict = SupportedIncompatibility`；
+2. `StaticVerdict = InsufficientEvidence` + `WitnessObligation = EstablishLateInvoke`，**前提是** Rust 侧分离性、Q1、Q4′ 与身份都已充分——缺的只是晚调可达性。
+
+**第 2 类是首期实现的主要输入**，因为降级 Q3 永远落在这一档。动态成功写入 `WitnessStatus = ConfirmedCounterexample`，**不静默改变原有静态判定的语义**。
+
+`JointTraceObligation`（两侧分别成立但联合可行性未证明）同样可作为输入——反证跑通本身就是一条实际发生过的联合轨迹。
+
+### 拆成 P4a 与 P4b
+
+冻结时机是 Gate B 的判据，所以规格必须与生成分离：
+
+| 子阶段 | 内容 | 时机 |
+| --- | --- | --- |
+| **P4a** | adapter schema、合法 API 使用方式的描述规范、人工成本口径 | **Gate P 通过后尽早**，必须在该 crate 的判定跑出来之前 |
+| **P4b** | 由判定/义务推导危险动作序列并执行 | P3 之后 |
+
+**对正式 unseen 样本**：crate-specific adapter 必须在看到判定与 ground truth 之前冻结；最好由独立准备者完成；vulnerable/fixed pair 尽量复用同一份 adapter。
+
 ### adapter 边界（Gate B 的判据）
 
 反证生成需要每个 crate 一份声明式 adapter。这与「不得手写每个 crate 的专用 harness」之间的界线必须写死，否则 C1 退化为手工 PoC：
@@ -531,11 +563,19 @@ WitnessObligation = EstablishLateInvoke
 | no-trigger | 干净 |
 | 同步外部实现（matched pair） | 干净 |
 
-### oracle 选型
+### oracle 选型与 admissibility
 
 依据 MiriLLI 的结论：Miri 无法观察外部函数内部。因此对真实外部库采用 sanitizer；跨语言联合解释器路线更强但更重，写入 discussion。
 
-**本项目自有的 runtime/oracle 只能作为辅助定位证据，不能单独构成 UB 结论。**
+**一把 sanitizer 打不了所有情况**——普通 ASan 不覆盖所有 Rust lifetime / provenance UB。三类缺陷分别定义可接受 oracle，每类都要有正负对照：
+
+| 缺陷类 | 典型现象 | 可接受 oracle |
+| --- | --- | --- |
+| referent 失效后被访问 | stack-use-after-scope | 栈对象失效检测 |
+| allocation 提前释放 | heap use-after-free | 堆分配器检测 |
+| 清槽失败后仍被调用 | callback-after-clear | 语义事件 + 独立执行证据 |
+
+**本项目自有的 runtime/oracle 只能作为辅助定位证据，不能单独构成 UB 结论。未触发统一记 `Inconclusive`。**
 
 ### 完成谓词
 

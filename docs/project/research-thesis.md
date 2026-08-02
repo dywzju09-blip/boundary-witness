@@ -68,15 +68,25 @@ IEEE S&P、USENIX Security、ACM CCS、NDSS。这类 PC 接受两种东西：真
 
 ```text
 SupportedIncompatibility(X, Slot)
-  ⇐ SafeLifetimeSeparationPossible(X, Slot)
-  ∧ ForeignLateUsePossible(Slot, X)
-  ∧ SameArtifactSlotAndRole
+  ⇐ SeparationCertificate(X, Slot)
+  ∧ ForeignLateUseEffect(Slot, X)
+  ∧ JointTraceFeasible(X, Slot)
 其中 X ∈ { R, A }
 ```
 
-**`SafeLifetimeSeparationPossible(X, Slot)`**
+**`JointTraceFeasible` 不是可以省略的第三项。** 2026-07-31 复审后新增：前两项是两条独立的 **may-property**，分别成立**不蕴含它们能在同一条执行上同时发生**。而 `SupportedIncompatibility` 这个结论读起来正是后者。要求两侧证据在**同一构建、同一交出点、同一槽位、同一 registration generation，且路径条件相容**下能形成一条联合轨迹。
 
-> 存在一条 well-typed、只使用安全 API 的客户端轨迹，使 `X` 失效而 `Slot` 上的注册仍然有效。
+`SameArtifactSlotAndRole` 是 `JointTraceFeasible` 的必要条件，**但不充分**：它保证两侧指的是同一个槽位，却分不开同一槽位上的不同注册实例（"注册 A → 注销 → 注册 B"）。registration generation 见 [ADR-0003](../decisions/ADR-0003-target-verifier-dataflow-and-identity.md)。
+
+三条纪律：
+
+- **`SeparationCertificate` 是正面证据。** 「没有观察到保护机制」不等于「已证明不存在保护机制」——前者只是缺证，后者才构成证书；
+- **静态证不出联合可行性时返回 `InsufficientEvidence`**，并附一条 `JointTraceObligation`，不得因为两项分别成立就下不相容结论；
+- **动态反证可以完成联合轨迹的证明**：反证真的跑起来、外部真的回调进来，那就是一条实际发生过的联合轨迹。这也是 C1 在关系上的位置。
+
+**`SeparationCertificate(X, Slot)`**
+
+> 存在一条 well-typed、只使用安全 API 的客户端轨迹，使 `X` 失效而 `Slot` 上的注册仍然有效。**这是一份正面证书**，需要证据支持；查不到保护机制只产出缺证，不产出证书。
 
 Rust 侧能够**否定**它的机制（这些让 API 健全）：
 
@@ -85,7 +95,7 @@ Rust 侧能够**否定**它的机制（这些让 API 健全）：
 - owner 的 drop 必然触发注销；
 - 对 X = A：分配由外部拥有直到注销。
 
-**`ForeignLateUsePossible(Slot, X)`**
+**`ForeignLateUseEffect(Slot, X)`**
 
 > 同一 registration slot 上存在 retain 与「返回之后 use/invoke」的 may-path，**且中间不存在可证明有效的 clear / unregister**。
 
@@ -132,22 +142,29 @@ Rust 侧能够**否定**它的机制（这些让 API 健全）：
 StaticVerdict
   = SupportedIncompatibility          // 两侧证据共同支持不相容
   | CompatibleWithinAnalyzedFragment  // 片段与假设内未形成该类不相容
-  | InsufficientEvidence              // 任一侧事实、联结身份或行为证据不足
+  | InsufficientEvidence              // 任一侧事实、联结身份、行为证据或联合可行性不足
 
-EvidenceGrade                          // 支撑该 verdict 的外部证据强度
-  = SameSlotInvokeCandidate           // 同槽位存在间接调用点（降级 Q3）
-  | ReachableMayInvoke                // 该调用点自导出入口可达
-  | PathSupportedLateInvoke           // 路径条件支持返回后调用
-  | GuardDefeated                     // 存在绕过 guard 或未清空的路径
+ForeignEvidence                        // 外部证据，四个**正交**字段（Planned）
+  = { RetentionEffect                 // Q1：是否到达跨调用存活的存储
+    , InvokeReachability              // 晚调证据强度：同槽调用点 / 可达 / 路径支持
+    , ClearReplaceStatus              // Q4′：是否所有路径清槽、是否存在绕过 guard 的路径
+    , PathCompatibility }             // 两侧路径条件是否相容——JointTraceFeasible 的输入
 
 WitnessStatus
   = NotAttempted | Generated | Executed
   | ConfirmedCounterexample | Inconclusive
+
+WitnessObligation
+  = EstablishLateInvoke               // 只有降级 Q3 的同槽调用点证据
+  | JointTraceObligation              // 两侧分别成立，联合可行性未证明
 ```
 
-两条纪律：
+**外部证据必须是四个正交字段，不是一个枚举。** 现有实现用单一 `EvidenceGrade` 同时表达"同槽调用候选/可达/路径支持"与"guard 被击穿"——前三者是一条可达性阶梯，第四者是清槽结论，两者不可比较。实测后果是 guard 被击穿时晚调证据等级被直接覆盖丢失。可以派生一个报告级总体等级用于展示，**不得丢失原始维度**。字段拆分状态为 `Planned`，见 [ADR-0004](../decisions/ADR-0004-joint-trace-verdict-semantics.md)。
 
-- **降级 Q3 的输出是 `StaticVerdict = InsufficientEvidence` + `EvidenceGrade = SameSlotInvokeCandidate` + 一条 witness obligation**，不是任何形式的 `SupportedIncompatibility`；
+三条纪律：
+
+- **降级 Q3 的输出是 `StaticVerdict = InsufficientEvidence` + 同槽调用点级别的 `InvokeReachability` + 一条 `EstablishLateInvoke` 义务**，不是任何形式的 `SupportedIncompatibility`；
+- **反证阶段消费义务，不只消费不相容判定。** 降级 Q3 永不产出 `SupportedIncompatibility`，若 C1 只接受后者，首期实现里 C1 将没有合法输入。合格输入是：`SupportedIncompatibility`，**或** `InsufficientEvidence` + `EstablishLateInvoke`（前提是 Rust 侧分离性、Q1、Q4′ 与身份都已充分，缺的只是晚调可达性）；
 - **动态反证成功产生 `ConfirmedCounterexample`，不改变静态 verdict 的语义。** 反证未触发只能记 `Inconclusive`——**有限次动态执行不能证伪一个 may-property。**
 
 `CompatibleWithinAnalyzedFragment` **只排除本研究定义的回调持有期不相容**，不表示 API 整体健全。
@@ -243,9 +260,19 @@ PermitsNonStaticCapture | RequiresStaticCapture | ContextDependent | Unresolved
 
 **这条创新点的知识主张不是「我们做了一个逃逸分析」，而是：**
 
-> Rust 安全 API 的类型签名构成一份**隐式规约**，外部实现必须满足它；这份规约从未被检查，因为规约与实现分处两门语言，且规约隐藏在 lifetime bound 里。本工作抽取规约、抽取外部 effect、检查精化关系。
+> Rust 安全 API 的**契约**构成一份隐式规约，外部实现必须满足它；这份规约从未被检查，因为规约与实现分处两门语言，且规约分散在类型签名、guard 协议与 wrapper 的所有权效果里。本工作抽取规约、抽取外部 effect、检查精化关系。
 
 必须这样陈述。Q1/Q3 本身是标准的逃逸与可达性分析，把它们当创新点会被当场驳回；新意在**规约的来源**和**被检查的性质**。
+
+**规约来源不止签名**（2026-07-31 复审后更正）。三个 Rust 侧事实里只有第一个是纯签名事实：
+
+| 事实 | 来源 | 是不是纯签名 |
+| --- | --- | --- |
+| `EffectiveCaptureAdmission` | HIR 签名的 outlives bound | 是 |
+| `RegistrationGuard` | 返回类型的 lifetime + guard 类型 `Drop` impl 的 MIR | 否——需要 drop 协议 |
+| `AllocationOwnership` | wrapper 的所有权转移与释放路径（MIR） | 否——需要所有权效果 |
+
+因此**不得把 C2 表述成「类型签名/lifetime bound 是全部规约」**。lifetime bound 仍是 referent 子问题的核心规约来源，但把分配归属包装成签名事实是不准确的，审稿人会追问。准确表述是：**Rust safe-API contract（类型签名、guard 协议、wrapper 所有权效果）作为规约，foreign effect 作为实现。**
 
 Rust 侧抽取：回调泛型或 trait object 的 outlives bound；是否允许捕获非 `'static` 借用；回调分配的 owner 与存活锚；register/replace/unregister 与 owner drop 的关系；回调与 userdata 参数在 FFI 调用中的角色。
 
@@ -264,7 +291,9 @@ Rust 侧抽取：回调泛型或 trait object 的 outlives bound；是否允许�
 
 前两条是机制，这一条是把机制变成安全结论：
 
-> 在可分析片段内的 FFI crate 全集上，有多少安全 API 允许纯 safe 代码触发 UB；这些破坏呈现哪些形态；其中哪些此前未知。
+> 在**预注册的抽样框**内、可分析片段内的 FFI crate 上，有多少安全 API 允许纯 safe 代码触发 UB；这些破坏呈现哪些形态；其中哪些此前未知。
+
+**措辞必须是「抽样框上的估计」，不是「全集」**（2026-07-31 复审后更正）。§7.8 的规模参考线是约 100 个客观选取的 crate，那是抽样不是普查。**只有真正做了 census 才能用「全集」。** 估计必须给出抽样框定义、抽样方式与置信区间，并按 crate / repository / 外部库家族聚类——这三者不是独立同分布样本。
 
 必须报告的是**分布与形态**，不是一个 precision 数字。至少包括：可构建/可分析比例、判定覆盖率、`InsufficientEvidence` 比例、按 root-cause 聚类的形态分类、新发现及其披露状态。
 
@@ -434,6 +463,32 @@ conservative precision bound = TP / (TP + FP + Unknown)
 - 报告一致性、分歧率与证据等级；
 - **同一 advisory 的多个 API 不得伪装成多个独立根因。**
 
+四条附加纪律（2026-07-31 复审后补入）：
+
+- **「无公告」不是安全负例。** 没有 advisory 只说明没人报过，不说明 API 健全。把它当负例会同时高估 precision 与低估召回的分母；
+- **vulnerable/fixed 差分只是证据之一**，不自动决定 TP/FP。补丁可能同时修了别的东西，也可能用收紧 bound 之外的方式规避；
+- **资源不足时明确标 `Blocked`，不得把抽查等价成双人 ground truth。** 20% 抽查是质量控制，不是双人标注；
+- **按 repository、外部库家族与 root cause 聚类报告**，这三者都不是独立同分布样本。
+
+### 7.5.1 人工 Role map 的信任边界
+
+**人工 API / Role map 与外部行为事实是两类东西，不得混。**
+
+| 来源 | 允许声明 | **不得**声明 |
+| --- | --- | --- |
+| 人工 Role map | 符号绑定；callback / userdata 参数角色；register / unregister / replace 的**候选**角色；接入所需的静态元数据 | 实际是否保留；实际是否晚调；是否所有路径清槽；guard 是否有效 |
+| 外部 effect 事实 | 上述全部行为结论 | — |
+
+正式 Full 判定中的外部 effect **必须**来自外部 IR 抽取。**手工 foreign oracle 必须带独立的 provenance 与来源等级**，只能用于 fixture、交叉验证与消融，不得伪装成自动分析结果——Gate R 的 C stub 标注即属此类。
+
+这条把 §11 第 4 条与 §12 的主张分级表落成可检查的字段要求，见 [ADR-0005](../decisions/ADR-0005-evidence-trust-and-experiment-statistics.md)。
+
+### 7.5.2 私有 holdout 与第三方可重放
+
+sealed holdout 要求样本身份不公开，而 artifact evaluation 要求第三方能完整重放——两者直接冲突。解决方式是 artifact-evaluation escrow、延迟公开或受控访问。
+
+**不得一边只提供聚合摘要、一边宣称第三方可完整重放。**
+
 ### 7.6 数据隔离
 
 - rusqlite 与所有已读源码样本属于**开发集**；
@@ -493,44 +548,109 @@ conservative precision bound = TP / (TP + FP + Unknown)
 
 RUSTSEC-2021-0128 这一类在 Rust 社区是公开知识，`'static` 修法众所周知，很多维护者早已收紧。**若猎物池不足以支撑 §7.8 的确认集与新发现目标，路线 A 不成立**，应转路线 C。
 
-**判据必须满足四条方法学要求**，缺一不可，详见 [runbook](../experiments/runbooks/prey-existence-probe.md)：
+**判据必须满足六条方法学要求**，缺一不可，详见 [runbook](../experiments/runbooks/prey-existence-probe.md)：
 
 1. **以 `EffectiveCaptureAdmission` 为准，不用语法四态**（§2.8）——否则最强的一类候选被记成弱候选；
 2. **以 Tier A 为准**：回调 / trampoline / userdata 经过程内或有界过程间 dataflow **到达精确的 extern 参数**。仅「同函数内出现 extern 调用」是 Tier B 语法共现，只能作探索性筛选；
 3. **以 L1 可分析为准**：候选必须能绑定到精确的外部 LLVM IR。主表必须标注 IR acquisition tier——**一个很大的 Rust 侧候选池可能全部进不了 P1/P2**；
-4. **以未调优 crate 为准**，且判据用置信界而非「足够」「非平凡」这类事后可移动的词：
+4. **要求 safe-entry lineage**：只证明回调到达 extern 参数不足以证明**安全客户端能到达该交出点**。缺 lineage 的单列，不计入 Tier A；
+5. **以未调优 crate 为准**；
+6. **判据是公式，不是形容词**——见下。
+
+### Gate P 拆成两个子 gate
+
+**候选数不能直接推出确认发现数**，中间隔着一个转化率。原判据只写「下置信界仍足以支撑预定确认集」，没有任何换算关系，等于没有判据。
+
+| 子 gate | 问题 | 样本 |
+| --- | --- | --- |
+| **Gate P-a** | 未调优、L1、Tier A 的交出点还有多少 | 前瞻池（盲化） |
+| **Gate P-b** | 这些候选里有多大比例能真正走到确认 | **开发集**，不消耗前瞻池 |
 
 ```text
-Pass   = 下置信界仍足以支撑预定确认集
-No-Go  = 上置信界仍不足以支撑预定确认集
+可用猎物估计 = eligible_pool_lower_bound × conversion_rate_lower_bound
+
+Pass   = 该乘积仍足以支撑预注册的确认集规模
+No-Go  = 上置信界仍不足
 Amber  = 扩大样本或增加人工审计
 ```
 
+**必须按 crate / repository / 外部库家族聚类报告**——三者都不是独立同分布样本，按 alert 计数会系统性高估。
+
+### R 与 A 必须分开判定
+
+**这是本 gate 最容易出错的一处。** Tier A 的「允许捕获借用」判据只筛 referent 类；allocation 类（`'static` bound + `Box<F>` 提前释放，即 §2.3 的 X = A）的 `EffectiveCaptureAdmission` 恰恰是 `RequiresStaticCapture`，**会被该判据直接排除、记成零**。
+
+因此拆成 `Tier A-R` 与 `Tier A-A`，分别统计、分别套用上式、分别判定。
+
+- **不得因 Tier A-R 的 No-Go 自动放弃 A 子路线**——那是一条从未被测量过的路线；
+- 若 `AllocationOwnership` 尚未实现导致 Tier A-A 无法统计，必须明确写「本次只决定 R 子路线，A 保持 `Unknown` 并单独设 gate」，**不得默认为零**。
+
 **运行前必须完成 family-level sealed split。** 直接查看 300–500 个 crate 的身份与候选数，会按 §7.6 把整个前瞻池变成开发集。默认做法是**独立 runner 只返回盲化聚合统计**，开发者不接触 crate 身份。
 
-- 失败动作：转路线 C（经验研究），不再投入外部侧实现。
+**全部参数必须在探针运行之前预注册。口头判断不构成通过**——维护者对猎物池的印象可以决定是否值得跑这个实验，不能替代预注册的正式结果。
+
+- 失败动作：R 与 A 都 No-Go 时转路线 C（经验研究），不再投入外部侧实现。
 
 ### Gate A：外部证据必要性
 
-- 通过：matched pair 中 Full 能区分同步与保存；Rust-only 对两者给出相同结果或必须 abstain；在真实未调优样本上 Full 相对 Rust-only 有可解释的 precision/coverage 增益。
+**拆成两个子 gate。** 机制上能分开与端任务上有收益是两件事，混在一起会让"增益"无从归因。
+
+**Gate A1 — 机制增益**
+
+- 通过：在**同一 candidate universe** 上，Full 能区分「注销真清槽」与「注销没清干净」，Rust-only 对两者给出相同结果或必须 abstain；
 - No-Go：关闭外部分析后结果不变；所谓增益主要来自更窄的候选范围；外部行为仍主要由 API 清单预先给定。
+
+**Gate A2 — 端任务增益**
+
+- 通过：加入反证后，确认率或判定覆盖率有预注册幅度的提升，或人工 triage 成本有预注册幅度的下降。
+
+**判据必须预注册，不得用「可解释的增益」这类事后可移动的措辞**——本文自己批评过「足够」「非平凡」，这里是同一个毛病。至少写死：比较单位（交出点 / API / crate / root cause，选一个并全程一致）、最小效应量、置信区间下界、允许的 Unknown 与 abstention 比例。
+
+**增益必须归因到 role/slot 敏感的外部证据（主要是 Q4′）。** 按 §2.6，Q1 在候选集合上可能几乎恒为真，恒为真的项没有判别力。已知一处边界：**回调分配的归属是纯 Rust 侧事实**，`ForeignOwnedUntilUnregister` 时 Rust-only 就能正确判相容——外部证据的净贡献集中在 guard 分支，Gate A1 的增益必须归到那里，不能笼统说「因为我们看了外部侧」。
+
 - 失败动作：放弃 C2 作为主角，转路线 B。
 
 ### Gate B：反证真实性
 
-- 通过：unseen 候选能自动生成 safe-only harness；外部组件真实晚调回调；回调实际访问失效对象；独立 oracle 在 vulnerable 上产生证据；fixed 与全部负对照干净。
+**最小工程闭环与投稿竞争线必须分开**，否则一个成功案例会被当成规模化能力，或反过来因为规模不够而否定已经跑通的机制。
+
+- **最小通过线**：至少一个**真正 unseen**（未参与 adapter 模板开发）的候选走通全程——自动生成 safe-only harness、外部组件真实晚调回调、回调实际访问失效对象、独立 oracle 在 vulnerable 上产生证据、fixed 与全部负对照干净；
+- **投稿竞争线**：生成率、编译率、执行率、确认率、重放成功率与 adapter 人工成本达到预注册门槛。
 - No-Go：只能产生 contract trace；必须手写每个 crate 的专用 harness（判据见 [implementation plan](../roadmap/implementation-plan.md) 的 adapter 边界定义）；结果依赖 synthetic 桥接才成立；无法建立反证与原候选的 identity lineage。
 - 失败动作：C1 降级为 contract-path synthesis，不得称为不健全性确认。
 
+**输入接口**：反证阶段接受 `SupportedIncompatibility`，**也接受** `InsufficientEvidence` + `EstablishLateInvoke` 义务（前提是 Rust 侧分离性、Q1、Q4′ 与身份都已充分）。见 §2.7 的第二条纪律。
+
+**oracle admissibility 按缺陷类分别定义。** 普通 ASan 不覆盖所有 Rust lifetime / provenance UB（见 §11 第 31 条），一把 sanitizer 打天下会让某一类缺陷系统性地测不出来：
+
+| 缺陷类 | 典型现象 | 可接受 oracle |
+| --- | --- | --- |
+| referent 失效后被访问 | stack-use-after-scope | 栈对象失效检测 |
+| allocation 提前释放 | heap use-after-free | 堆分配器检测 |
+| 清槽失败后仍被调用 | callback-after-clear | 语义事件 + 独立执行证据 |
+
+每一类都必须有正负对照。**未触发统一记 `Inconclusive`**，不是候选被证伪。**本项目自有的 runtime 事件不能单独构成 UB 证据。**
+
+### Gate C0：可移植性 smoke（早期，低成本）
+
+**2026-07-31 复审后新增。** 把「取得外部库 IR 的工程可行性」这个已知风险完全推到认证期，等于最后才发现整套方法只对一个库有效。C0 是它的早期廉价检查：
+
+- 3–5 个外部库家族，至少两种 C 构建方式；
+- **只验证**真实 IR 获取、符号解析、artifact 绑定与新库接入成本，不要求判定或反证；
+- **失败信号**：若每接入一个新库都要修改分析器内核，立即收窄 scope 或转路线，不要等到认证期。
+
 ### Gate C：跨库泛化（认证期决定，当前不设下限）
 
-跨外部库家族的泛化是**投稿认证期**的问题。**本阶段不对家族数量设置实现约束**——P1/P2 的完成谓词只要求单库端到端打通。取得外部库 IR 的工程可行性是已知风险，但按当前决定推迟到认证期处理，不构成现在的 gate。
+跨外部库家族的泛化是**投稿认证期**的问题。**本阶段不对家族数量设置实现约束**——P1/P2 的完成谓词只要求单库端到端打通。
+
+**Gate C 不是路线 A 的前置。** §9 的路线 A 条件是「Gate R、P、A、B、D 全通过」，不含 C；§13 的投稿就绪清单同样不含 C。C 在认证期报告，其结果影响的是外部效度陈述的强度，不构成实现阶段的止损点。**早期风险由 Gate C0 承担。**
 
 认证期需要报告的：外部库家族数、新 API 的接入方式与成本、生成成功率、coverage gap。
 
 ### Gate D：确认性评估
 
-- 通过：冻结后的 unseen corpus；公平 baseline 与全套消融；双人 ground truth；coverage、Unknown、cluster 与置信区间完整；**至少一个有独立外部确认的实际发现**。
+- **最低通过线**：冻结后的 unseen corpus；公平 baseline 与全套消融；双人 ground truth；coverage、Unknown、cluster 与置信区间完整；**至少一个有独立外部确认的新发现**；
+- **投稿竞争线**：2–3 个独立新问题、至少两个外部库或协议家族、至少一个维护者确认或修复（§7.8）。
 - No-Go：结论仍来自开发集；100% precision 依赖大量 abstention；指标单位在 alert、API、crate 与 root cause 之间混用；没有新发现。
 
 ---
@@ -600,6 +720,14 @@ Amber  = 扩大样本或增加人工审计
 30. 不在核实前把复审列出的相关工作写进论文（§5.1）。
 31. 不用普通 ASan 的覆盖结果代表所有 Rust lifetime / provenance UB。
 32. 不用维护者确认替代正确性 ground truth。
+33. 不把两个分别成立的 may-property 直接合取成不相容结论——需要联合轨迹可行性（§2.4）。
+34. 不把「没有观察到保护机制」当成「已证明不存在保护机制」。
+35. 不用人工 Role map 预写待验证的外部行为（§7.5.1）。
+36. 不把「无公告」当作安全负例（§7.5）。
+37. 不用抽查替代双人 ground truth（§7.5）。
+38. 不把 Tier A 候选数直接当作可确认发现数——中间隔着转化率（§8 Gate P）。
+39. 不因 referent 子路线的 No-Go 自动放弃 allocation 子路线（§8 Gate P）。
+40. 不把抽样估计写成「全集」（§3 C3）。
 
 ---
 
@@ -619,10 +747,14 @@ Amber  = 扩大样本或增加人工审计
 
 ## 13. 投稿就绪定义
 
+**Gate C 不在本清单内**，见 §8 Gate C。
+
 - [ ] Gate R 通过：四个 matched fixture 全部判对，且 fixture 2/3 只有 Full 能分开；
-- [ ] Gate P 通过（Tier A + L1 + 未调优 + 置信界），猎物池规模支撑 §7.8 的目标；
+- [ ] Gate P-a 与 P-b 通过（Tier A-R / A-A + L1 + safe-entry lineage + 未调优 + 置信界 + 转化率），猎物池规模支撑 §7.8 的目标；
+- [ ] Gate C0 通过：3–5 个外部库家族的 IR 获取与符号解析可行，接入成本已量化；
+- [ ] Gate A1 与 A2 分别通过，增益可归因到 role/slot 敏感的外部证据；
 - [ ] 核心主张已从整体 soundness 收窄到回调持有期 compatibility；
-- [ ] exact hand-off identity 与双侧事实模型完成；
+- [ ] 分层 hand-off identity（含 registration generation 与 safe-entry lineage）与双侧事实模型完成；
 - [ ] 外部侧 Q1/Q3/Q4′ 在真实构建 IR 上完成，Q3 的降级与 limitation 已量化；
 - [ ] matched-pair 证明 Full 的信息增益；
 - [ ] 三态判定与分析片段写清；

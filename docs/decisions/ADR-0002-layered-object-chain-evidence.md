@@ -10,13 +10,15 @@ Accepted
 
 ## Decision
 
-对象链证据分为三层：
+对象链证据分为**三个正式层**：
 
 1. `identity_transport`：证明同一逻辑对象或传递关系；
-2. `release_ordering`：证明 release 相对 register 的顺序；
-3. `use_ordering`：证明 release 之后 use 的顺序；
-4. `lifecycle_ordering`：`release_ordering` 与 `use_ordering` 的并集，保留为兼容层；
-5. `complete_risk_chain`：同对象、危险顺序和风险路径同时闭合。
+2. `lifecycle_ordering`：证明 release、invalidation、use 等事件的顺序；
+3. `complete_risk_chain`：同对象、危险顺序和风险路径同时闭合。
+
+`lifecycle_ordering` 之下再分**两项子证据**：`release_ordering`（release 相对 register 的顺序）与 `use_ordering`（release 之后 use 的顺序），`lifecycle_ordering` 的语义是二者的并集。
+
+> **2026-07-31 澄清**：本条原按 1–5 编号并列，读起来像五个正式层，与 [evidence model](../architecture/evidence-model.md) 和 [terminology](../project/terminology.md) 的「固定三层」冲突。决定本身未变——**正式层是三个，release/use 是 `lifecycle_ordering` 的子证据**，层的计数与 gate 判据一律按三层。
 
 `release_ordering` 与 `use_ordering` 从原先单一的 `lifecycle_ordering` 拆出。合并表达无法区分"release coverage 已证明但 use 顺序未知"与"两者都未证明"，而这两种情况对后续取证的指向完全不同。新消费者读细分层；`lifecycle_ordering` 语义不变，继续等于二者的并集。
 

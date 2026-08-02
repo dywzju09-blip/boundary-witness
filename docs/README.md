@@ -4,15 +4,17 @@
 
 ## 新 Agent
 
-1. [研究主线与创新点](project/research-thesis.md)（方向权威）
-1. [项目概览](project/overview.md)
-2. [当前状态](project/current-status.md)
-3. [范围与边界](project/scope-and-boundaries.md)
-4. [系统架构](architecture/system-overview.md)
-5. [生命周期 ObjectFlow](architecture/lifecycle-object-flow.md)
-6. [实验方法](experiments/methodology.md)
-7. [当前工作](roadmap/current-work.md)
-8. [Agent 接力规范](development/agent-handoff.md)
+1. [研究主线与创新点](project/research-thesis.md)（**方向权威**）
+2. [执行计划](roadmap/execution-plan.md)（**执行顺序权威**，每一步做出什么功能）
+3. [项目概览](project/overview.md)
+4. [当前状态](project/current-status.md)
+5. [范围与边界](project/scope-and-boundaries.md)
+6. [系统架构](architecture/system-overview.md)
+7. [目标判定管线](architecture/target-verifier-pipeline.md)（`Planned`，与当前实现的差别）
+8. [生命周期 ObjectFlow](architecture/lifecycle-object-flow.md)
+9. [实验方法](experiments/methodology.md)
+10. [当前工作](roadmap/current-work.md)
+11. [Agent 接力规范](development/agent-handoff.md)
 
 ## 开发者
 
@@ -33,7 +35,7 @@
 3. [D0 runbook](experiments/runbooks/d0.md)
 4. [D1 runbook](experiments/runbooks/d1.md)
 5. [D2 runbook](experiments/runbooks/d2.md)
-6. [猎物存在性探针 runbook](experiments/runbooks/prey-existence-probe.md)（Gate P，当前最高优先级）
+6. [猎物存在性探针 runbook](experiments/runbooks/prey-existence-probe.md)（Gate P-a / P-b，判据修正后由维护者执行）
 7. [规模化精度对照 runbook](experiments/runbooks/precision-comparison-at-scale.md)
 8. [外部基线对照 runbook](experiments/runbooks/baseline-comparison.md)
 9. [Public regression runbook](experiments/runbooks/public-regression.md)
@@ -50,15 +52,17 @@
 5. [排序与报告](architecture/ranking-and-reporting.md)
 6. [错误分类](reference/error-taxonomy.md)
 7. [事件格式](reference/event-formats.md)
-8. [里程碑 gate](roadmap/milestone-gates.md)（研究 gate P/A/B/C/D 与工程 gate 1–6）
+8. [里程碑 gate](roadmap/milestone-gates.md)（研究 gate R/P/A/B/C0/C/D 与工程 gate 1–6）
 9. [实现计划](roadmap/implementation-plan.md)（含 Q3 降级记录与 adapter 边界定义）
-10. [ADR 索引](decisions/README.md)
+10. [目标判定管线](architecture/target-verifier-pipeline.md)（`Planned`）
+11. [ADR 索引](decisions/README.md)
 
 ## 项目与治理
 
 - [仓库与数据治理](project/repository-and-data-governance.md)
 - [术语](project/terminology.md)
 - [Roadmap](roadmap/roadmap.md)
+- [执行计划](roadmap/execution-plan.md)
 - [SECURITY](../SECURITY.md)
 - [AGENTS](../AGENTS.md)
 
@@ -76,8 +80,15 @@
 - [V3.1 N-day gate](experiments/results/v3-1-nday-gate-2026-07-20.md)
 - [V3.2 20-crate pilot](experiments/results/v3-2-20-crate-pilot-2026-07-21.md)
 - [V3.2.5 public blind smoke](experiments/results/v3-2-5-nday-blind-smoke-2026-07-21.md)
+- [Gate 0 外部基线对照](experiments/results/gate0-baseline-comparison-2026-07-31.md)
+- [Gate 0 Yuga 误报归因](experiments/results/gate0-yuga-precision-triage-2026-07-31.md)
+
+**历史结果绑定各自的 historical commit，不代表当前能力，也不因路线重写而升级为 `Verified`。**
 
 ## 决策记录
 
 - [ADR-0001: Repository and data separation](decisions/ADR-0001-repository-and-data-separation.md)
 - [ADR-0002: Layered object-chain evidence](decisions/ADR-0002-layered-object-chain-evidence.md)
+- [ADR-0003: Target verifier dataflow and layered identity](decisions/ADR-0003-target-verifier-dataflow-and-identity.md)
+- [ADR-0004: Joint-trace verdict semantics](decisions/ADR-0004-joint-trace-verdict-semantics.md)
+- [ADR-0005: Evidence trust and experiment statistics](decisions/ADR-0005-evidence-trust-and-experiment-statistics.md)

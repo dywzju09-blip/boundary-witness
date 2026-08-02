@@ -4,7 +4,18 @@
 
 ## 所处位置
 
-**持有期维度的 Rust 侧已闭环，外部侧仍是推断而非证据。研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系，PF/PC/PP/P0/P1/P2 均未开始。**
+**执行顺序的权威是 [execution plan](execution-plan.md)**；本文只说现在在哪一步。
+
+**Rust 侧三个契约事实做完两个，外部侧零行代码。** 研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系。当前进度：
+
+| 阶段 | 状态 |
+| --- | --- |
+| PF 核心关系与四 fixture（Gate R） | ✅ `Implemented` |
+| PC `EffectiveCaptureAdmission` | ✅ `Implemented` |
+| PG-1 `RegistrationGuard` | ✅ `Implemented` |
+| PG-2 `AllocationOwnership` | ⬜ 零行代码，**下一步** |
+| PP 猎物探针 / Gate P | ⬜ 判据待修正后由维护者执行 |
+| P0 / P1 / P2 / P3 / P4 | ⬜ `Planned`，**Gate P 通过后才启动** |
 
 Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关联 → 把判定与判定来源写入产物」整条链。但外部侧那一半的证据来自 API 清单分类出的注册与注销事实，不是外部代码本身的行为。因此：
 
@@ -74,9 +85,13 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 ## Gate P（PP 猎物存在性探针）：由维护者自行执行
 
-**2026-07-31 决定。** 维护者已确认猎物池中存在相当数量的相关问题，本阶段不由 Agent 推进。
+**2026-07-31 决定。** 本阶段不由 Agent 推进。
 
-**由谁执行不改变判据。** [runbook](../experiments/runbooks/prey-existence-probe.md) 的四条方法学要求仍然有效，缺一条结论就不可用：以 `EffectiveCaptureAdmission` 语义取值为准（不用语法四态）；只数 Tier A（dataflow 到达精确 extern 参数，不是语法共现）；只算 L1 可分析（否则候选进不了 P1/P2）；用置信界而非「足够」这类事后可移动的措辞。**运行前必须完成 family-level sealed split**，否则整个前瞻池变成开发集。
+**维护者对猎物池规模的印象可以决定是否值得跑这个实验，但不构成 Gate P 通过**——通过需要预注册的正式结果。
+
+**由谁执行不改变判据。** [runbook](../experiments/runbooks/prey-existence-probe.md) 的六条方法学要求缺一条结论就不可用：语义取值 `EffectiveCaptureAdmission`（不用语法四态）；只数 Tier A（dataflow 到达精确 extern 参数，不是语法共现）；**safe-entry lineage**（只到达 extern 参数不证明安全客户端够得着）；只算 L1 可分析；**Tier A-R 与 Tier A-A 分开判定**；判据用换算公式与置信界，不用「足够」这类事后可移动的措辞。**运行前必须完成 family-level sealed split**，否则整个前瞻池变成开发集。
+
+**三处必须先修的判据缺口**，见 [execution plan 的 0.3](execution-plan.md)：事实层不记录 `is_unsafe_fn`（实测 `unsafe extern "C" fn trampoline` 也产出 callback bound 事实）；没有 safe-entry lineage；`AllocationOwnership` 未实现导致 Tier A-A 无法统计。**第三项若来不及做，必须写明本次只决定 R 子路线，A 保持 `Unknown`，不得默认为零。**
 
 ## 已完成：PG-1 `RegistrationGuard`
 
@@ -135,9 +150,7 @@ golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。
 
 ## 再之后：P0 与 P1 并行起步
 
-## 再之后：P0 与 P1 并行起步
-
-仅在 Gate P 通过后启动。
+**仅在 Gate P 通过后启动。** 完整顺序与依赖类型见 [execution plan](execution-plan.md) 的阶段 2。
 
 ### P0 hand-off 身份与双侧事实模型
 
@@ -161,11 +174,15 @@ golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。
 
 ## 已记录的降级
 
-**Q3 晚调查询首期降级为「同槽间接调用存在性」。** 完整 Q3 需要全库可达性加间接调用 callee 解析，代价高一个数量级。降级版输出 `StaticVerdict = InsufficientEvidence` + `EvidenceGrade = SameSlotInvokeCandidate` + witness obligation，由 P4 的反证补上真实可达性证明。**不得输出 `SupportedIncompatibility (weak)` 或任何第四态。**
+**Q3 晚调查询首期降级为「同槽间接调用存在性」。** 完整 Q3 需要全库可达性加间接调用 callee 解析，代价高一个数量级。降级版输出 `StaticVerdict = InsufficientEvidence` + 最低档晚调证据 + `EstablishLateInvoke` 义务，由 P4 的反证补上真实可达性证明。**不得输出 `SupportedIncompatibility (weak)` 或任何第四态。**
+
+**P4 必须能消费这条输出。** 降级 Q3 永不产出 `SupportedIncompatibility`，若 P4 只接受不相容判定，首期实现里 P4 就没有合法输入。见 [ADR-0004](../decisions/ADR-0004-joint-trace-verdict-semantics.md)。
+
+外部证据当前是单一 `EvidenceGrade` 枚举，**拆成四个正交字段的设计状态为 `Planned`**，随一次性 schema 升版落地。
 
 **即使 F1–F4 全部完成，静态 Q3 也只能称「declared abstraction 内的高精度」，不能称独立确认。**
 
-降级的确切代价、必须量化的三个指标、完整实现的 F1–F4 分阶段计划，见 [implementation plan 的 P2](implementation-plan.md#p2-外部侧-q3-晚调-与-q4-清槽)。
+降级的确切代价、必须量化的三个指标、完整实现的 F1–F4 分阶段计划，见 [implementation plan 的 P2](implementation-plan.md#p2-外部侧-q4-清槽-与降级-q3-晚调)。
 
 ## 代码处置
 

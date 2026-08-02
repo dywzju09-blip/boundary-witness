@@ -20,7 +20,9 @@
 
 **[Gate R](../roadmap/milestone-gates.md#gate-r关系正确性) 的关系正确性部分已通过**（2026-07-31）：四个 matched fixture 全部判对；fixture 2 与 3 的 Rust 事实完全相同、只有外部侧清槽行为不同，Full 能分开而 Rust-only 只能记缺证。非空性检查已做——故意让 guard 分支忽略 Q4′ 证据后，恰好 6 项依赖该分支的断言失败、8 项不依赖的仍通过。
 
-**Gate R 证明的是关系本身，不是 Q4′ 可实现。** 外部侧取值目前由 C stub 手工标注；能否从真实构建的 LLVM IR 推导出同样的取值，由 P1/P2 回答。当前最高优先级转为 [PC `EffectiveCaptureAdmission`](../roadmap/implementation-plan.md)。
+**Gate R 证明的是关系本身，不是 Q4′ 可实现。** 外部侧取值目前由 C stub 手工标注（manual foreign oracle，来源等级与自动分析不同），能否从真实构建的 LLVM IR 推导出同样的取值，由 P1/P2 回答。
+
+**当前最高优先级是 PG-2 `AllocationOwnership`，其后是 Gate P 的判据修正与猎物探针。** 完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
 
 ## 状态总览
 

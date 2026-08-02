@@ -44,25 +44,60 @@ oracle 将 static facts、runtime events 与 contract 组合后产生的规则�
 
 ### hand-off（交出点）
 
-一次跨越语言边界的调用，Rust 侧把回调或 user data 交给外部组件。它是本项目全部判定的基本单位，由 `HandOffId` 标识：至少包含 Rust/外部两侧的 artifact hash、单态化实例、调用出现次序、外部符号与符号版本、callback/userdata 参数索引、registration key 与构建配置。
+一次跨越语言边界的调用，Rust 侧把回调或 user data 交给外部组件。它是本项目全部判定的基本单位。
+
+身份是**分层**的（目标形态为 `Planned`，见 [ADR-0003](../decisions/ADR-0003-target-verifier-dataflow-and-identity.md)），至少五层：
+
+| 层 | 回答什么 |
+| --- | --- |
+| 构建产物身份 | 这是哪一次构建的产物（两侧 artifact hash、target、feature、宏、优化、链接配置） |
+| 安全入口身份 | 安全客户端从哪个 public API 进来 |
+| 静态交出点身份 | 哪一次跨界调用把回调交了出去（单态化实例、调用出现次序、参数角色索引） |
+| 符号槽位身份 | 外部把它存进了哪个槽位（符号 + 符号版本、`#[link_name]` 解析后的真实符号） |
+| 注册实例身份 | 这是该槽位上的第几次注册（**registration generation**） |
 
 **源码位置与函数名只能作为诊断字段，不能单独充当联结主键。** 按函数名、API 名或候选分片联结两侧事实是明确禁止的做法。
+
+### registration generation
+
+同一个槽位上的不同注册实例——「注册 A → 注销 → 注册 B」是两次不同的注册。**`SameArtifactSlotAndRole` 保证两侧指同一槽位，但分不开不同的注册实例**，而联合轨迹要求两侧事实指向同一次注册。运行期实例若与静态推出的 generation 不一致，单独记录，不合并。
+
+### safe-entry lineage
+
+从 public safe 入口经 wrapper / helper 到达具体 extern 交出点的可回查链。**只证明「回调到达 extern 参数」不足以证明「安全客户端能到达该交出点」**——藏在内部 helper 里、公开 API 够不着的交出点不构成本研究的缺陷。它同时是 [Gate P](../roadmap/milestone-gates.md#gate-p猎物存在性) 中 Tier A 判据的一条。
+
+### joint trace feasibility（联合轨迹可行性）
+
+两条 may-property 分别成立**不蕴含它们能在同一条执行上同时发生**。判定要求两侧证据在同一构建、同一交出点、同一槽位、同一 registration generation 且路径条件相容下形成联合轨迹。
+
+- **`SeparationCertificate`** 是正面证据：「没有观察到保护机制」只是缺证，不构成证书；
+- 静态证不出联合可行性 → `InsufficientEvidence` + `JointTraceObligation`；
+- **动态反证可以完成联合轨迹的证明**——反证跑起来、外部真的回调进来，就是一条实际发生过的联合轨迹。
 
 ### analyzed fragment（分析片段）
 
 判定结论成立的前提集合，包括支持的 IR 获取级别、过程间分析深度、假设与未覆盖路径。所有精度、召回与覆盖结论只在片段内成立；论文与结果文档必须显式给出片段定义。
 
-### `StaticVerdict` / `EvidenceGrade` / `WitnessStatus`
+### `StaticVerdict` / 外部证据 / `WitnessStatus`
 
 三个**正交**维度，不得用一个枚举表达。
 
 - **`StaticVerdict`**：`SupportedIncompatibility` / `CompatibleWithinAnalyzedFragment` / `InsufficientEvidence`；
-- **`EvidenceGrade`**：支撑该 verdict 的外部证据强度，`SameSlotInvokeCandidate` / `ReachableMayInvoke` / `PathSupportedLateInvoke` / `GuardDefeated`；
+- **外部证据**：`RetentionEffect`（Q1 是否到达跨调用存活的存储）、`InvokeReachability`（同槽调用点 / 自导出入口可达 / 路径条件支持）、`ClearReplaceStatus`（Q4′ 是否所有路径清槽、是否存在绕过 guard 的路径）、`PathCompatibility`（两侧路径条件是否相容）。**四个字段正交**，可派生报告级总体等级用于展示，不得丢失原始维度。字段拆分状态为 `Planned`，当前实现是单一 `EvidenceGrade` 枚举，已知会互相覆盖丢信息；
 - **`WitnessStatus`**：`NotAttempted` / `Generated` / `Executed` / `ConfirmedCounterexample` / `Inconclusive`。
 
-**`SupportedIncompatibility (weak)` 及任何第四态一律禁止。** 降级的外部侧查询产出的是 `InsufficientEvidence` + 低 `EvidenceGrade` + 一条 witness obligation，不是弱化的不相容结论。
+**`SupportedIncompatibility (weak)` 及任何第四态一律禁止。** 降级的外部侧查询产出的是 `InsufficientEvidence` + 低 `InvokeReachability` + 一条 witness obligation，不是弱化的不相容结论。
 
 **动态反证不改变静态 verdict 的语义**；反证未触发只能记 `Inconclusive`，有限次执行不能证伪 may-property。
+
+### `WitnessObligation`
+
+判定不成立时缺的具体那一步，反证阶段消费它：
+
+- **`EstablishLateInvoke`**：只有降级 Q3 的同槽调用点证据，需要真实执行证明晚调确实发生；
+- **`JointTraceObligation`**：两侧分别成立，但联合可行性未证明。
+
+**反证阶段接受 `SupportedIncompatibility`，也接受 `InsufficientEvidence` + `EstablishLateInvoke`。** 降级 Q3 永不产出前者，若只接受前者，首期实现里反证阶段没有合法输入。
 
 ### `SupportedIncompatibility`
 
