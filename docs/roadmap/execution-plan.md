@@ -82,17 +82,26 @@
 ✅ PF：核心关系与四个 matched fixture                 Implemented
 ✅ PC：EffectiveCaptureAdmission                     Implemented
 ✅ PG-1：RegistrationGuard                           Implemented
-⬜ PG-2：AllocationOwnership                          下一步
-⬜ safe-entry lineage / is_unsafe_fn                  Planned
-⬜ RustContractFact 自动装配                          Planned
-⬜ 真实外部 IR 获取与绑定                            Planned
+✅ PG-2：AllocationOwnership                         Implemented
+✅ safe-entry lineage / is_unsafe_fn                 Implemented
+✅ RustContractFact 自动装配                         Implemented
+⬜ 真实外部 IR 获取与绑定                            下一步
 ⬜ Q1 / Q4′ / 降级 Q3                                Planned
 ⬜ P0 identity / Schema / P3                          Planned
 ⬜ P4 witness / 独立 oracle                           Planned
 ⬜ 小样本与大规模评估                                后置
 ```
 
-**当前唯一主线下一步是阶段 1.1：PG-2。** 不先跑 300–500 crate，不先做完整 baseline，也不先准备 sealed holdout。
+**阶段 1 已完成（2026-08-04）。** Rust 侧现在能自动产出四样：`EffectiveCaptureAdmission`、
+`RegistrationGuard`、`AllocationOwnership`、safe-entry lineage，并按 `(api_id, callback_param)`
+装配成 `RustContractFact`；缺任何一半产出写明缺什么的 gap，不静默丢弃。
+
+**当前唯一主线下一步是阶段 2.1：选一个真实参考目标并取得精确外部 IR。** 不先跑
+300–500 crate，不先做完整 baseline，也不先准备 sealed holdout。
+
+**选定目标时必须同时写完并冻结该目标的 adapter**（记 commit 与时间戳）。adapter 直到
+阶段 5 才用得上，很容易拖到那时再写——但那时 P3 结果已经出来，写出来的 adapter 无法
+证明没有掺入缺陷信息，[Gate B](milestone-gates.md) 的判据就废了。
 
 ---
 

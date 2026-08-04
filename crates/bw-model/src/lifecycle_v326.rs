@@ -818,6 +818,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         StaticFact::CallbackLifetimeBound(fact) => Some(fact.api_id.clone()),
         StaticFact::RegistrationGuard(fact) => Some(fact.api_id.clone()),
         StaticFact::AllocationOwnership(fact) => Some(fact.api_id.clone()),
+        StaticFact::SafeEntryLineage(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowRelation(fact) => Some(fact.api_id.clone()),
         StaticFact::PersistedReturnedBorrow(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowInvalidationOrder(fact) => Some(fact.api_id.clone()),
@@ -888,6 +889,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<String> {
         StaticFact::CallbackLifetimeBound(fact) => vec![fact.site_id.to_string()],
         StaticFact::RegistrationGuard(fact) => vec![fact.site_id.to_string()],
         StaticFact::AllocationOwnership(fact) => vec![fact.site_id.to_string()],
+        StaticFact::SafeEntryLineage(fact) => vec![fact.site_id.to_string()],
         StaticFact::ReturnedBorrowRelation(fact) => vec![
             fact.site_id.to_string(),
             fact.source_site_id.to_string(),
@@ -6171,7 +6173,9 @@ fn lifecycle_static_fact_fields(
     // 在那之前本事实只停在静态事实层。
     if matches!(
         envelope.payload,
-        StaticFact::RegistrationGuard(_) | StaticFact::AllocationOwnership(_)
+        StaticFact::RegistrationGuard(_)
+            | StaticFact::AllocationOwnership(_)
+            | StaticFact::SafeEntryLineage(_)
     ) {
         return None;
     }
@@ -6462,8 +6466,10 @@ fn lifecycle_static_fact_fields(
         }
         // 上面已提前返回，这条分支不可达；写成 `unreachable!` 而不是通配，
         // 是为了让**下一个**新增的事实种类仍然撞上穷尽匹配。
-        StaticFact::RegistrationGuard(_) | StaticFact::AllocationOwnership(_) => {
-            unreachable!("registration guard and allocation ownership return early")
+        StaticFact::RegistrationGuard(_)
+        | StaticFact::AllocationOwnership(_)
+        | StaticFact::SafeEntryLineage(_) => {
+            unreachable!("these facts return early")
         }
     })
 }

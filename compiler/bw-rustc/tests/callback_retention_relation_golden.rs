@@ -10,7 +10,10 @@
 
 use std::{collections::BTreeMap, fs, process::Command};
 
-use bw_model::{AllocationOwnership, RegistrationGuard, StaticFact, StaticFactEnvelope};
+use bw_model::{
+    AllocationOwnership, EffectiveCaptureAdmission, HandOffId, RegistrationGuard,
+    RustContractAssembly, StaticFact, StaticFactEnvelope, assemble_rust_contract_facts,
+};
 
 /// 事实层观察到的一个交出点：回调 bound 与 guard 必须能按 `(api_id, callback_param)` 配对。
 #[derive(Debug, Default)]
@@ -229,5 +232,121 @@ fn allocation_ownership_is_derived_from_raw_pointer_transfers() {
             Some(AllocationOwnership::ForeignOwnedUntilUnregister),
             "{key} 交出后没有回收路径"
         );
+    }
+}
+
+/// 1.3 验收：`RustContractFact` 必须能从编译器事实自动装配，且与 PF 阶段手写的那组
+/// **逐字段一致**。
+///
+/// 这条断言存在的意义是：Gate R 之后 Rust 侧事实一直是测试里手写的，判定关系因此从未
+/// 在真实产出上跑过。装配之后手写那组就只剩 oracle 的角色。
+#[test]
+fn rust_contract_facts_assemble_from_compiler_output() {
+    let facts = relation_fixture_facts();
+    let hand_off_id = |api_id: &str, callback_param: &str| HandOffId {
+        rust_artifact: "artifact:callback-retention-relation".to_owned(),
+        rust_def_instance: api_id.to_owned(),
+        call_occurrence: format!("callback_param:{callback_param}"),
+        foreign_artifact: "artifact:pending-p0".to_owned(),
+        foreign_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 0,
+        userdata_arg_index: Some(1),
+        registration_key: None,
+        build_profile: "fixture".to_owned(),
+    };
+
+    let assembled = assemble_rust_contract_facts(&facts, &hand_off_id)
+        .into_iter()
+        .filter_map(|item| match item {
+            RustContractAssembly::Assembled(fact) => {
+                Some((fact.hand_off.rust_def_instance.clone(), *fact))
+            }
+            RustContractAssembly::Gap { .. } => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    // 与 `crates/bw-model/tests/compatibility.rs` 里手写的那组对齐。
+    let borrowed = &assembled["Registry::register_borrowed"];
+    assert_eq!(
+        borrowed.capture_admission,
+        EffectiveCaptureAdmission::PermitsNonStaticCapture
+    );
+    assert_eq!(borrowed.guard, RegistrationGuard::None);
+    assert_eq!(
+        borrowed.allocation,
+        AllocationOwnership::ForeignOwnedUntilUnregister
+    );
+
+    let guarded = &assembled["Registry::register_guarded"];
+    assert_eq!(
+        guarded.capture_admission,
+        EffectiveCaptureAdmission::PermitsNonStaticCapture
+    );
+    assert_eq!(guarded.guard, RegistrationGuard::TiesSlotToSubject);
+    assert_eq!(
+        guarded.allocation,
+        AllocationOwnership::ForeignOwnedUntilUnregister
+    );
+
+    let freed = &assembled["Registry::register_static_then_free"];
+    assert_eq!(
+        freed.capture_admission,
+        EffectiveCaptureAdmission::RequiresStaticCapture
+    );
+    assert_eq!(
+        freed.allocation,
+        AllocationOwnership::RustRetainsAndMayFreeEarly,
+        "fixture 4 的分配提前释放必须出现在自动装配的事实里"
+    );
+
+    let owned = &assembled["Registry::register_static_owned"];
+    assert_eq!(
+        owned.allocation,
+        AllocationOwnership::ForeignOwnedUntilUnregister
+    );
+
+    for fact in assembled.values() {
+        assert!(
+            !fact.evidence.is_empty(),
+            "装配出来的事实必须带可回查的来源"
+        );
+    }
+}
+
+/// 装配缺任何一半时必须产出写明缺什么的 gap，不能静默丢弃。
+#[test]
+fn missing_halves_are_reported_as_gaps_not_dropped() {
+    use bw_model::RustContractGap;
+
+    // 只保留 bound 事实，其余三样都拿掉。
+    let facts = relation_fixture_facts()
+        .into_iter()
+        .filter(|fact| matches!(fact.payload, StaticFact::CallbackLifetimeBound(_)))
+        .collect::<Vec<_>>();
+    let hand_off_id = |_: &str, _: &str| HandOffId {
+        rust_artifact: String::new(),
+        rust_def_instance: String::new(),
+        call_occurrence: String::new(),
+        foreign_artifact: String::new(),
+        foreign_symbol: String::new(),
+        callback_arg_index: 0,
+        userdata_arg_index: None,
+        registration_key: None,
+        build_profile: String::new(),
+    };
+
+    let assembly = assemble_rust_contract_facts(&facts, &hand_off_id);
+    assert!(!assembly.is_empty());
+    for item in &assembly {
+        match item {
+            RustContractAssembly::Assembled(_) => {
+                panic!("缺三样事实时不得装配出契约")
+            }
+            RustContractAssembly::Gap { gaps, .. } => {
+                assert!(gaps.contains(&RustContractGap::MissingGuard));
+                assert!(gaps.contains(&RustContractGap::MissingAllocationOwnership));
+                assert!(gaps.contains(&RustContractGap::MissingSafeEntryLineage));
+            }
+        }
     }
 }

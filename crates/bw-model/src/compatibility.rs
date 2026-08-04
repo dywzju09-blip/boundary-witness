@@ -39,7 +39,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::static_fact::{AllocationOwnership, EffectiveCaptureAdmission, RegistrationGuard};
+use crate::{
+    StaticFact, StaticFactEnvelope,
+    static_fact::{
+        AllocationOwnership, EffectiveCaptureAdmission, RegistrationGuard, SafeEntryLineage,
+    },
+};
 
 /// 交出点身份：跨越语言边界的那一次调用。
 ///
@@ -90,6 +95,148 @@ pub struct RustContractFact {
     /// 可回查的来源，仅作诊断，**不参与联结**。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
+}
+
+/// 装配 [`RustContractFact`] 时能说明为什么装不出来的原因。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustContractGap {
+    /// 缺 `EffectiveCaptureAdmission`。
+    MissingCaptureAdmission,
+    /// 缺 `RegistrationGuard`。
+    MissingGuard,
+    /// 缺 `AllocationOwnership`。
+    MissingAllocationOwnership,
+    /// 缺 safe-entry lineage。
+    MissingSafeEntryLineage,
+    /// 安全客户端到不了这个交出点，不构成「安全 API 允许 UB」的证据。
+    NotReachableFromSafeEntry,
+    /// safe-entry 可达性未判定。
+    SafeEntryLineageUnresolved,
+}
+
+/// 一个交出点上装配的结果：要么是完整的契约事实，要么是缺了哪一半。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustContractAssembly {
+    Assembled(Box<RustContractFact>),
+    Gap {
+        api_id: String,
+        callback_param: String,
+        gaps: Vec<RustContractGap>,
+    },
+}
+
+/// 把三个 Rust 侧事实按 `(api_id, callback_param)` 装配成 [`RustContractFact`]。
+///
+/// **这一步取代 PF 阶段测试里手写的那组事实。** 判定关系需要三样齐备；缺任何一样都
+/// 不装配，而是产出一条写明缺什么的 [`RustContractAssembly::Gap`]——静默丢弃会让下游
+/// 分不清「已检查且相容」与「根本没看到」。
+///
+/// safe-entry 可达性是**过滤条件**而不是字段：只能从 `unsafe fn` 或私有路径到达的交出点
+/// 不构成本研究的证据，因此不装配，并记
+/// [`RustContractGap::NotReachableFromSafeEntry`]。
+///
+/// # `HandOffId` 是占位的
+///
+/// 当前只填得出 Rust 侧那几段；`foreign_artifact` / `foreign_symbol` 等要等 P0 接上
+/// 外部构建才有真值。装配出的事实因此**只能用于 Rust 侧回归**，不能直接进 P3 的
+/// 联结——那需要完整身份。
+#[must_use]
+pub fn assemble_rust_contract_facts(
+    facts: &[StaticFactEnvelope],
+    hand_off_id: &dyn Fn(&str, &str) -> HandOffId,
+) -> Vec<RustContractAssembly> {
+    use std::collections::BTreeMap;
+
+    #[derive(Default)]
+    struct Parts {
+        admission: Option<EffectiveCaptureAdmission>,
+        guard: Option<RegistrationGuard>,
+        allocation: Option<AllocationOwnership>,
+        lineage: Option<SafeEntryLineage>,
+        evidence: Vec<String>,
+    }
+
+    let mut by_hand_off = BTreeMap::<(String, String), Parts>::new();
+    for envelope in facts {
+        match &envelope.payload {
+            StaticFact::CallbackLifetimeBound(fact) => {
+                let parts = by_hand_off
+                    .entry((fact.api_id.clone(), fact.callback_param.clone()))
+                    .or_default();
+                parts.admission = Some(fact.bound_scope.effective_capture_admission());
+                parts.evidence.push(fact.site_id.to_string());
+            }
+            StaticFact::RegistrationGuard(fact) => {
+                let parts = by_hand_off
+                    .entry((fact.api_id.clone(), fact.callback_param.clone()))
+                    .or_default();
+                parts.guard = Some(fact.guard);
+                parts.evidence.push(fact.site_id.to_string());
+            }
+            StaticFact::AllocationOwnership(fact) => {
+                let parts = by_hand_off
+                    .entry((fact.api_id.clone(), fact.callback_param.clone()))
+                    .or_default();
+                parts.allocation = Some(fact.ownership);
+                parts.evidence.push(fact.site_id.to_string());
+            }
+            StaticFact::SafeEntryLineage(fact) => {
+                let parts = by_hand_off
+                    .entry((fact.api_id.clone(), fact.callback_param.clone()))
+                    .or_default();
+                parts.lineage = Some(fact.lineage);
+                parts.evidence.push(fact.site_id.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    by_hand_off
+        .into_iter()
+        .map(|((api_id, callback_param), parts)| {
+            let mut gaps = Vec::new();
+            if parts.admission.is_none() {
+                gaps.push(RustContractGap::MissingCaptureAdmission);
+            }
+            if parts.guard.is_none() {
+                gaps.push(RustContractGap::MissingGuard);
+            }
+            if parts.allocation.is_none() {
+                gaps.push(RustContractGap::MissingAllocationOwnership);
+            }
+            match parts.lineage {
+                None => gaps.push(RustContractGap::MissingSafeEntryLineage),
+                Some(SafeEntryLineage::NoPublicSafeEntry) => {
+                    gaps.push(RustContractGap::NotReachableFromSafeEntry);
+                }
+                Some(SafeEntryLineage::Unresolved) => {
+                    gaps.push(RustContractGap::SafeEntryLineageUnresolved);
+                }
+                Some(
+                    SafeEntryLineage::DirectPublicSafeEntry
+                    | SafeEntryLineage::ReachableFromPublicSafeEntry,
+                ) => {}
+            }
+            if !gaps.is_empty() {
+                return RustContractAssembly::Gap {
+                    api_id,
+                    callback_param,
+                    gaps,
+                };
+            }
+            let mut evidence = parts.evidence;
+            evidence.sort();
+            RustContractAssembly::Assembled(Box::new(RustContractFact {
+                hand_off: hand_off_id(&api_id, &callback_param),
+                capture_admission: parts.admission.expect("checked above"),
+                guard: parts.guard.expect("checked above"),
+                allocation: parts.allocation.expect("checked above"),
+                evidence,
+            }))
+        })
+        .collect()
 }
 
 /// Q1：指针是否到达「调用返回后仍存活」的存储。

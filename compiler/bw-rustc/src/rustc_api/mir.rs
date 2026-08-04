@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt, fs,
     ops::ControlFlow,
     path::PathBuf,
@@ -17,6 +17,7 @@ use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitabl
 use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
 use bw_model::{
     AllocationOwnership, AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
+    SafeEntryLineage,
     CallbackReleaseUseOrdering, CallbackUserDataReconstructionKind, DropKind, DropPreventionKind,
     ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
     RegistrationGuard, ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
@@ -33,6 +34,7 @@ use crate::{
         ObjectBindingGapObservation, ObjectFlowEndpointObservation, ObjectFlowObservation,
         ObjectFlowStaticSiteObservation, PersistedReturnedBorrowObservation, RawPointerReference,
         AllocationOwnershipObservation, RawPointerTransferObservation,
+        SafeEntryLineageObservation,
         RegistrationGuardObservation, RegistrationObservation,
         ReleasePathProofObservation, ReturnedBorrowInvalidationOrderObservation,
         ReturnedBorrowRelationObservation, closure_capture_object_flow_field_path,
@@ -54,6 +56,7 @@ pub struct MirSiteObservations {
     pub callback_lifetime_bounds: Vec<CallbackLifetimeBoundObservation>,
     pub registration_guards: Vec<RegistrationGuardObservation>,
     pub allocation_ownerships: Vec<AllocationOwnershipObservation>,
+    pub safe_entry_lineages: Vec<SafeEntryLineageObservation>,
     pub returned_borrow_relations: Vec<ReturnedBorrowRelationObservation>,
     pub persisted_returned_borrows: Vec<PersistedReturnedBorrowObservation>,
     pub returned_borrow_invalidation_orders: Vec<ReturnedBorrowInvalidationOrderObservation>,
@@ -85,6 +88,9 @@ pub fn collect_mir_sites<'tcx>(
     captures: &[CaptureObservation],
 ) -> Result<MirSiteObservations, MirExtractionError> {
     let mut observations = MirSiteObservations::default();
+    // (def_id, api_id, callback_param, source_path, span)：交出点的定位信息，
+    // safe-entry lineage 在全部 body 走完之后统一判定，因为它需要 crate 级调用图。
+    let mut hand_off_sites = Vec::<(LocalDefId, String, String, PathBuf, String)>::new();
     let mut returned_borrow_invalidations = Vec::<ReturnedBorrowInvalidationCall>::new();
     let mut returned_borrow_storage_uses = Vec::<ReturnedBorrowStorageUse>::new();
     let mut returned_borrow_storage_mutation_barriers =
@@ -187,6 +193,7 @@ pub fn collect_mir_sites<'tcx>(
             visitor.discovered_closure_returned_borrow_captures,
         );
     }
+    let call_graph_owners = body_owners.clone();
     for def_id in body_owners {
         let body = tcx.optimized_mir(def_id);
         let owner_def_path = tcx.def_path_str(def_id.to_def_id());
@@ -200,9 +207,19 @@ pub fn collect_mir_sites<'tcx>(
         {
             observations.returned_borrow_relations.push(relation);
         }
-        observations
-            .callback_lifetime_bounds
-            .extend(callback_lifetime_bounds(tcx, def_id, &owner_def_path));
+        let bounds = callback_lifetime_bounds(tcx, def_id, &owner_def_path);
+        // safe-entry lineage 与另外两个 Rust 侧事实按 callback_param 配对，因此判据
+        // 必须同源：这里直接复用刚产出的 bound 事实，避免三处判据各写一份而漂移。
+        for bound in &bounds {
+            hand_off_sites.push((
+                def_id,
+                bound.api_id.clone(),
+                bound.callback_param.clone(),
+                bound.source_path.clone(),
+                bound.span.clone(),
+            ));
+        }
+        observations.callback_lifetime_bounds.extend(bounds);
         observations
             .registration_guards
             .extend(registration_guards(tcx, def_id, &owner_def_path));
@@ -332,6 +349,13 @@ pub fn collect_mir_sites<'tcx>(
         openssl_ex_data_registrations.extend(visitor.openssl_ex_data_registrations);
         openssl_ex_data_releases.extend(visitor.openssl_ex_data_releases);
     }
+    // safe-entry lineage 需要 crate 级调用图，只能在所有 body 的交出点收齐之后判。
+    {
+        let (call_graph, complete) = crate_call_graph(tcx, &call_graph_owners);
+        observations.safe_entry_lineages =
+            safe_entry_lineages(tcx, &hand_off_sites, &call_graph, complete);
+    }
+
     let (openssl_releases, openssl_proofs) = infer_openssl_ex_data_release_path_proofs(
         &openssl_ex_data_registrations,
         &openssl_ex_data_releases,
@@ -21221,6 +21245,158 @@ fn registration_guards<'tcx>(
             }
         })
         .collect()
+}
+
+/// 交出点能不能被**安全客户端**走到。
+///
+/// 判定的主张是「安全 API 允许 UB」。只能从 `unsafe fn` 或只能从 crate 内部私有路径
+/// 到达的交出点**不构成该主张的证据**——调用它本来就要写 `unsafe`，责任在调用方。
+/// 没有这层过滤，候选池会混进大量与论题无关的位置。
+///
+/// # 判据
+///
+/// 安全入口 = 本 crate 里**对外可见**且**不是 `unsafe fn`** 的函数。从所有安全入口出发，
+/// 沿 crate 内直接调用边做 BFS：
+///
+/// - 交出点自身就是安全入口 → [`SafeEntryLineage::DirectPublicSafeEntry`]（0 跳）；
+/// - 经若干跳可达 → [`SafeEntryLineage::ReachableFromPublicSafeEntry`]；
+/// - 调用图完整但无人可达 → [`SafeEntryLineage::NoPublicSafeEntry`]；
+/// - 调用图不完整 → [`SafeEntryLineage::Unresolved`]。
+///
+/// 中间节点**不要求**是安全的：一个安全的公开 wrapper 调用私有 `unsafe fn` 时，
+/// 责任在 wrapper，客户端仍然只写安全代码。所以只有入口那一跳看 safety。
+///
+/// # 取值方向不对称
+///
+/// [`SafeEntryLineage::NoPublicSafeEntry`] 会把候选排除掉，是漏报方向，因此只在调用图
+/// **完整**时才允许给出。本 crate 内只要出现无法解析被调方的调用（函数指针、trait
+/// object、动态分发），整个 crate 的判定一律降为 [`SafeEntryLineage::Unresolved`]——
+/// 因为那条边可能正是把安全入口连到交出点的那一条。
+fn safe_entry_lineages(
+    tcx: TyCtxt<'_>,
+    hand_offs: &[(LocalDefId, String, String, PathBuf, String)],
+    call_graph: &HashMap<LocalDefId, HashSet<LocalDefId>>,
+    call_graph_complete: bool,
+) -> Vec<SafeEntryLineageObservation> {
+    // 反向可达：从每个交出点所在函数出发，沿调用边的**反向**找安全入口。
+    let mut callers = HashMap::<LocalDefId, HashSet<LocalDefId>>::new();
+    for (caller, callees) in call_graph {
+        for callee in callees {
+            callers.entry(*callee).or_default().insert(*caller);
+        }
+    }
+
+    hand_offs
+        .iter()
+        .map(|(def_id, api_id, callback_param, source_path, span)| {
+            let owner_is_unsafe_fn = fn_is_unsafe(tcx, *def_id);
+            let (lineage, entry_def_path, hops) = if !call_graph_complete {
+                (SafeEntryLineage::Unresolved, None, None)
+            } else if is_public_safe_entry(tcx, *def_id) {
+                (
+                    SafeEntryLineage::DirectPublicSafeEntry,
+                    Some(tcx.def_path_str(def_id.to_def_id())),
+                    Some(0),
+                )
+            } else {
+                match nearest_public_safe_caller(tcx, *def_id, &callers) {
+                    Some((entry, hops)) => (
+                        SafeEntryLineage::ReachableFromPublicSafeEntry,
+                        Some(tcx.def_path_str(entry.to_def_id())),
+                        Some(hops),
+                    ),
+                    None => (SafeEntryLineage::NoPublicSafeEntry, None, None),
+                }
+            };
+            SafeEntryLineageObservation {
+                owner_def_path: tcx.def_path_str(def_id.to_def_id()),
+                source_path: source_path.clone(),
+                span: span.clone(),
+                mir_location: format!("hir_signature:safe_entry_lineage:{callback_param}"),
+                api_id: api_id.clone(),
+                callback_param: callback_param.clone(),
+                owner_is_unsafe_fn,
+                entry_def_path,
+                hops,
+                lineage,
+            }
+        })
+        .collect()
+}
+
+fn fn_is_unsafe(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    tcx.hir_node_by_def_id(def_id)
+        .fn_sig()
+        .is_some_and(|sig| matches!(sig.header.safety, hir::HeaderSafety::Normal(hir::Safety::Unsafe)))
+}
+
+/// 对外可见且不是 `unsafe fn`。
+fn is_public_safe_entry(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    !fn_is_unsafe(tcx, def_id) && tcx.effective_visibilities(()).is_exported(def_id)
+}
+
+/// 反向 BFS 找最近的安全公开入口，返回入口与跳数。
+fn nearest_public_safe_caller(
+    tcx: TyCtxt<'_>,
+    start: LocalDefId,
+    callers: &HashMap<LocalDefId, HashSet<LocalDefId>>,
+) -> Option<(LocalDefId, u32)> {
+    let mut seen = HashSet::from([start]);
+    let mut frontier = vec![start];
+    let mut hops = 0u32;
+    while !frontier.is_empty() {
+        hops += 1;
+        let mut next = Vec::new();
+        for node in frontier {
+            for caller in callers.get(&node).into_iter().flatten() {
+                if !seen.insert(*caller) {
+                    continue;
+                }
+                if is_public_safe_entry(tcx, *caller) {
+                    return Some((*caller, hops));
+                }
+                next.push(*caller);
+            }
+        }
+        frontier = next;
+    }
+    None
+}
+
+/// 本 crate 内的直接调用边，以及调用图是否完整。
+///
+/// 只收能解析到**本 crate 局部定义**的被调方。遇到解析不出被调方的调用（函数指针、
+/// trait object、动态分发）时把完整性标记置假——那条边可能正是把安全入口连到交出点的
+/// 那一条，缺了它就不能下「无人可达」的结论。
+fn crate_call_graph(
+    tcx: TyCtxt<'_>,
+    body_owners: &[LocalDefId],
+) -> (HashMap<LocalDefId, HashSet<LocalDefId>>, bool) {
+    let mut graph = HashMap::<LocalDefId, HashSet<LocalDefId>>::new();
+    let mut complete = true;
+    for owner in body_owners {
+        let body = tcx.optimized_mir(*owner);
+        let edges = graph.entry(*owner).or_default();
+        for block in body.basic_blocks.iter() {
+            let Some(terminator) = &block.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call { func, .. } = &terminator.kind else {
+                continue;
+            };
+            match func.ty(&body.local_decls, tcx).kind() {
+                ty::FnDef(callee, _) => {
+                    if let Some(local) = callee.as_local() {
+                        edges.insert(local);
+                    }
+                    // 外部 crate 的被调方不影响本 crate 的可达性判定。
+                }
+                // 函数指针、闭包间接调用等：解析不出被调方。
+                _ => complete = false,
+            }
+        }
+    }
+    (graph, complete)
 }
 
 /// 回调分配交出之后由谁负责释放（PG-2）。

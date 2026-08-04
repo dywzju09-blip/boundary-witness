@@ -41,8 +41,9 @@ pub use candidate::{
 };
 pub use compatibility::{
     CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignInvocation,
-    ForeignRetention, HandOffId, LifetimeSubject, RustContractFact, StaticVerdict,
-    WitnessObligation, WitnessStatus, hand_off_is_incompatible, judge, judge_hand_off,
+    ForeignRetention, HandOffId, LifetimeSubject, RustContractAssembly, RustContractFact,
+    RustContractGap, StaticVerdict, WitnessObligation, WitnessStatus, assemble_rust_contract_facts,
+    hand_off_is_incompatible, judge, judge_hand_off,
 };
 pub use contract::{
     CALLBACK_RETENTION_API_MAP_SCHEMA_V01, CallbackApiEntry, CallbackRetentionApiMap,
@@ -135,8 +136,8 @@ pub use static_fact::{
     PersistedReturnedBorrowFact, RawPointerTransferFact, RawPointerTransferKind, RegistrationGuard,
     RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
-    ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, StaticArtifactIdentity, StaticFact,
-    StaticFactEnvelope, StaticSourceRef,
+    ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, SafeEntryLineage, SafeEntryLineageFact,
+    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef,
 };
 pub use static_ranking_reveal::{
     RevealStaticRankingInput, V3_2_5_PRIVATE_GROUND_TRUTH_SCHEMA_V1,

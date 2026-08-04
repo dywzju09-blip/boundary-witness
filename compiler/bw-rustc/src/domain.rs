@@ -17,6 +17,7 @@ use bw_model::{
     ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
     ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
     AllocationOwnership, AllocationOwnershipFact, RawPointerTransferFact,
+    SafeEntryLineage, SafeEntryLineageFact,
     RawPointerTransferKind, RecordId, RegistrationGuard,
     RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
@@ -183,6 +184,23 @@ pub struct CallbackLifetimeBoundObservation {
     pub callback_param: String,
     pub bound_lifetime: Option<String>,
     pub bound_scope: CallbackLifetimeBoundScope,
+}
+
+/// 一个回调交出点相对「公开且安全的入口」的可达性。
+///
+/// 与另外两个 Rust 侧事实按 `owner_def_path` + `callback_param` 配对。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SafeEntryLineageObservation {
+    pub owner_def_path: String,
+    pub source_path: PathBuf,
+    pub span: String,
+    pub mir_location: String,
+    pub api_id: String,
+    pub callback_param: String,
+    pub owner_is_unsafe_fn: bool,
+    pub entry_def_path: Option<String>,
+    pub hops: Option<u32>,
+    pub lineage: SafeEntryLineage,
 }
 
 /// 一个回调交出点上观察到的分配归属。
@@ -539,6 +557,7 @@ pub fn facts_from_mir_sites(
     callback_lifetime_bounds: &[CallbackLifetimeBoundObservation],
     registration_guards: &[RegistrationGuardObservation],
     allocation_ownerships: &[AllocationOwnershipObservation],
+    safe_entry_lineages: &[SafeEntryLineageObservation],
     returned_borrow_relations: &[ReturnedBorrowRelationObservation],
     persisted_returned_borrows: &[PersistedReturnedBorrowObservation],
     returned_borrow_invalidation_orders: &[ReturnedBorrowInvalidationOrderObservation],
@@ -1014,6 +1033,44 @@ pub fn facts_from_mir_sites(
                     into_raw_site_id,
                     reclaim_site_id,
                     ownership: ownership.ownership,
+                }),
+            )?,
+        );
+    }
+
+    for lineage in safe_entry_lineages {
+        if !source_is_stable(context, &lineage.source_path) {
+            continue;
+        }
+        let descriptor = SiteDescriptor::new(
+            &context.package,
+            &context.target,
+            &lineage.owner_def_path,
+            SiteRole::SafeEntryLineage,
+            source_path(context, &lineage.source_path),
+        )
+        .with_repo_root(&context.repo_root)
+        .with_mir_location(&lineage.mir_location)
+        .with_span(&lineage.span);
+        let site_id = descriptor.try_site_id()?;
+        insert_fact(
+            &mut facts,
+            envelope_with_source(
+                context,
+                "safe_entry_lineage",
+                &site_id,
+                &lineage.source_path,
+                &lineage.span,
+                Some(&lineage.owner_def_path),
+                StaticFact::SafeEntryLineage(SafeEntryLineageFact {
+                    site_id: site_id.clone(),
+                    semantic_site_key: descriptor.semantic_key(),
+                    api_id: lineage.api_id.clone(),
+                    callback_param: lineage.callback_param.clone(),
+                    owner_is_unsafe_fn: lineage.owner_is_unsafe_fn,
+                    entry_def_path: lineage.entry_def_path.clone(),
+                    hops: lineage.hops,
+                    lineage: lineage.lineage,
                 }),
             )?,
         );

@@ -379,6 +379,48 @@ pub struct AllocationOwnershipFact {
     pub ownership: AllocationOwnership,
 }
 
+/// 这个交出点能不能被**安全客户端**走到。
+///
+/// 判定的对象是「安全 API 允许 UB」。一个只能从 `unsafe fn` 或从 crate 内部私有路径
+/// 到达的交出点**不构成该主张的证据**——调用它本来就要写 `unsafe`，责任在调用方。
+/// 没有这一层过滤，候选池会混进大量与论题无关的位置。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SafeEntryLineageFact {
+    pub site_id: SiteId,
+    pub semantic_site_key: SemanticSiteKey,
+    pub api_id: String,
+    /// 与本事实配对的回调泛型参数名，与 [`CallbackLifetimeBoundFact::callback_param`] 同值。
+    pub callback_param: String,
+    /// 交出点所在函数本身是不是 `unsafe fn`。
+    pub owner_is_unsafe_fn: bool,
+    /// 找到的那个安全公开入口。`lineage` 为可达时必有值，仅作诊断。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_def_path: Option<String>,
+    /// 从入口到交出点的调用跳数。0 表示交出点自身就是入口。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hops: Option<u32>,
+    pub lineage: SafeEntryLineage,
+}
+
+/// 交出点相对「公开且安全的入口」的可达性。
+///
+/// 与 [`AllocationOwnership`] 一样，取值方向不对称：[`Self::NoPublicSafeEntry`] 会把
+/// 候选排除掉，是漏报方向，只在**本 crate 的调用图完整**时才允许给出。间接调用、
+/// trait object、宏生成的桥使调用图不完整时一律落 [`Self::Unresolved`]。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SafeEntryLineage {
+    /// 交出点所在函数自身就是公开的安全 API。
+    DirectPublicSafeEntry,
+    /// 经 wrapper/helper 可从某个公开安全 API 到达。
+    ReachableFromPublicSafeEntry,
+    /// 本 crate 内没有任何公开安全入口能到达它。**不计为安全交出点。**
+    NoPublicSafeEntry,
+    /// 调用图不完整，无法判定。
+    Unresolved,
+}
+
 /// 回调分配（`Box<F>` / trampoline userdata）交出后的归属。
 ///
 /// 取值方向不对称，必须小心：[`Self::ForeignOwnedUntilUnregister`] 会**否定**分离
@@ -598,6 +640,7 @@ pub enum StaticFact {
     CallbackLifetimeBound(CallbackLifetimeBoundFact),
     RegistrationGuard(RegistrationGuardFact),
     AllocationOwnership(AllocationOwnershipFact),
+    SafeEntryLineage(SafeEntryLineageFact),
     ReturnedBorrowRelation(ReturnedBorrowRelationFact),
     PersistedReturnedBorrow(PersistedReturnedBorrowFact),
     ReturnedBorrowInvalidationOrder(ReturnedBorrowInvalidationOrderFact),
@@ -765,6 +808,13 @@ impl StaticFact {
                         .foreign_release_callee
                         .as_deref()
                         .is_none_or(has_required_text)
+            }
+            Self::SafeEntryLineage(fact) => {
+                has_required_text(fact.site_id.as_str())
+                    && has_required_text(fact.semantic_site_key.as_str())
+                    && has_required_text(&fact.api_id)
+                    && has_required_text(&fact.callback_param)
+                    && fact.entry_def_path.as_deref().is_none_or(has_required_text)
             }
             Self::AllocationOwnership(fact) => {
                 has_required_text(fact.site_id.as_str())
