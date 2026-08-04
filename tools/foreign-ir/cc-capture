@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# 外部 C 编译的 IR 捕获包装器。
+#
+# 作为 `CC` 交给 cargo 的构建脚本。对每一次真实的 C 编译，它做两件事：
+#
+#   1. 原样调用真实编译器，产出构建实际需要的目标文件；
+#   2. 用**同一组参数**再跑一次 `-emit-llvm -c`，产出与该目标文件对应的 bitcode。
+#
+# 关键在第 2 步用的是同一组参数。执行计划阶段 2 明确要求"不得另编一份相似的 C 源码"
+# ——宏、include path、优化级别任何一项不同，得到的 IR 就不是这次构建里那份代码。
+#
+# 每次捕获追加一条 manifest 记录，含源文件、目标文件、bitcode 与参数的 SHA-256，
+# 供 artifact 绑定回查。
+set -euo pipefail
+
+: "${BW_FOREIGN_IR_DIR:?BW_FOREIGN_IR_DIR must point at the capture directory}"
+real_cc="${BW_REAL_CC:-clang}"
+
+mkdir -p "$BW_FOREIGN_IR_DIR"
+manifest="${BW_FOREIGN_IR_DIR}/capture-manifest.jsonl"
+
+# 先把构建真正需要的产物做出来。失败就原样失败，不掩盖。
+"$real_cc" "$@"
+
+# 只在"编译单个 .c 到 .o"这种调用上捕获 IR。链接、预处理、配置探测都跳过。
+source_file=""
+object_file=""
+compile_only=0
+next_is_output=0
+for arg in "$@"; do
+  if [[ $next_is_output -eq 1 ]]; then
+    object_file="$arg"
+    next_is_output=0
+    continue
+  fi
+  case "$arg" in
+    -c) compile_only=1 ;;
+    -o) next_is_output=1 ;;
+    *.c) source_file="$arg" ;;
+  esac
+done
+
+if [[ $compile_only -ne 1 || -z "$source_file" || -z "$object_file" ]]; then
+  exit 0
+fi
+
+# bitcode 与目标文件同名，放在捕获目录下的镜像路径里，避免与构建产物混在一起。
+bc_name="$(printf '%s' "$object_file" | sha256sum | cut -c1-16)"
+bc_file="${BW_FOREIGN_IR_DIR}/${bc_name}.bc"
+
+# 用同一组参数重跑；把 -o 换成 bitcode 路径。
+args=()
+skip_next=0
+for arg in "$@"; do
+  if [[ $skip_next -eq 1 ]]; then
+    skip_next=0
+    continue
+  fi
+  if [[ "$arg" == "-o" ]]; then
+    skip_next=1
+    continue
+  fi
+  args+=("$arg")
+done
+
+if ! "$real_cc" -emit-llvm "${args[@]}" -o "$bc_file" 2>"${bc_file}.log"; then
+  # 捕获失败不能让构建失败，但必须留下记录——静默丢弃会让 IR 覆盖率虚高。
+  printf '{"status":"capture_failed","source":"%s","object":"%s","log":"%s"}\n' \
+    "$source_file" "$object_file" "${bc_file}.log" >>"$manifest"
+  exit 0
+fi
+
+args_hash="$(printf '%s\0' "$@" | sha256sum | cut -d' ' -f1)"
+source_hash="$(sha256sum "$source_file" | cut -d' ' -f1)"
+object_hash="$(sha256sum "$object_file" | cut -d' ' -f1)"
+bc_hash="$(sha256sum "$bc_file" | cut -d' ' -f1)"
+
+printf '{"status":"captured","source":"%s","source_sha256":"%s","object":"%s","object_sha256":"%s","bitcode":"%s","bitcode_sha256":"%s","args_sha256":"%s","cc":"%s"}\n' \
+  "$source_file" "$source_hash" \
+  "$object_file" "$object_hash" \
+  "$bc_file" "$bc_hash" \
+  "$args_hash" "$real_cc" >>"$manifest"

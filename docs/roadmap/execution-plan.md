@@ -86,8 +86,8 @@
 ✅ safe-entry lineage / is_unsafe_fn                 Implemented
 ✅ RustContractFact 自动装配                         Implemented
 ✅ 1.4 Rust 侧输出固定与回归                         Implemented
-⬜ 真实外部 IR 获取与绑定                            下一步
-⬜ Q1 / Q4′ / 降级 Q3                                Planned
+✅ 真实外部 IR 获取与绑定（阶段 2，V0 通过）        Implemented
+⬜ Q1 / Q4′ / 降级 Q3                                下一步
 ⬜ P0 identity / Schema / P3                          Planned
 ⬜ P4 witness / 独立 oracle                           Planned
 ⬜ 小样本与大规模评估                                后置
@@ -101,12 +101,17 @@
 checksum 的产物；重复运行产出逐字节相同（有断言）；`Unresolved` 带 `UnresolvedReason`
 机器可读原因，并按原因分类计数——那是 attrition waterfall 的输入。
 
-**当前唯一主线下一步是阶段 2.1：选一个真实参考目标并取得精确外部 IR。** 不先跑
-300–500 crate，不先做完整 baseline，也不先准备 sealed holdout。
+**阶段 2 已完成（2026-08-04）**，见 [结果记录](../experiments/results/stage2-foreign-ir-v0-2026-08-04.md)：
+参考目标选定为 rusqlite 0.26.1/0.26.2（L1，SQLite 随构建从源码编译），adapter 已在
+`809cc2f` 冻结且冻结时无任何 P3 判定，`tools/foreign-ir/cc-capture` 用**同一组构建参数**
+捕获到 40 个编译单元的 bitcode，V0 检查确认 `sqlite3_update_hook` 在捕获的 IR 中有定义。
 
-**选定目标时必须同时写完并冻结该目标的 adapter**（记 commit 与时间戳）。adapter 直到
-阶段 5 才用得上，很容易拖到那时再写——但那时 P3 结果已经出来，写出来的 adapter 无法
-证明没有掺入缺陷信息，[Gate B](milestone-gates.md) 的判据就废了。
+**当前唯一主线下一步是阶段 3：Q1 → Q4′ → 降级 Q3。** 不先跑 300–500 crate，不先做完整
+baseline，也不先准备 sealed holdout。
+
+**adapter 已按这条要求在选定目标时同步冻结**，见 `adapters/rusqlite/update_hook.toml`。
+它直到阶段 5 才用得上，但拖到那时再写就无法证明没有掺入缺陷信息，
+[Gate B](milestone-gates.md) 的判据会废掉。
 
 ---
 

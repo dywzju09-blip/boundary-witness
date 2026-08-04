@@ -1,0 +1,58 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:rusqlite:update_hook"
+
+# 冻结记录。执行计划阶段 2.1 与 Gate B 都要求 adapter 在该目标的 P3 判定出来**之前**
+# 冻结——否则无法证明它没有掺入缺陷信息。
+[freeze]
+frozen_at = "2026-08-04T16:57:00Z"
+frozen_at_commit = "809cc2ff95dcb9b8a588ff162a858a172a1237d1"
+# 冻结时本目标尚无任何 P3 判定：P1/P2 外部侧分析都还没实现。
+p3_verdict_available_at_freeze = false
+authored_from = "rusqlite 公开 API 文档与 sqlite3 update hook 的公开文档"
+
+[target]
+crate = "rusqlite"
+# vulnerable/fixed 复用同一份 adapter，见执行计划 2.1。
+versions = ["0.26.1", "0.26.2"]
+features = ["bundled", "hooks"]
+api_path = "rusqlite::Connection::update_hook"
+
+# ---------------------------------------------------------------------------
+# 以下只描述「如何合法调用这个公开 API」。
+#
+# **禁止出现的内容**（Gate B 的核心判据）：
+#   - 对象的 drop 时机；
+#   - 触发缺陷的动作顺序；
+#   - 任何预期结果或缺陷描述。
+#
+# 危险动作序列必须由判定结果自动推导，不能从这里读出来。
+# ---------------------------------------------------------------------------
+
+# 调用目标 API 之前需要准备什么。
+[[setup]]
+step = "open_connection"
+# 内存库即可，不需要外部状态。
+rust = "let conn = rusqlite::Connection::open_in_memory()?;"
+
+[[setup]]
+step = "create_table"
+rust = "conn.execute_batch(\"CREATE TABLE t (v INTEGER)\")?;"
+
+# 目标 API 本身怎么调。
+[registration]
+receiver = "conn"
+method = "update_hook"
+# 回调参数的形状，供生成器构造一个类型正确的闭包。
+callback_signature = "FnMut(rusqlite::hooks::Action, &str, &str, i64)"
+callback_arg_index = 0
+# `None` 表示清除当前回调，这是该 API 的公开语义。
+accepts_none_to_clear = true
+
+# 怎么让外部组件执行一次回调。这是**正常使用**：任何写入都会让 SQLite 调用 update hook。
+[trigger]
+step = "perform_write"
+rust = "conn.execute(\"INSERT INTO t (v) VALUES (1)\", [])?;"
+
+[teardown]
+step = "drop_connection"
+rust = "drop(conn);"
