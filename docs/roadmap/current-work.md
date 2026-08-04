@@ -14,8 +14,8 @@
 | PC `EffectiveCaptureAdmission` | ✅ `Implemented` |
 | PG-1 `RegistrationGuard` | ✅ `Implemented` |
 | PG-2 `AllocationOwnership` | ⬜ 零行代码，**下一步** |
-| PP 猎物探针 / Gate P | ⬜ 判据待修正后由维护者执行 |
-| P0 / P1 / P2 / P3 / P4 | ⬜ `Planned`，**Gate P 通过后才启动** |
+| PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
+| P0 / P1 / P2 / P3 / P4 | ⬜ `Planned`，按 execution plan 完成单目标闭环 |
 
 Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关联 → 把判定与判定来源写入产物」整条链。但外部侧那一半的证据来自 API 清单分类出的注册与注销事实，不是外部代码本身的行为。因此：
 
@@ -51,7 +51,7 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 **[Gate A](milestone-gates.md#gate-a外部证据必要性) 的增益必须归因到那里**，不能笼统地说「因为我们看了外部侧」。
 
-## 已完成：PC `EffectiveCaptureAdmission`（Gate P 前置）
+## 已完成：PC `EffectiveCaptureAdmission`（Rust 契约事实之一）
 
 2026-07-31 完成。落点：`crates/bw-model/src/static_fact.rs`（语义取值与映射）、
 `compiler/bw-rustc/src/rustc_api/mir.rs`（trait object 覆盖）、
@@ -83,15 +83,15 @@ Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关�
 
 `EffectiveCaptureAdmission` 一度在 `compatibility.rs` 与 `static_fact.rs` 各有一份定义——正是 [代码库审计 §7.3](../development/codebase-realignment.md) 记的 `sanitize_id` 那种分歧。已合并成一份，放在事实层，关系层 import。
 
-## Gate P（PP 猎物存在性探针）：由维护者自行执行
+## Gate P（PP 猎物存在性探针）：核心闭环后由维护者执行
 
-**2026-07-31 决定。** 本阶段不由 Agent 推进。
+**2026-08-04 调整执行时机。** 本阶段仍由维护者执行，但不再阻塞 P0–P4 的核心功能实现；它在 Core Complete 后决定是否投入规模化评估和新发现搜索。
 
 **维护者对猎物池规模的印象可以决定是否值得跑这个实验，但不构成 Gate P 通过**——通过需要预注册的正式结果。
 
 **由谁执行不改变判据。** [runbook](../experiments/runbooks/prey-existence-probe.md) 的六条方法学要求缺一条结论就不可用：语义取值 `EffectiveCaptureAdmission`（不用语法四态）；只数 Tier A（dataflow 到达精确 extern 参数，不是语法共现）；**safe-entry lineage**（只到达 extern 参数不证明安全客户端够得着）；只算 L1 可分析；**Tier A-R 与 Tier A-A 分开判定**；判据用换算公式与置信界，不用「足够」这类事后可移动的措辞。**运行前必须完成 family-level sealed split**，否则整个前瞻池变成开发集。
 
-**三处必须先修的判据缺口**，见 [execution plan 的 0.3](execution-plan.md)：事实层不记录 `is_unsafe_fn`（实测 `unsafe extern "C" fn trampoline` 也产出 callback bound 事实）；没有 safe-entry lineage；`AllocationOwnership` 未实现导致 Tier A-A 无法统计。**第三项若来不及做，必须写明本次只决定 R 子路线，A 保持 `Unknown`，不得默认为零。**
+**三处必须先修的判据缺口**，见 [execution plan 阶段 1 与阶段 7](execution-plan.md)：事实层不记录 `is_unsafe_fn`（实测 `unsafe extern "C" fn trampoline` 也产出 callback bound 事实）；没有 safe-entry lineage；`AllocationOwnership` 未实现导致 Tier A-A 无法统计。**第三项若来不及做，必须写明本次只决定 R 子路线，A 保持 `Unknown`，不得默认为零。**
 
 ## 已完成：PG-1 `RegistrationGuard`
 
@@ -148,9 +148,21 @@ golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。
 
 细化、可复用原材料与非空性检查见 [implementation plan 的 PG](implementation-plan.md#pg-rust-侧剩余的两个事实)。
 
-## 再之后：P0 与 P1 并行起步
+## PG-2 之后的直接顺序
 
-**仅在 Gate P 通过后启动。** 完整顺序与依赖类型见 [execution plan](execution-plan.md) 的阶段 2。
+完整顺序与每一步验收见 [execution plan](execution-plan.md)。当前主线不先跑大规模 Gate P：
+
+```text
+PG-2
+→ is_unsafe_fn + safe-entry lineage
+→ RustContractFact 自动装配
+→ 真实外部 IR 获取与 artifact binding
+→ Q1 → Q4′ → 降级 Q3
+→ P0 identity + Schema → P3
+→ P4 witness + 独立 oracle
+→ Core Complete
+→ 小样本 Gate P / Gate C0
+```
 
 ### P0 hand-off 身份与双侧事实模型
 

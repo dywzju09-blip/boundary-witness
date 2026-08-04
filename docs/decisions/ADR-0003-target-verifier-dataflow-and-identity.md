@@ -37,10 +37,10 @@ candidate 不再充当两侧事实的连接主干，只作展示与调度视图�
 ## Consequences
 
 - Gate P 的 Tier A 判据必须加入 safe-entry lineage 一条，候选池估计因此收紧；
-- 分层身份、三态判定与外部侧事实合并为**一次** schema 升版（见 [codebase realignment](../development/codebase-realignment.md) 的 D2），在阶段 2 与阶段 3 的记录形状定稿之后进行；
+- 分层身份、三态判定与外部侧事实合并为**一次** schema 升版（见 [codebase realignment](../development/codebase-realignment.md) 的 D2），在 [execution plan](../roadmap/execution-plan.md) 阶段 1–3 的记录形状定稿、进入阶段 4 时进行；
 - 现有静态事实继续作为底层观察保留，新的契约/行为/判定三层是它们的聚合，不删除既有事实种类；
 - 身份字段通过现有站点描述符 builder 的 `with_*` 方法新增，既有调用点不受影响；
-- **若 Gate P 判定转路线 C，本 ADR 的实现部分作废**，不得因为文档已写好就照着实现。
+- Gate P No-Go 不撤销本 ADR 的核心实现；分层身份仍用于已经完成的单目标闭环。No-Go 只阻止继续扩大样本，后续按路线 B/C/D 的实际数据需求决定是否继续扩展字段。
 
 ## References
 

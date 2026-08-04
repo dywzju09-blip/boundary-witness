@@ -16,7 +16,7 @@
 10. [current work](../roadmap/current-work.md)
 11. 本文和 [testing strategy](testing-strategy.md)
 
-**开工前先看 execution plan 的「现在在哪」一节。** 该节列出各阶段的真实状态；不要按其他文档里的历史描述推断进度。
+**开工前先看 execution plan 的「当前位置」一节。** 该节列出各阶段的真实状态；不要按其他文档里的历史描述推断进度。
 
 ## 事实优先级
 

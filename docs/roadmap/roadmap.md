@@ -15,19 +15,24 @@ PF 关系与四 fixture ──（Gate R）── 已完成
 PC EffectiveCaptureAdmission ───── 已完成
 PG-1 RegistrationGuard ─────────── 已完成
 PG-2 AllocationOwnership ───────── 下一步
-                                  ↓
-                     PP 猎物存在性探针（Gate P）──（决定后续是否投入）──┐
-                                                                        │
-P0 hand-off 身份与双侧事实模型 ─────────────────────────────────────────┼─→ P3 判定器 ─→ P4 反证合成 ─→ P5 评估
-                                                                        │
-P1 外部侧 Q1 ─→ Q4′ 清槽 ─→ 降级 Q3 晚调（P2）─────────────────────────┘
+        ↓
+RustContractFact 自动装配
+        ↓
+真实外部 IR → Q1 → Q4′ → 降级 Q3
+        ↓
+P0 identity + Schema → P3 判定器 → P4 反证合成
+        ↓
+单目标 Core Complete
+        ↓
+PP 小样本探针（Gate P）→ P5 由小到大的评估
 ```
 
-**执行顺序上最重要的三条：**
+**执行顺序上最重要的四条：**
 
 1. **PF 排在一切之前。** 关系错了，后面所有测量都在测错的东西。它的外部侧用手写 C stub，与 P1/P2 完全解耦。
 2. **PG 是 P3 能吃到真实数据的前提。** 判定关系需要三个 Rust 侧事实，PC 与 PG-1 各完成一个。
-3. **PP 排在外部侧实现之前。** 成本约为 P1+P2 的百分之一，却能否定整条路线。**Gate P 通过前不启动 P0 及以后。**
+3. **核心闭环排在规模测量之前。** 先完成一个真实目标上的 Rust → IR → foreign facts → join → P3 → P4，再估候选转化率；否则 Gate P-b 没有真实测量工具。
+4. **Gate P 阻塞规模化投入，不阻塞核心原型。** Gate P No-Go 时保留已完成的纵向工具链，转路线 B/C/D，不继续 50–100+ crate 评估和新发现搜索。
 
 外部侧内部的顺序按判别力排：**Q1（槽位身份）→ Q4′（清槽，真正的判别项）→ 降级 Q3（晚调候选）**，不按查询编号排。
 
@@ -70,14 +75,14 @@ P1 外部侧 Q1 ─→ Q4′ 清槽 ─→ 降级 Q3 晚调（P2）────�
 
 服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：PC、PG-2（Tier A-A 判据需要分配归属事实）。
 
-在 300–500 个 FFI crate 上运行 Rust-only 前端，统计 **Tier A** 交出点。仅语法共现的 Tier B 只作探索性筛选，**不得用作 Go/No-Go**。
+核心闭环完成后，先在 5–10 个目标上校准接入流程，再扩到 10–30 个 crate，最后依据预注册的置信区间决定是否扩大候选池。正式 Gate P 样本可以继续扩到 300–500 个 FFI crate，但不再作为 P0/P1/P2/P3/P4 的启动前置。仅语法共现的 Tier B 只作探索性筛选，**不得用作 Go/No-Go**。
 
 **Tier A 分成两支，分别统计、分别判定**：`Tier A-R`（referent 类，`PermitsNonStaticCapture`）与 `Tier A-A`（allocation 类，`RequiresStaticCapture` + 分配可提前释放）。**两支的判据互斥**——只统计 R 会把 allocation 这一整类猎物记成零。
 
 - 风险：低
 - 完成谓词：候选池表，分列 Tier A-R / Tier A-A / Tier B，标注 IR tier，区分已调优与未调优；按 crate / repository / 外部库家族聚类；判据用置信界
 - 运行前必须完成 family-level sealed split，默认只返回盲化聚合统计
-- **失败动作**：R 与 A 都不足以支撑确认集则转路线 C，不投入 P1/P2。**不得因 R 的 No-Go 自动放弃 A**
+- **失败动作**：R 与 A 都不足以支撑确认集则停止规模化投入，基于已完成的核心闭环转路线 B/C/D。**不得因 R 的 No-Go 自动放弃 A**
 
 ## P0 — hand-off 身份与双侧事实模型
 

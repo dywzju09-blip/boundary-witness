@@ -52,7 +52,7 @@ C2 类型契约 × 外部 effect 的精化检查：Rust 签名是规约，外部
 **尚未达成，但在路线上**（阶段编号见 [roadmap](../roadmap/roadmap.md)）：
 
 - 回调分配归属（PG-2）——**当前最高优先级**，是判定关系需要的第三个 Rust 侧事实；
-- 猎物存在性的规模测量（PP / Gate P）——判据修正后由维护者执行，决定后续投入是否有意义；
+- 猎物存在性的规模测量（PP / Gate P）——核心闭环后由维护者执行，决定是否继续规模化评估和新发现搜索；
 - 外部侧行为分析——Q1 逃逸与 Q3 晚调（P1、P2）。**这是 C2 的前提**。Q3 首期为降级实现；
 - safe-only 反证合成与动态确认（P4，C1 的全部内容）；
 - 生态级度量与新发现（C3 的全部内容）；
@@ -126,7 +126,7 @@ C2 类型契约 × 外部 effect 的精化检查：Rust 签名是规约，外部
 
 ## 当前研究路线
 
-路线按 [roadmap](../roadmap/roadmap.md) 的阶段执行。**执行顺序上最重要的一条：PP 猎物存在性探针排在一切之前**——它成本约为外部侧实现的百分之一，却能否定整条路线。Gate P 通过后，P0 与 P1 并行起步，P2（外部侧晚调查询）是风险最高的一段并已记录降级方案。
+路线按 [execution plan](../roadmap/execution-plan.md) 执行。**先完成一个真实目标上的 Rust → 外部 IR → 双侧联结 → P3 → P4 核心闭环，再从小样本逐步扩大。** Gate P 不再阻塞核心原型，而是在闭环完成后用真实转化率决定是否继续规模化评估。P2（外部侧晚调查询）仍是风险最高的一段，并保留降级方案。
 
 在此之上仍需：收紧 opaque-handle identity、returned-borrow claimant 与 proof-layer 语义；扩展但不放宽同对象 `ObjectFlow` 与 release/use ordering；把 contract 消费推进为可审计的通用 registry；在 clean method commit 上执行完整 public regression 与约 100 crate 工程 pilot；冻结 scanner、Contract、feature profile 与 checksum；使用新的未 reveal sealed holdout 进行 blind smoke。仅在全部 gate 通过后进入 V3.3。
 

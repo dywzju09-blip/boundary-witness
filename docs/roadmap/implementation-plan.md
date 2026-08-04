@@ -28,17 +28,20 @@
 PF 关系与四 fixture ──（Gate R）── 已完成
 PC EffectiveCaptureAdmission ───── 已完成
 PG-1 RegistrationGuard ─────────── 已完成
-                                  ↓
-                     PP 猎物存在性探针（Gate P）──（决定后续是否投入）──┐
-                                                                        │
-PG Rust 侧剩余两个事实 ─┐                                               │
-                        ├─→ P0 hand-off 身份与双侧事实模型 ─────────────┼─→ P3 判定器 ─→ P4 反证合成 ─→ P5 评估
-P1 外部侧 Q1 逃逸 ──────┴─→ P2 外部侧 Q3 晚调 + Q4′ 清槽 ───────────────┘
+PG-2 AllocationOwnership ───────── 下一步
+        ↓
+safe-entry / RustContractFact
+        ↓
+真实外部 IR → P1 Q1 → P2 Q4′ → 降级 Q3
+        ↓
+P0 identity + Schema → P3 判定器 → P4 反证合成
+        ↓
+单目标 Core Complete → PP / Gate P → P5 由小到大的评估
 ```
 
 - **PF 排在一切之前**：关系错了，后面所有测量都在测错的东西。它的外部侧用手写 C stub，**与 P1/P2 完全解耦**。已完成。
 - **PC 是 PP 的前置**：语法四态会让 PP 系统性错估猎物池。已完成。
-- **PP 决定是否投入外部侧实现。由维护者自行执行**，见该节。
+- **PP 在核心闭环后决定是否投入规模化评估和新发现搜索。由维护者自行执行**，见该节。
 - **PG 是 P3 能吃到真实数据的前提**：关系需要三个 Rust 侧事实，PC 只做完其中一个。
 - **Q4′ 已从附属查询升为主查询**，见 P2。
 
@@ -159,29 +162,31 @@ P1 外部侧 Q1 逃逸 ──────┴─→ P2 外部侧 Q3 晚调 + Q4�
 
 ## PP — 猎物存在性探针
 
-**服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。前置：PC（已完成）。风险：低。成本：约为 P1+P2 的百分之一。**
+**服务 [Gate P](milestone-gates.md#gate-p猎物存在性)。实现前置：PC、PG-2、`is_unsafe_fn`、safe-entry lineage；正式 Gate P-b 还依赖 P1–P4 的核心闭环。风险：低。**
 
 > **执行归属：由维护者自行执行**（2026-07-31 决定）。维护者已确认猎物池中存在相当数量的相关问题，因此本阶段不由 Agent 推进。判据与统计口径仍以本节及 [runbook](../experiments/runbooks/prey-existence-probe.md) 为准——**由谁执行不改变 Gate P 的判据**，尤其是 Tier A、L1 可分析、置信界与 family-level sealed split 四条。
 
 ### 问题
 
-在投入外部侧实现之前必须知道：生态里还剩多少个**安全客户端可能形成 lifetime separation 的交出点**。这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，猎物池可能已被维护者清空。**若池子不足以支撑 [research thesis §7.8](../project/research-thesis.md) 的确认集与新发现目标，路线 A 不成立。**
+在投入规模化评估之前必须知道：生态里还剩多少个**安全客户端可能形成 lifetime separation 的交出点**，以及这些候选有多少能经完整流水线转成独立确认。Gate P-a 测池子，Gate P-b 测转化率。**若池子不足以支撑 [research thesis §7.8](../project/research-thesis.md) 的确认集与新发现目标，路线 A 不继续扩大，但已经完成的核心工具链仍可支持路线 B/C/D。**
 
-### 为什么现在就能做
+### 为什么核心闭环后再正式做
 
-Rust 侧的回调 bound 判定**已实现**（`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`），不依赖外部侧、不依赖 API 清单。探针需要的是把它按 PC 改成语义取值，加上 Tier A 的 dataflow 判据，再跑到规模上。
+Gate P-a 的 Rust-only 扫描内核可以提前开发；但 Gate P-b 需要真实的 candidate → join → verdict → witness → confirmation 流水线。先完成一个纵向闭环，才能测转化率而不是使用手工估计。
 
 ### 要做
 
-在 300–500 个 FFI crate 上运行 Rust-only 前端，按两级统计：
+先在 5–10 个目标上校准，在 10–30 个 crate 上做小型 pilot，再根据预注册样本量决定是否扩到 300–500 个 FFI crate。按两级统计：
 
-**Tier A（Gate P 的判据）** —— 同时满足：
+**Tier A-R（referent 子路线）** —— 同时满足：
 
 1. 是安全 API（无 `unsafe fn`）；
 2. 有 Fn 家族的泛型或 trait object 参数；
 3. 该参数的 `EffectiveCaptureAdmission` 为 `PermitsNonStaticCapture`（**语义取值，不是语法四态**，见 PC）；
 4. 回调 / trampoline / userdata 经过程内或**有界过程间 dataflow 到达精确的 extern 参数**；
 5. 能绑定到精确的外部 LLVM IR（L1 tier）。
+
+**Tier A-A（allocation 子路线）** —— 前四项中的安全入口、精确 hand-off 与 L1 要求相同，但契约条件改为 `RequiresStaticCapture + RustRetainsAndMayFreeEarly`。R 与 A 必须分别统计、分别判定，不能因 R 的 No-Go 把 A 默认为零。
 
 **Tier B（仅探索性筛选）** —— 回调表面与 `extern` 调用只发生**语法共现**（同函数内出现 extern 调用）。
 
@@ -528,7 +533,7 @@ WitnessObligation  = EstablishLateInvoke
 
 | 子阶段 | 内容 | 时机 |
 | --- | --- | --- |
-| **P4a** | adapter schema、合法 API 使用方式的描述规范、人工成本口径 | **Gate P 通过后尽早**，必须在该 crate 的判定跑出来之前 |
+| **P4a** | adapter schema、合法 API 使用方式的描述规范、人工成本口径 | 核心闭环早期定义；crate-specific adapter 必须在该 crate 的判定跑出来之前冻结 |
 | **P4b** | 由判定/义务推导危险动作序列并执行 | P3 之后 |
 
 **对正式 unseen 样本**：crate-specific adapter 必须在看到判定与 ground truth 之前冻结；最好由独立准备者完成；vulnerable/fixed pair 尽量复用同一份 adapter。
@@ -589,19 +594,20 @@ WitnessObligation  = EstablishLateInvoke
 
 ## P5 — 评估
 
-实验结构、指标定义、ground truth、数据隔离与消融见 [research thesis §7](../project/research-thesis.md)，不在此重复。执行顺序：
+实验结构、指标定义、ground truth、数据隔离与消融见 [research thesis §7](../project/research-thesis.md)，不在此重复。执行顺序按“功能闭环优先、规模评估后置”：
 
 1. PF 四个 matched fixture（Gate R）
-2. PP 猎物探针（Gate P）
-3. LLVM micro/pattern suite
-4. matched pairs（Gate A）
-5. historical vulnerable/fixed pairs
-6. 消融八项
-7. 与 Yuga / FFIChecker 的精度对照（[runbook](../experiments/runbooks/precision-comparison-at-scale.md)）
-8. 与 MiriLLI + 现有测试套件的对照
-9. 与 deepSURF 的对照——**固定 crate/version/feature/target、CPU 与时间预算、工具与 LLM 版本、随机种子、重复次数，报告 timeout-censored 的 time-to-witness**。rusqlite 上 108 harness / 84.2% 覆盖 / 24h 每个 / 0 bug 是基准点
-10. 生态级扫描，报告完整 attrition waterfall
-11. 前瞻扫描与披露（Gate D）
+2. LLVM micro/pattern suite
+3. 单一真实 historical vulnerable/fixed pair
+4. matched pairs（Gate A1）与 safe-only witness（Gate B 最小线）
+5. 5–10 个目标的接入校准
+6. 10–30 个 crate 的小型 pilot
+7. PP 猎物探针与真实转化率（Gate P）
+8. 消融八项与 Gate A2
+9. 与 Yuga / FFIChecker 的精度对照（[runbook](../experiments/runbooks/precision-comparison-at-scale.md)）
+10. 与 MiriLLI、deepSURF 和现有测试套件对照；固定环境并报告 timeout-censored time-to-witness
+11. 生态级扫描，报告完整 attrition waterfall
+12. 前瞻扫描与披露（Gate D）
 
 ---
 

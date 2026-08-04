@@ -2,19 +2,19 @@
 
 本文定义 gate 的输入、判据、输出与失败动作。**研究 gate（R、P、A、B、C0、C、D）决定论题能不能立住；工程 gate（1–6）决定能不能从 V3.2.x 进入 V3.3。两者互不替代**——任何工程 gate 通过都不能推出创新点成立，反之亦然。
 
-方向权威见 [research thesis](../project/research-thesis.md)，执行顺序与依赖类型见 [execution plan](execution-plan.md)。本文于 2026-07-30 重写研究 gate 部分，旧的「Gate 0：研究前提」已被 Gate R/P/A/B/C/D 取代。2026-07-31 复审后新增 Gate R 并重做 Gate P 的判据；同日第二次复审拆分 Gate P（P-a/P-b、R/A）、Gate A（A1/A2），新增 Gate C0，并给 Gate B/D 分出最小通过线与投稿竞争线。
+方向权威见 [research thesis](../project/research-thesis.md)，执行顺序与依赖类型见 [execution plan](execution-plan.md)。本文于 2026-07-30 重写研究 gate 部分，旧的「Gate 0：研究前提」已被 Gate R/P/A/B/C/D 取代。2026-07-31 复审后新增 Gate R 并重做 Gate P 的判据；同日第二次复审拆分 Gate P（P-a/P-b、R/A）、Gate A（A1/A2），新增 Gate C0，并给 Gate B/D 分出最小通过线与投稿竞争线。2026-08-04 将 Gate P 调整到单目标核心闭环之后：它阻塞规模化投入，不再阻塞 P0–P4 原型。
 
 ## 研究 gate 一览
 
 | Gate | 输入 | 判据 | 输出 | 失败动作 |
 | --- | --- | --- | --- | --- |
 | **R** | 四个 matched fixture + 手工 foreign oracle | 四条全判对，fixture 2/3 只有 Full 能分开 | 关系实现可用 | 转路线 B |
-| **P-a** | 前瞻池盲化统计 | Tier A-R / A-A 候选数下置信界 | 猎物池规模估计 | 见 P-b |
-| **P-b** | 开发集 | 候选→确认的保守转化率下界 | 可用猎物估计 | R 与 A 皆 No-Go → 转路线 C |
 | **A1** | 同一 candidate universe 上的 Full vs Rust-only | 预注册的最小效应量与置信下界 | 机制增益成立与否 | 转路线 B |
-| **A2** | static-only vs static+witness | 预注册的确认率/覆盖率/成本变化 | 端任务增益 | 转路线 B |
-| **C0** | 3–5 个外部库家族 | IR 获取、符号解析、artifact 绑定可行 | 接入成本量化 | 收窄 scope 或转路线 |
 | **B** | 判定或反证义务 + 冻结的 adapter | 至少一个真正 unseen 成功 + 竞争线指标 | 可执行反证 | C1 降级为 contract-path synthesis |
+| **P-a** | 前瞻池盲化统计 | Tier A-R / A-A 候选数下置信界 | 猎物池规模估计 | 见 P-b |
+| **P-b** | 已跑通核心闭环的开发集 | 候选→确认的保守转化率下界 | 可用猎物估计 | R 与 A 皆 No-Go → 停止扩大，转路线 B/C/D |
+| **C0** | 3–5 个外部库家族 | IR 获取、符号解析、artifact 绑定可行 | 接入成本量化 | 收窄 scope 或转路线 |
+| **A2** | static-only vs static+witness | 预注册的确认率/覆盖率/成本变化 | 端任务增益 | 转路线 B |
 | **C** | 认证期跨库结果 | 认证期决定，**不是路线 A 前置** | 外部效度陈述 | 收窄外部效度声明 |
 | **D** | 冻结后的 unseen corpus | 最低线：≥1 个独立确认的新发现 | 确认性结论 | 不可投 |
 
@@ -22,7 +22,7 @@
 
 # 研究 gate
 
-按执行顺序排列。每一道都是研究方向的止损点。
+以下按 gate 编号解释判据，不代表工程实现顺序。**实际顺序以 execution plan 为准：Gate R 已完成；Gate A1 与 Gate B 最小线随单目标核心闭环验收；Gate P/C0 再决定是否扩大；A2/C/D 属规模化与确认性评估。**
 
 ## Gate R：关系正确性
 
@@ -47,9 +47,9 @@
 
 ## Gate P：猎物存在性
 
-在投入外部侧实现之前必须回答：生态里还剩多少个**安全客户端可能形成 lifetime separation 的交出点**。
+在投入规模化评估和新发现搜索之前必须回答：生态里还剩多少个**安全客户端可能形成 lifetime separation 的交出点**，这些候选又有多少能经完整流水线转成独立确认。
 
-这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，许多维护者早已收紧 bound。**若猎物池不足以支撑 [research thesis §7.8](../project/research-thesis.md) 的确认集与新发现目标，路线 A 不成立。**
+这一缺陷类在 Rust 社区是公开知识，`'static` 修法众所周知，许多维护者早已收紧 bound。**若猎物池不足以支撑 [research thesis §7.8](../project/research-thesis.md) 的确认集与新发现目标，路线 A 不再扩大；已经完成的核心闭环仍保留，可转路线 B/C/D。**
 
 **判据必须同时满足六条方法学要求**，缺一不可：
 
@@ -69,7 +69,7 @@
 | 子 gate | 问题 | 样本 |
 | --- | --- | --- |
 | **Gate P-a** | 未调优、L1、Tier A 的交出点还有多少 | 前瞻池（盲化） |
-| **Gate P-b** | 这些候选里有多大比例能真正走到确认 | **开发集**，不消耗前瞻池 |
+| **Gate P-b** | 这些候选里有多大比例能真正走到确认 | **已跑通 P0–P4 的开发集**，不消耗前瞻池 |
 
 ```text
 可用猎物估计 = eligible_pool_lower_bound × conversion_rate_lower_bound
@@ -94,9 +94,9 @@ Tier A 的「允许捕获借用」判据只筛 referent 类。**allocation 类�
 
 **全部参数必须在探针运行之前预注册。口头判断不构成通过。**
 
-- **失败动作**：R 与 A 都 No-Go 时转路线 C（经验研究），不再投入外部侧实现。
+- **失败动作**：R 与 A 都 No-Go 时停止规模化投入与大范围新发现搜索；保留核心原型，转路线 B/C/D。
 
-执行步骤、抽样预注册与 sealed split 见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。前置是 PC（`EffectiveCaptureAdmission`），成本约为外部侧实现的百分之一。
+执行步骤、抽样预注册与 sealed split 见 [猎物存在性探针 runbook](../experiments/runbooks/prey-existence-probe.md)。P-a 的事实前置是 PC、PG-2、`is_unsafe_fn` 和 safe-entry lineage；P-b 还依赖可运行的 P0–P4 核心闭环。
 
 ## Gate A：外部证据必要性
 

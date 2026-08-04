@@ -1,18 +1,18 @@
 # Runbook：猎物存在性探针
 
-本 runbook 执行 [Gate P](../../roadmap/milestone-gates.md#gate-p猎物存在性)，是 [research thesis](../../project/research-thesis.md) 路线上的**第一道止损点**。
+本 runbook 执行 [Gate P](../../roadmap/milestone-gates.md#gate-p猎物存在性)，用于在单目标核心闭环完成后决定是否继续规模化评估和新发现搜索。
 
 前置阅读：[research thesis §7.2](../../project/research-thesis.md)（新发现是竞争力要求）、[implementation plan 的 PP](../../roadmap/implementation-plan.md)。
 
 > **本 runbook 于 2026-07-31 复审后重写。** 旧版本有四处会导致错误结论的方法学缺陷：判据用语法四态、C-4 只是语法共现、未与 L1 分析片段对齐、运行会烧掉整个前瞻池。**旧版本的判据不得使用。**
 >
-> **前置**：[implementation plan 的 PC](../../roadmap/implementation-plan.md)（`EffectiveCaptureAdmission`）必须先完成。
+> **前置**：P-a 需要 PC、PG-2、`is_unsafe_fn`、safe-entry lineage 和 L1 artifact binding；P-b 还需要 P0–P4 的核心闭环。完整顺序见 [execution plan](../../roadmap/execution-plan.md)。
 
 ## 1. 这件事决定什么
 
 本项目的主线缺陷类——安全 API 允许回调捕获非 `'static` 借用、外部组件保存并晚调——在 Rust 社区**是公开知识**。RUSTSEC-2021-0128 已公开多年，`'static` 收紧是标准修法，许多维护者早已照做。
 
-因此在投入外部侧 LLVM IR 分析（[implementation plan](../../roadmap/implementation-plan.md) 的 P1/P2，全路线最贵的一段）之前，必须先回答：
+因此在投入 50–100+ crate 的规模化评估之前，必须回答：
 
 > **生态里还剩多少个这样的位置？**
 
@@ -33,8 +33,8 @@
 
 | 结果 | 判据 | 后果 |
 | --- | --- | --- |
-| `Pass` | 该乘积仍足以支撑预注册的确认集规模 | 按计划投入 P1/P2 |
-| `No-Go` | 上置信界仍不足 | 转路线 C（经验研究），不投入外部侧实现 |
+| `Pass` | 该乘积仍足以支撑预注册的确认集规模 | 进入规模化评估与新发现搜索 |
+| `No-Go` | 上置信界仍不足 | 停止扩大，保留核心工具链并转路线 B/C/D |
 | `Amber` | 介于两者之间 | 扩大样本或增加人工审计，不得直接判 Pass |
 
 **聚类单位**：crate / repository / 外部库家族**不是独立同分布样本**。同一仓库下的多个 crate、同一外部库的多个绑定共享设计习惯与维护者。**必须按这三个单位分别聚类报告**，按 alert 计数会系统性高估。
@@ -45,13 +45,13 @@
 
 > **口头判断不构成 Gate P 通过。** 维护者对猎物池规模的印象可以决定是否值得跑这个实验，但不能替代预注册的正式结果。
 
-**这个实验的成本约为 P1+P2 的百分之一。** 它排在 P1/P2 之前的唯一理由是：它能用最小代价否定最大投入。**但它排在 [Gate R](../../roadmap/milestone-gates.md#gate-r关系正确性) 之后**——关系错了，数出来的候选也是错的。
+P-a 的 Rust-only 扫描仍然便宜，可以在核心开发期间先实现和调试；但正式 P-b 必须使用已经跑通的 candidate → verdict → witness → confirmation 流水线，不能用手工转化率代替。**Gate R 仍必须先通过**——关系错了，数出来的候选也是错的。
 
 ## 2. 前置能力
 
 Rust 侧的回调 bound 判定已实现（`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `callback_lifetime_bounds`），不依赖外部侧、不依赖人工 API 清单。语义取值 `EffectiveCaptureAdmission`（PC）与 `RegistrationGuard`（PG-1）均已实现。
 
-**仍缺三项，缺任何一项数出来的候选池都不可信**，见 [execution plan 的 0.3](../../roadmap/execution-plan.md)：
+**P-a 仍缺三项，缺任何一项数出来的候选池都不可信**，见 [execution plan 阶段 1 与阶段 7](../../roadmap/execution-plan.md)：
 
 | 缺口 | 后果 | 状态 |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ Rust 侧的回调 bound 判定已实现（`compiler/bw-rustc/src/rustc_api/mir.r
 
 **这是本 runbook 最容易出错、后果也最严重的一处。**
 
-allocation 类缺陷的 `EffectiveCaptureAdmission` 恰恰是 `RequiresStaticCapture`——`F: 'static` 保证闭包没捕获借用，但**对 `Box<F>` 本身的存活完全不表态**。如果只用 C-3R 作 Tier A 判据，**这一整类猎物会被判据直接排除、记成零**，而 Gate P 的 No-Go 会按 [research thesis §8](../../project/research-thesis.md) 触发"转路线 C，不再投入外部侧"。
+allocation 类缺陷的 `EffectiveCaptureAdmission` 恰恰是 `RequiresStaticCapture`——`F: 'static` 保证闭包没捕获借用，但**对 `Box<F>` 本身的存活完全不表态**。如果只用 C-3R 作 Tier A 判据，**这一整类猎物会被判据直接排除、记成零**，而 Gate P 的 No-Go 会按 [research thesis §8](../../project/research-thesis.md) 触发“停止规模化投入并转路线 B/C/D”。
 
 **结果就是一条从未被测量过的子路线被一个没测过它的实验杀掉。**
 

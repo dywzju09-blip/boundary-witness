@@ -2,7 +2,7 @@
 
 **本文描述的全部内容状态为 `Planned`，没有任何一项已经实现。** 当前实现见 [system overview](system-overview.md) 与 [current status](../project/current-status.md)；本文只说明**目标形态**以及它与当前形态的差别。
 
-**本文的落地时机受 [Gate P](../roadmap/milestone-gates.md#gate-p猎物存在性) 约束。** 按 [execution plan](../roadmap/execution-plan.md) 的阶段 2，这里描述的身份模型与数据流只有在 Gate P 通过后才开始实现；若 Gate P 判定转路线 C（经验研究），本文的大部分内容随之作废，不得因为文档已经写好就照着实现。
+**本文的落地按 [execution plan](../roadmap/execution-plan.md) 的核心闭环推进。** 身份模型与数据流不再等待 Gate P：先在一个真实目标上完成 Rust → IR → foreign facts → join → verdict → witness，Gate P 随后决定是否投入规模化评估和新发现搜索。若 Gate P No-Go，保留该核心工具链并转路线 B/C/D，不继续扩大样本。
 
 ---
 
@@ -142,7 +142,7 @@ SupportedIncompatibility(X, Slot)
 | `EstablishLateInvoke` | 只有降级 Q3 的同槽调用点证据，需要真实执行证明晚调确实发生 |
 | `JointTraceObligation` | 两侧分别成立但联合可行性未证明 |
 
-反证阶段消费这些义务，见 [execution plan 阶段 6](../roadmap/execution-plan.md)。
+反证阶段消费这些义务，见 [execution plan 阶段 5](../roadmap/execution-plan.md)。
 
 ---
 
@@ -169,7 +169,7 @@ SupportedIncompatibility(X, Slot)
 
 - 现有静态事实继续作为**底层观察**保留，新的契约 / 行为 / 判定三层是它们的聚合；
 - 身份字段通过 builder 的 `with_*` 方法新增，既有调用点不受影响；
-- 分层身份、三态判定与外部侧事实**合并为一次** schema 升版（见 realignment 的 D2），在阶段 2 与阶段 3 的记录形状定稿之后进行。
+- 分层身份、三态判定与外部侧事实**合并为一次** schema 升版（见 realignment 的 D2），在 execution plan 阶段 1–3 的记录形状定稿、进入阶段 4 时进行。
 
 ---
 

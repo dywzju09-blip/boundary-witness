@@ -22,7 +22,7 @@
 
 **Gate R 证明的是关系本身，不是 Q4′ 可实现。** 外部侧取值目前由 C stub 手工标注（manual foreign oracle，来源等级与自动分析不同），能否从真实构建的 LLVM IR 推导出同样的取值，由 P1/P2 回答。
 
-**当前最高优先级是 PG-2 `AllocationOwnership`，其后是 Gate P 的判据修正与猎物探针。** 完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
+**当前最高优先级是 PG-2 `AllocationOwnership`。其后依次完成 safe-entry lineage、RustContractFact、真实外部 IR、Q1/Q4′/降级 Q3、P0/P3 和 P4；Gate P 与规模评估后置到单目标核心闭环完成之后。** 完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
 
 ## 状态总览
 
@@ -43,7 +43,7 @@
 | `Implemented` | `RegistrationGuard` 检测（roadmap PG-1） | 从 HIR 签名与 guard 类型的 `Drop` MIR 判定，无需 API map。`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `registration_guards`、`crates/bw-model/src/static_fact.rs` 的 `RegistrationGuard`/`RegistrationGuardFact`。golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。**不产出 `OwnerDropUnregisters`**——那一取值的判据是 owner drop 路径证明，不是返回值形状 |
 | `Planned` | `AllocationOwnership` 检测（roadmap PG-2） | **零行代码。** `'static` 只管住捕获、不管 `Box<F>` 存活；缺它漏掉整类问题。原材料（raw pointer transfer / release path proof）已有 |
 | `Planned` | 把编译器输出装成 `RustContractFact`（roadmap P0） | 目前无生产者；PF 阶段的 Rust 侧事实是手写的 |
-| `Planned` | 猎物存在性探针（roadmap PP） | 未测量。判据已于 2026-07-31 重做（Tier A / L1 / 置信界 / sealed split），前置是 PC |
+| `Planned` | 猎物存在性探针（roadmap PP） | 未测量。P-a 前置是 PC、PG-2、`is_unsafe_fn`、safe-entry lineage 与 L1 binding；P-b 还依赖 P0–P4 核心闭环 |
 | `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
 | `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |
 | `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现，属 future work，持有期一维闭环前不扩维 |
