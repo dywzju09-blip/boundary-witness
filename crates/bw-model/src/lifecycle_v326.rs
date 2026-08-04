@@ -817,6 +817,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         StaticFact::ExternalCallSite(fact) => Some(fact.api_id.clone()),
         StaticFact::CallbackLifetimeBound(fact) => Some(fact.api_id.clone()),
         StaticFact::RegistrationGuard(fact) => Some(fact.api_id.clone()),
+        StaticFact::AllocationOwnership(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowRelation(fact) => Some(fact.api_id.clone()),
         StaticFact::PersistedReturnedBorrow(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowInvalidationOrder(fact) => Some(fact.api_id.clone()),
@@ -886,6 +887,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<String> {
             .collect(),
         StaticFact::CallbackLifetimeBound(fact) => vec![fact.site_id.to_string()],
         StaticFact::RegistrationGuard(fact) => vec![fact.site_id.to_string()],
+        StaticFact::AllocationOwnership(fact) => vec![fact.site_id.to_string()],
         StaticFact::ReturnedBorrowRelation(fact) => vec![
             fact.site_id.to_string(),
             fact.source_site_id.to_string(),
@@ -6167,7 +6169,10 @@ fn lifecycle_static_fact_fields(
     // 的 kind 枚举，而 `docs/development/codebase-realignment.md` 的 D2 要求
     // `HandOffId` + 三态判定 + 外部侧事实**合并为一次**升版，且必须等 P0/P1 字段定稿。
     // 在那之前本事实只停在静态事实层。
-    if matches!(envelope.payload, StaticFact::RegistrationGuard(_)) {
+    if matches!(
+        envelope.payload,
+        StaticFact::RegistrationGuard(_) | StaticFact::AllocationOwnership(_)
+    ) {
         return None;
     }
     Some(match &envelope.payload {
@@ -6457,7 +6462,9 @@ fn lifecycle_static_fact_fields(
         }
         // 上面已提前返回，这条分支不可达；写成 `unreachable!` 而不是通配，
         // 是为了让**下一个**新增的事实种类仍然撞上穷尽匹配。
-        StaticFact::RegistrationGuard(_) => unreachable!("registration guard returns early"),
+        StaticFact::RegistrationGuard(_) | StaticFact::AllocationOwnership(_) => {
+            unreachable!("registration guard and allocation ownership return early")
+        }
     })
 }
 

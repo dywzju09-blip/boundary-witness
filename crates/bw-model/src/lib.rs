@@ -40,10 +40,9 @@ pub use candidate::{
     V32PatternFamily, V32RecommendedNextStep, candidate_from_boundary, validate_v3_2_candidates,
 };
 pub use compatibility::{
-    AllocationOwnership, CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear,
-    ForeignInvocation, ForeignRetention, HandOffId, LifetimeSubject, RustContractFact,
-    StaticVerdict, WitnessObligation, WitnessStatus, hand_off_is_incompatible, judge,
-    judge_hand_off,
+    CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignInvocation,
+    ForeignRetention, HandOffId, LifetimeSubject, RustContractFact, StaticVerdict,
+    WitnessObligation, WitnessStatus, hand_off_is_incompatible, judge, judge_hand_off,
 };
 pub use contract::{
     CALLBACK_RETENTION_API_MAP_SCHEMA_V01, CallbackApiEntry, CallbackRetentionApiMap,
@@ -126,13 +125,13 @@ pub use schema::{
     TRACE_SCHEMA_V01,
 };
 pub use static_fact::{
-    AtomicOperationKind, AtomicOrderingFact, AtomicOrderingKind, CallbackCaptureFact,
-    CallbackLifetimeBoundFact, CallbackLifetimeBoundScope, CallbackReleaseUseOrderFact,
-    CallbackReleaseUseOrdering, CallbackSiteFact, CallbackUserDataReconstructionFact,
-    CallbackUserDataReconstructionKind, CaptureMode, DropKind, DropPreventionFact,
-    DropPreventionKind, DropSiteFact, EffectiveCaptureAdmission, ExternalBufferBindingFact,
-    ExternalCallRole, ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind,
-    ObjectFlowFact, ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact,
+    AllocationOwnership, AllocationOwnershipFact, AtomicOperationKind, AtomicOrderingFact,
+    AtomicOrderingKind, CallbackCaptureFact, CallbackLifetimeBoundFact, CallbackLifetimeBoundScope,
+    CallbackReleaseUseOrderFact, CallbackReleaseUseOrdering, CallbackSiteFact,
+    CallbackUserDataReconstructionFact, CallbackUserDataReconstructionKind, CaptureMode, DropKind,
+    DropPreventionFact, DropPreventionKind, DropSiteFact, EffectiveCaptureAdmission,
+    ExternalBufferBindingFact, ExternalCallRole, ExternalCallSiteFact, ObjectBindingGapFact,
+    ObjectBindingGapKind, ObjectFlowFact, ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact,
     PersistedReturnedBorrowFact, RawPointerTransferFact, RawPointerTransferKind, RegistrationGuard,
     RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,

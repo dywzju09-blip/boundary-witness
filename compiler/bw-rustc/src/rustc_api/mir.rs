@@ -16,7 +16,7 @@ use super::rustc_middle::mir::{
 use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor};
 use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
 use bw_model::{
-    AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
+    AllocationOwnership, AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
     CallbackReleaseUseOrdering, CallbackUserDataReconstructionKind, DropKind, DropPreventionKind,
     ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
     RegistrationGuard, ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
@@ -32,7 +32,8 @@ use crate::{
         DropPreventionObservation, ExternalBufferBindingObservation, ExternalCallObservation,
         ObjectBindingGapObservation, ObjectFlowEndpointObservation, ObjectFlowObservation,
         ObjectFlowStaticSiteObservation, PersistedReturnedBorrowObservation, RawPointerReference,
-        RawPointerTransferObservation, RegistrationGuardObservation, RegistrationObservation,
+        AllocationOwnershipObservation, RawPointerTransferObservation,
+        RegistrationGuardObservation, RegistrationObservation,
         ReleasePathProofObservation, ReturnedBorrowInvalidationOrderObservation,
         ReturnedBorrowRelationObservation, closure_capture_object_flow_field_path,
     },
@@ -52,6 +53,7 @@ pub struct MirSiteObservations {
     pub external_calls: Vec<ExternalCallObservation>,
     pub callback_lifetime_bounds: Vec<CallbackLifetimeBoundObservation>,
     pub registration_guards: Vec<RegistrationGuardObservation>,
+    pub allocation_ownerships: Vec<AllocationOwnershipObservation>,
     pub returned_borrow_relations: Vec<ReturnedBorrowRelationObservation>,
     pub persisted_returned_borrows: Vec<PersistedReturnedBorrowObservation>,
     pub returned_borrow_invalidation_orders: Vec<ReturnedBorrowInvalidationOrderObservation>,
@@ -283,6 +285,14 @@ pub fn collect_mir_sites<'tcx>(
         observations
             .registrations
             .extend(visitor.observations.registrations);
+        observations
+            .allocation_ownerships
+            .extend(allocation_ownerships(
+                tcx,
+                def_id,
+                &visitor.owner_def_path,
+                &visitor.observations.raw_pointer_transfers,
+            ));
         observations
             .raw_pointer_transfers
             .extend(visitor.observations.raw_pointer_transfers);
@@ -21209,6 +21219,127 @@ fn registration_guards<'tcx>(
                 foreign_release_callee,
                 guard,
             }
+        })
+        .collect()
+}
+
+/// 回调分配交出之后由谁负责释放（PG-2）。
+///
+/// 判据只用本函数体内的 raw pointer 转移事实：
+///
+/// - 同一分配上既有 `into_raw` 又有配对的 `from_raw` → Rust 侧仍有回收路径；
+/// - 只有 `into_raw`、没有任何回收 → 交出后本体内不再回收；
+/// - 其余一律缺证。
+///
+/// **配对靠的是 `user_data` 引用本身，不是位置相邻。** `raw_pointer_reference_from_operand`
+/// 会把 `from_raw(boxed)` 的实参解析回产生 `boxed` 的那次 `into_raw`，因此同一分配的
+/// 两次转移携带**同一个** [`RawPointerReference`]。已实测确认。
+///
+/// # 取值方向不对称
+///
+/// [`AllocationOwnership::ForeignOwnedUntilUnregister`] 会**否定**分离可能性、把判定推
+/// 向相容，因此它是"漏报方向"的取值，只在能确证本体内没有回收路径时才给。
+/// [`AllocationOwnership::RustRetainsAndMayFreeEarly`] 是"误报方向"，需要配对证据。
+/// 两者都证不出来时落 [`AllocationOwnership::Unresolved`]。
+///
+/// # 已知覆盖缺口
+///
+/// - **一个函数里有多个回调参数**：本体级的转移事实无法归属到具体哪一个，全部落缺证；
+/// - **分配发生在别的函数里**（helper 里 box、这里只收 raw pointer）：看不到 `into_raw`，
+///   落缺证；
+/// - **指针逃逸后由别处回收**：本体内没有 `from_raw` 不等于没有别的 Rust 代码会回收它。
+///   这一条是首期片段的明确 limitation，见 `docs/roadmap/execution-plan.md` 阶段 1.1。
+fn allocation_ownerships(
+    tcx: TyCtxt<'_>,
+    def_id: LocalDefId,
+    owner_def_path: &str,
+    transfers: &[RawPointerTransferObservation],
+) -> Vec<AllocationOwnershipObservation> {
+    let node = tcx.hir_node_by_def_id(def_id);
+    let Some(sig) = node.fn_sig() else {
+        return Vec::new();
+    };
+    let Some(generics) = node.generics() else {
+        return Vec::new();
+    };
+    let Ok(source_path) = source_path(tcx, sig.span) else {
+        return Vec::new();
+    };
+    let Ok(stable_span) = stable_span(tcx, sig.span) else {
+        return Vec::new();
+    };
+
+    let declared_lifetimes = function_declared_lifetime_params(generics);
+    let callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    if callback_params.is_empty() {
+        return Vec::new();
+    }
+    // 多个回调参数时，本体级的转移事实归属不到具体哪一个。**不猜。**
+    let attributable = callback_params.len() == 1;
+
+    let into_raws = transfers
+        .iter()
+        .filter(|transfer| transfer.kind == RawPointerTransferKind::IntoRaw)
+        .collect::<Vec<_>>();
+    let reclaims = transfers
+        .iter()
+        .filter(|transfer| {
+            matches!(
+                transfer.kind,
+                RawPointerTransferKind::FromRaw | RawPointerTransferKind::FromRawParts
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // 同一分配上的 into_raw / 回收配对。
+    let paired = into_raws.iter().find_map(|into_raw| {
+        reclaims
+            .iter()
+            .find(|reclaim| reclaim.user_data == into_raw.user_data)
+            .map(|reclaim| (*into_raw, *reclaim))
+    });
+
+    let (ownership, into_raw_mir_location, reclaim_mir_location) = if !attributable {
+        (AllocationOwnership::Unresolved, None, None)
+    } else if let Some((into_raw, reclaim)) = paired {
+        (
+            AllocationOwnership::RustRetainsAndMayFreeEarly,
+            Some(into_raw.mir_location.clone()),
+            Some(reclaim.mir_location.clone()),
+        )
+    } else if let Some(into_raw) = into_raws.first() {
+        if reclaims.is_empty() {
+            // 本体内没有任何回收：交出之后这段代码不再碰它。
+            (
+                AllocationOwnership::ForeignOwnedUntilUnregister,
+                Some(into_raw.mir_location.clone()),
+                None,
+            )
+        } else {
+            // 有回收，但配不上这次交出——可能是另一个对象，也可能是解析不出同一性。
+            (
+                AllocationOwnership::Unresolved,
+                Some(into_raw.mir_location.clone()),
+                None,
+            )
+        }
+    } else {
+        // 看不到分配交出点：分配可能发生在别的函数里。
+        (AllocationOwnership::Unresolved, None, None)
+    };
+
+    callback_params
+        .into_iter()
+        .map(|(callback_param, _)| AllocationOwnershipObservation {
+            owner_def_path: owner_def_path.to_owned(),
+            source_path: source_path.clone(),
+            span: stable_span.clone(),
+            mir_location: format!("hir_signature:allocation_ownership:{callback_param}"),
+            api_id: owner_def_path.to_owned(),
+            callback_param,
+            into_raw_mir_location: into_raw_mir_location.clone(),
+            reclaim_mir_location: reclaim_mir_location.clone(),
+            ownership,
         })
         .collect()
 }

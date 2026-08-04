@@ -10,7 +10,7 @@
 
 use std::{collections::BTreeMap, fs, process::Command};
 
-use bw_model::{RegistrationGuard, StaticFact, StaticFactEnvelope};
+use bw_model::{AllocationOwnership, RegistrationGuard, StaticFact, StaticFactEnvelope};
 
 /// 事实层观察到的一个交出点：回调 bound 与 guard 必须能按 `(api_id, callback_param)` 配对。
 #[derive(Debug, Default)]
@@ -18,6 +18,9 @@ struct HandOff {
     guard: Option<RegistrationGuard>,
     guard_type: Option<String>,
     foreign_release_callee: Option<String>,
+    ownership: Option<AllocationOwnership>,
+    has_into_raw_evidence: bool,
+    has_reclaim_evidence: bool,
     has_bound_fact: bool,
 }
 
@@ -73,10 +76,55 @@ fn registration_guard_is_derived_from_signature_and_drop_mir() {
             hand_off.guard.is_some(),
             "{key} 有 callback_lifetime_bound 事实却没有配对的 guard 事实"
         );
+        assert!(
+            hand_off.ownership.is_some(),
+            "{key} 缺少配对的 allocation ownership 事实"
+        );
     }
 }
 
 fn analyze_relation_fixture() -> BTreeMap<String, HandOff> {
+    let facts = relation_fixture_facts();
+    let mut hand_offs = BTreeMap::<String, HandOff>::new();
+    for fact in &facts {
+        match &fact.payload {
+            StaticFact::RegistrationGuard(guard) => {
+                assert!(
+                    fact.is_authoritative_lifecycle_binding(),
+                    "guard 事实必须带 v0.2 artifact identity 与 source anchor"
+                );
+                let entry = hand_offs
+                    .entry(format!("{}::{}", guard.api_id, guard.callback_param))
+                    .or_default();
+                entry.guard = Some(guard.guard);
+                entry.guard_type = guard.guard_type.clone();
+                entry.foreign_release_callee = guard.foreign_release_callee.clone();
+            }
+            StaticFact::AllocationOwnership(ownership) => {
+                assert!(
+                    fact.is_authoritative_lifecycle_binding(),
+                    "allocation ownership 事实必须带 v0.2 artifact identity 与 source anchor"
+                );
+                let entry = hand_offs
+                    .entry(format!("{}::{}", ownership.api_id, ownership.callback_param))
+                    .or_default();
+                entry.ownership = Some(ownership.ownership);
+                entry.has_into_raw_evidence = ownership.into_raw_site_id.is_some();
+                entry.has_reclaim_evidence = ownership.reclaim_site_id.is_some();
+            }
+            StaticFact::CallbackLifetimeBound(bound) => {
+                hand_offs
+                    .entry(format!("{}::{}", bound.api_id, bound.callback_param))
+                    .or_default()
+                    .has_bound_fact = true;
+            }
+            _ => {}
+        }
+    }
+    hand_offs
+}
+
+fn relation_fixture_facts() -> Vec<StaticFactEnvelope> {
     let repo = repo_root();
     let fixture = repo.join("benchmarks/compiler-fixtures/callback-retention-relation/Cargo.toml");
     let temp = tempfile::tempdir().expect("tempdir should be created");
@@ -110,32 +158,7 @@ fn analyze_relation_fixture() -> BTreeMap<String, HandOff> {
         .expect("cargo check should run");
     assert!(status.success(), "fixture cargo check failed: {status}");
 
-    let facts = read_static_facts(&analysis_dir.join("static-facts.jsonl"));
-    let mut hand_offs = BTreeMap::<String, HandOff>::new();
-    for fact in &facts {
-        match &fact.payload {
-            StaticFact::RegistrationGuard(guard) => {
-                assert!(
-                    fact.is_authoritative_lifecycle_binding(),
-                    "guard 事实必须带 v0.2 artifact identity 与 source anchor"
-                );
-                let entry = hand_offs
-                    .entry(format!("{}::{}", guard.api_id, guard.callback_param))
-                    .or_default();
-                entry.guard = Some(guard.guard);
-                entry.guard_type = guard.guard_type.clone();
-                entry.foreign_release_callee = guard.foreign_release_callee.clone();
-            }
-            StaticFact::CallbackLifetimeBound(bound) => {
-                hand_offs
-                    .entry(format!("{}::{}", bound.api_id, bound.callback_param))
-                    .or_default()
-                    .has_bound_fact = true;
-            }
-            _ => {}
-        }
-    }
-    hand_offs
+    read_static_facts(&analysis_dir.join("static-facts.jsonl"))
 }
 
 fn repo_root() -> std::path::PathBuf {
@@ -154,4 +177,57 @@ fn read_static_facts(path: &std::path::Path) -> Vec<StaticFactEnvelope> {
         .filter(|line| !line.trim().is_empty())
         .map(|line| serde_json::from_str(line).expect("static fact should parse"))
         .collect()
+}
+
+/// PG-2 验收：`AllocationOwnership` 必须从本函数体内的 raw pointer 转移事实判出来。
+///
+/// **本测试真正钉住的是 `register_static_then_free` 与 `register_static_owned` 的对比。**
+/// 两者的签名完全相同（都是 `F: FnMut() + 'static`、都无返回值），差别只在交出之后有没有
+/// 一次 `Box::from_raw` 回收。`'static` bound 对这个差别完全不表态——这正是把回调**捕获**
+/// 与回调**分配**分开的理由。
+#[test]
+fn allocation_ownership_is_derived_from_raw_pointer_transfers() {
+    let hand_offs = analyze_relation_fixture();
+
+    // fixture 4 的 Rust 侧：交出后立刻 `Box::from_raw` 回收，外部槽位里的指针从此悬垂。
+    let freed = &hand_offs["Registry::register_static_then_free::F"];
+    assert_eq!(
+        freed.ownership,
+        Some(AllocationOwnership::RustRetainsAndMayFreeEarly),
+        "into_raw 之后配对到 from_raw，必须判为 Rust 侧仍有回收路径"
+    );
+    assert!(
+        freed.has_into_raw_evidence && freed.has_reclaim_evidence,
+        "该判定的两个证据点都要可回查"
+    );
+
+    // 负对照：签名与上面**完全相同**，只是没有那次回收。
+    let owned = &hand_offs["Registry::register_static_owned::F"];
+    assert_eq!(
+        owned.ownership,
+        Some(AllocationOwnership::ForeignOwnedUntilUnregister),
+        "没有回收路径时分配归外部，签名与 register_static_then_free 相同不影响这一判定"
+    );
+    assert!(owned.has_into_raw_evidence);
+    assert!(
+        !owned.has_reclaim_evidence,
+        "没有回收就不该有回收证据点"
+    );
+
+    assert_ne!(
+        freed.ownership, owned.ownership,
+        "两个签名相同、只有分配回收行为不同的 API 必须被分开——这是 PG-2 的全部意义"
+    );
+
+    // fixture 1/2/3 的 Rust 侧同样把分配交给外部。
+    for key in [
+        "Registry::register_borrowed::F",
+        "Registry::register_guarded::F",
+    ] {
+        assert_eq!(
+            hand_offs[key].ownership,
+            Some(AllocationOwnership::ForeignOwnedUntilUnregister),
+            "{key} 交出后没有回收路径"
+        );
+    }
 }

@@ -39,7 +39,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::static_fact::{EffectiveCaptureAdmission, RegistrationGuard};
+use crate::static_fact::{AllocationOwnership, EffectiveCaptureAdmission, RegistrationGuard};
 
 /// 交出点身份：跨越语言边界的那一次调用。
 ///
@@ -77,17 +77,6 @@ pub enum LifetimeSubject {
 
 impl LifetimeSubject {
     pub const ALL: [Self; 2] = [Self::CapturedReferent, Self::CallbackAllocation];
-}
-
-/// 回调分配（`Box<F>` / userdata）的归属。
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AllocationOwnership {
-    /// Rust 侧仍持有，且存在提前释放的路径。
-    RustRetainsAndMayFreeEarly,
-    /// 交出后由外部拥有，直到注销才回收。
-    ForeignOwnedUntilUnregister,
-    Unresolved,
 }
 
 /// Rust 侧契约事实。只描述类型层允许什么，不描述外部做了什么。

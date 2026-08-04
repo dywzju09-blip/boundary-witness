@@ -16,7 +16,8 @@ use bw_model::{
     DropPreventionKind, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
     ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
     ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
-    RawPointerTransferFact, RawPointerTransferKind, RecordId, RegistrationGuard,
+    AllocationOwnership, AllocationOwnershipFact, RawPointerTransferFact,
+    RawPointerTransferKind, RecordId, RegistrationGuard,
     RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
     ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, STATIC_SCHEMA_V02, SiteId,
@@ -182,6 +183,25 @@ pub struct CallbackLifetimeBoundObservation {
     pub callback_param: String,
     pub bound_lifetime: Option<String>,
     pub bound_scope: CallbackLifetimeBoundScope,
+}
+
+/// 一个回调交出点上观察到的分配归属。
+///
+/// 与 [`CallbackLifetimeBoundObservation`] 正交：前者说回调**捕获**了什么，本观察说
+/// `Box<F>` 这块分配交出后由谁负责释放。`'static` bound 不约束后者，两者必须分开。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllocationOwnershipObservation {
+    pub owner_def_path: String,
+    pub source_path: PathBuf,
+    pub span: String,
+    pub mir_location: String,
+    pub api_id: String,
+    pub callback_param: String,
+    /// 判据依据的 `into_raw` 位置的 MIR location。用于生成诊断用的 site id。
+    pub into_raw_mir_location: Option<String>,
+    /// 同一分配上被观察到的回收点的 MIR location。
+    pub reclaim_mir_location: Option<String>,
+    pub ownership: AllocationOwnership,
 }
 
 /// 一个回调交出点上观察到的 registration guard 形状。
@@ -518,6 +538,7 @@ pub fn facts_from_mir_sites(
     external_calls: &[ExternalCallObservation],
     callback_lifetime_bounds: &[CallbackLifetimeBoundObservation],
     registration_guards: &[RegistrationGuardObservation],
+    allocation_ownerships: &[AllocationOwnershipObservation],
     returned_borrow_relations: &[ReturnedBorrowRelationObservation],
     persisted_returned_borrows: &[PersistedReturnedBorrowObservation],
     returned_borrow_invalidation_orders: &[ReturnedBorrowInvalidationOrderObservation],
@@ -937,6 +958,62 @@ pub fn facts_from_mir_sites(
                     guard_type: guard.guard_type.clone(),
                     foreign_release_callee: guard.foreign_release_callee.clone(),
                     guard: guard.guard,
+                }),
+            )?,
+        );
+    }
+
+    for ownership in allocation_ownerships {
+        if !source_is_stable(context, &ownership.source_path) {
+            continue;
+        }
+        let descriptor = SiteDescriptor::new(
+            &context.package,
+            &context.target,
+            &ownership.owner_def_path,
+            SiteRole::AllocationOwnership,
+            source_path(context, &ownership.source_path),
+        )
+        .with_repo_root(&context.repo_root)
+        .with_mir_location(&ownership.mir_location)
+        .with_span(&ownership.span);
+        let site_id = descriptor.try_site_id()?;
+        // 诊断用的 into_raw / 回收位置：与主 site 同源，只换 mir_location。
+        let evidence_site = |mir_location: &Option<String>| -> Result<Option<SiteId>, DomainError> {
+            let Some(mir_location) = mir_location else {
+                return Ok(None);
+            };
+            let evidence = SiteDescriptor::new(
+                &context.package,
+                &context.target,
+                &ownership.owner_def_path,
+                SiteRole::AllocationOwnership,
+                source_path(context, &ownership.source_path),
+            )
+            .with_repo_root(&context.repo_root)
+            .with_mir_location(mir_location)
+            .with_span(&ownership.span);
+            Ok(Some(evidence.try_site_id()?))
+        };
+        let into_raw_site_id = evidence_site(&ownership.into_raw_mir_location)?;
+        let reclaim_site_id = evidence_site(&ownership.reclaim_mir_location)?;
+        insert_fact(
+            &mut facts,
+            envelope_with_source(
+                context,
+                "allocation_ownership",
+                &site_id,
+                &ownership.source_path,
+                &ownership.span,
+                Some(&ownership.owner_def_path),
+                StaticFact::AllocationOwnership(AllocationOwnershipFact {
+                    site_id: site_id.clone(),
+                    semantic_site_key: descriptor.semantic_key(),
+                    api_id: ownership.api_id.clone(),
+                    callback_param: ownership.callback_param.clone(),
+                    into_raw_site_id,
+                    reclaim_site_id,
+                    ownership: ownership.ownership,
                 }),
             )?,
         );

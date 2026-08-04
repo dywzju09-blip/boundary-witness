@@ -356,6 +356,46 @@ pub struct RegistrationGuardFact {
     pub guard: RegistrationGuard,
 }
 
+/// 回调分配交出之后由谁负责释放。
+///
+/// **这是与 [`CallbackLifetimeBoundFact`] 正交的一半。** `'static` bound 只约束回调
+/// **捕获**了什么，完全不约束 `Box<F>` 本身还活不活着——分配被 Rust 侧提前回收、外部
+/// 随后调用悬垂指针，是一整类看不见的漏报。判据见
+/// `docs/roadmap/implementation-plan.md` 的 PG-2。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllocationOwnershipFact {
+    pub site_id: SiteId,
+    pub semantic_site_key: SemanticSiteKey,
+    pub api_id: String,
+    /// 与本事实配对的回调泛型参数名，与 [`CallbackLifetimeBoundFact::callback_param`] 同值。
+    pub callback_param: String,
+    /// 判据依据的分配交出点。仅作诊断，**不参与联结**。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into_raw_site_id: Option<SiteId>,
+    /// 同一分配上被观察到的回收点。仅作诊断。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reclaim_site_id: Option<SiteId>,
+    pub ownership: AllocationOwnership,
+}
+
+/// 回调分配（`Box<F>` / trampoline userdata）交出后的归属。
+///
+/// 取值方向不对称，必须小心：[`Self::ForeignOwnedUntilUnregister`] 会**否定**分离
+/// 可能性、把判定推向相容，因此只在能证明本函数体内没有回收路径、且指针没有逃逸到
+/// 其他 Rust 代码可及之处时才允许给出。任何不确定都落 [`Self::Unresolved`]。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AllocationOwnership {
+    /// 交出后 Rust 侧仍有回收路径：同一分配上观察到 `into_raw` 与配对的 `from_raw`。
+    RustRetainsAndMayFreeEarly,
+    /// 交出后本函数体内没有回收路径，指针也没有逃逸到其他 Rust 代码可及之处。
+    ForeignOwnedUntilUnregister,
+    /// 无法判定。分配路径不可见、指针逃逸后去向不明、或一个函数里有多个回调参数
+    /// 因而无法把交出点归属到具体那一个——**一律落这里，不猜**。
+    Unresolved,
+}
+
 /// 返回值借用关系：API 返回的引用可追溯到输入或本地 owner。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -557,6 +597,7 @@ pub enum StaticFact {
     ExternalCallSite(ExternalCallSiteFact),
     CallbackLifetimeBound(CallbackLifetimeBoundFact),
     RegistrationGuard(RegistrationGuardFact),
+    AllocationOwnership(AllocationOwnershipFact),
     ReturnedBorrowRelation(ReturnedBorrowRelationFact),
     PersistedReturnedBorrow(PersistedReturnedBorrowFact),
     ReturnedBorrowInvalidationOrder(ReturnedBorrowInvalidationOrderFact),
@@ -724,6 +765,20 @@ impl StaticFact {
                         .foreign_release_callee
                         .as_deref()
                         .is_none_or(has_required_text)
+            }
+            Self::AllocationOwnership(fact) => {
+                has_required_text(fact.site_id.as_str())
+                    && has_required_text(fact.semantic_site_key.as_str())
+                    && has_required_text(&fact.api_id)
+                    && has_required_text(&fact.callback_param)
+                    && fact
+                        .into_raw_site_id
+                        .as_ref()
+                        .is_none_or(|id| has_required_text(id.as_str()))
+                    && fact
+                        .reclaim_site_id
+                        .as_ref()
+                        .is_none_or(|id| has_required_text(id.as_str()))
             }
             Self::ReturnedBorrowRelation(fact) => {
                 has_required_text(fact.site_id.as_str())
