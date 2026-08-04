@@ -354,6 +354,9 @@ pub struct RegistrationGuardFact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreign_release_callee: Option<String>,
     pub guard: RegistrationGuard,
+    /// `guard` 为 `Unresolved` 时说明缺在哪。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_reason: Option<UnresolvedReason>,
 }
 
 /// 回调分配交出之后由谁负责释放。
@@ -377,6 +380,35 @@ pub struct AllocationOwnershipFact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reclaim_site_id: Option<SiteId>,
     pub ownership: AllocationOwnership,
+    /// `ownership` 为 `Unresolved` 时说明缺在哪。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_reason: Option<UnresolvedReason>,
+}
+
+/// 某个 Rust 侧事实为什么落到了 `Unresolved`。
+///
+/// **缺证必须能说出缺在哪。** 一个笼统的 `Unresolved` 在 attrition waterfall
+/// （[research thesis §7.3](../../../docs/project/research-thesis.md)）里填不出流失原因，
+/// 也无法判断某一类缺证值不值得投入去消除。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnresolvedReason {
+    /// 返回类型解析不到 ADT（`impl Trait`、类型别名、投影……）。
+    GuardReturnTypeNotAdt,
+    /// guard 类型定义在别的 crate，取不到它的 `Drop` MIR。
+    GuardDropMirUnavailable,
+    /// guard 的 `Drop` 里只调用了 Rust 函数，外部调用可能藏在被调方里。
+    GuardDropOnlyRustCalls,
+    /// 返回值带声明 lifetime，但回调没有显式 outlives bound，绑不上。
+    GuardBoundLifetimeAbsent,
+    /// 一个函数里有多个回调参数，本体级的转移事实归属不到具体哪一个。
+    AllocationMultipleCallbackParams,
+    /// 看不到分配交出点，分配可能发生在别的函数里。
+    AllocationNoIntoRaw,
+    /// 有回收，但配不上这次交出。
+    AllocationReclaimNotPaired,
+    /// 本 crate 调用图不完整（函数指针、trait object、动态分发）。
+    LineageCallGraphIncomplete,
 }
 
 /// 这个交出点能不能被**安全客户端**走到。
@@ -401,6 +433,9 @@ pub struct SafeEntryLineageFact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hops: Option<u32>,
     pub lineage: SafeEntryLineage,
+    /// `lineage` 为 `Unresolved` 时说明缺在哪。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_reason: Option<UnresolvedReason>,
 }
 
 /// 交出点相对「公开且安全的入口」的可达性。

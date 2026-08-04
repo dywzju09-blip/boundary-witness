@@ -21,6 +21,7 @@ mod compare_anonymous_pairs;
 mod diff;
 mod emit_candidates;
 mod extract_lifecycle_evidence;
+mod extract_rust_contracts;
 mod extract_static_facts;
 mod generate_witness_harness;
 mod index_boundaries;
@@ -109,6 +110,8 @@ pub enum Command {
     RankLifecycle(rank_lifecycle::RankLifecycleArgs),
     /// 从本地源码提取 V3.2.6 中性生命周期证据。
     ExtractLifecycleEvidence(extract_lifecycle_evidence::ExtractLifecycleEvidenceArgs),
+    /// 把静态事实装配成 Rust 侧契约事实（执行计划阶段 1.4）。
+    ExtractRustContracts(extract_rust_contracts::ExtractRustContractsArgs),
     /// 用 compiler wrapper 批量物化 V3.2.x 静态事实与 MIR 覆盖。
     ExtractStaticFacts(extract_static_facts::ExtractStaticFactsArgs),
     /// 基于 V3.2.6 facts/contracts 构建 object-bound lifecycle graph v3。
@@ -150,6 +153,7 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::EmitCandidates(args) => emit_candidates::run(args),
         Command::RankLifecycle(args) => rank_lifecycle::run(args),
         Command::ExtractLifecycleEvidence(args) => extract_lifecycle_evidence::run(args),
+        Command::ExtractRustContracts(args) => extract_rust_contracts::run(args),
         Command::ExtractStaticFacts(args) => extract_static_facts::run(args),
         Command::BuildLifecycleGraphV3(args) => build_lifecycle_graph_v3::run(args),
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),

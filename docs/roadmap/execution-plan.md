@@ -85,6 +85,7 @@
 ✅ PG-2：AllocationOwnership                         Implemented
 ✅ safe-entry lineage / is_unsafe_fn                 Implemented
 ✅ RustContractFact 自动装配                         Implemented
+✅ 1.4 Rust 侧输出固定与回归                         Implemented
 ⬜ 真实外部 IR 获取与绑定                            下一步
 ⬜ Q1 / Q4′ / 降级 Q3                                Planned
 ⬜ P0 identity / Schema / P3                          Planned
@@ -92,9 +93,13 @@
 ⬜ 小样本与大规模评估                                后置
 ```
 
-**阶段 1 已完成（2026-08-04）。** Rust 侧现在能自动产出四样：`EffectiveCaptureAdmission`、
+**阶段 1 已完成（2026-08-04，含 1.4）。** Rust 侧现在能自动产出四样：`EffectiveCaptureAdmission`、
 `RegistrationGuard`、`AllocationOwnership`、safe-entry lineage，并按 `(api_id, callback_param)`
 装配成 `RustContractFact`；缺任何一半产出写明缺什么的 gap，不静默丢弃。
+
+1.4 的三项也已落地：`bw extract-rust-contracts` 让 Rust 侧**能独立运行**并写出带
+checksum 的产物；重复运行产出逐字节相同（有断言）；`Unresolved` 带 `UnresolvedReason`
+机器可读原因，并按原因分类计数——那是 attrition waterfall 的输入。
 
 **当前唯一主线下一步是阶段 2.1：选一个真实参考目标并取得精确外部 IR。** 不先跑
 300–500 crate，不先做完整 baseline，也不先准备 sealed holdout。

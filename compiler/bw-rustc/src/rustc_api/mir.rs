@@ -17,7 +17,7 @@ use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitabl
 use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
 use bw_model::{
     AllocationOwnership, AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
-    SafeEntryLineage,
+    SafeEntryLineage, UnresolvedReason,
     CallbackReleaseUseOrdering, CallbackUserDataReconstructionKind, DropKind, DropPreventionKind,
     ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
     RegistrationGuard, ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
@@ -21203,33 +21203,52 @@ fn registration_guards<'tcx>(
             let ties_to_callback_bound = bound_lifetimes
                 .iter()
                 .any(|index| return_lifetimes.contains(index));
-            let (guard, foreign_release_callee) = if return_lifetimes.is_empty() {
+            let (guard, foreign_release_callee, unresolved_reason) = if return_lifetimes.is_empty()
+            {
                 // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的任何东西上。
-                (RegistrationGuard::None, None)
+                (RegistrationGuard::None, None, None)
             } else if !ties_to_callback_bound {
                 if bound_lifetimes.is_empty() {
                     // 回调没有显式 outlives bound，返回值却带 lifetime。形状像 guard，但
                     // 类型层没有写下"注册活得不比被捕对象久"这句话。**不猜。**
-                    (RegistrationGuard::Unresolved, None)
+                    (
+                        RegistrationGuard::Unresolved,
+                        None,
+                        Some(UnresolvedReason::GuardBoundLifetimeAbsent),
+                    )
                 } else {
                     // 绑在另一个声明 lifetime 上——约束的不是这个回调捕获的对象。
-                    (RegistrationGuard::None, None)
+                    (RegistrationGuard::None, None, None)
                 }
             } else {
                 match &drop_evidence {
                     // 解析不到 ADT（`impl Trait`、类型别名、投影……），说不出它 drop 时做什么。
-                    None => (RegistrationGuard::Unresolved, None),
-                    Some(DropForeignCall::Foreign(callee)) => {
-                        (RegistrationGuard::TiesSlotToSubject, Some(callee.clone()))
-                    }
+                    None => (
+                        RegistrationGuard::Unresolved,
+                        None,
+                        Some(UnresolvedReason::GuardReturnTypeNotAdt),
+                    ),
+                    Some(DropForeignCall::Foreign(callee)) => (
+                        RegistrationGuard::TiesSlotToSubject,
+                        Some(callee.clone()),
+                        None,
+                    ),
                     // 没有 `Drop` impl：guard 消失时不注销任何东西，与没有 guard 等价。
-                    Some(DropForeignCall::NoDestructor) => (RegistrationGuard::None, None),
+                    Some(DropForeignCall::NoDestructor) => (RegistrationGuard::None, None, None),
                     // drop 里一次调用都没有，同样不可能注销。
-                    Some(DropForeignCall::NoCalls) => (RegistrationGuard::None, None),
+                    Some(DropForeignCall::NoCalls) => (RegistrationGuard::None, None, None),
                     // 只调了 Rust 函数：外部调用可能藏在被调方里，有界分析看不到。
-                    Some(DropForeignCall::OnlyRustCalls) => (RegistrationGuard::Unresolved, None),
+                    Some(DropForeignCall::OnlyRustCalls) => (
+                        RegistrationGuard::Unresolved,
+                        None,
+                        Some(UnresolvedReason::GuardDropOnlyRustCalls),
+                    ),
                     // 跨 crate 的 ADT 拿不到 drop 的 MIR。
-                    Some(DropForeignCall::MirUnavailable) => (RegistrationGuard::Unresolved, None),
+                    Some(DropForeignCall::MirUnavailable) => (
+                        RegistrationGuard::Unresolved,
+                        None,
+                        Some(UnresolvedReason::GuardDropMirUnavailable),
+                    ),
                 }
             };
             RegistrationGuardObservation {
@@ -21242,6 +21261,7 @@ fn registration_guards<'tcx>(
                 guard_type: guard_adt.map(|adt| tcx.def_path_str(adt)),
                 foreign_release_callee,
                 guard,
+                unresolved_reason,
             }
         })
         .collect()
@@ -21290,13 +21310,19 @@ fn safe_entry_lineages(
         .iter()
         .map(|(def_id, api_id, callback_param, source_path, span)| {
             let owner_is_unsafe_fn = fn_is_unsafe(tcx, *def_id);
-            let (lineage, entry_def_path, hops) = if !call_graph_complete {
-                (SafeEntryLineage::Unresolved, None, None)
+            let (lineage, entry_def_path, hops, unresolved_reason) = if !call_graph_complete {
+                (
+                    SafeEntryLineage::Unresolved,
+                    None,
+                    None,
+                    Some(UnresolvedReason::LineageCallGraphIncomplete),
+                )
             } else if is_public_safe_entry(tcx, *def_id) {
                 (
                     SafeEntryLineage::DirectPublicSafeEntry,
                     Some(tcx.def_path_str(def_id.to_def_id())),
                     Some(0),
+                    None,
                 )
             } else {
                 match nearest_public_safe_caller(tcx, *def_id, &callers) {
@@ -21304,8 +21330,9 @@ fn safe_entry_lineages(
                         SafeEntryLineage::ReachableFromPublicSafeEntry,
                         Some(tcx.def_path_str(entry.to_def_id())),
                         Some(hops),
+                        None,
                     ),
-                    None => (SafeEntryLineage::NoPublicSafeEntry, None, None),
+                    None => (SafeEntryLineage::NoPublicSafeEntry, None, None, None),
                 }
             };
             SafeEntryLineageObservation {
@@ -21319,6 +21346,7 @@ fn safe_entry_lineages(
                 entry_def_path,
                 hops,
                 lineage,
+                unresolved_reason,
             }
         })
         .collect()
@@ -21475,34 +21503,48 @@ fn allocation_ownerships(
             .map(|reclaim| (*into_raw, *reclaim))
     });
 
-    let (ownership, into_raw_mir_location, reclaim_mir_location) = if !attributable {
-        (AllocationOwnership::Unresolved, None, None)
-    } else if let Some((into_raw, reclaim)) = paired {
-        (
-            AllocationOwnership::RustRetainsAndMayFreeEarly,
-            Some(into_raw.mir_location.clone()),
-            Some(reclaim.mir_location.clone()),
-        )
-    } else if let Some(into_raw) = into_raws.first() {
-        if reclaims.is_empty() {
-            // 本体内没有任何回收：交出之后这段代码不再碰它。
-            (
-                AllocationOwnership::ForeignOwnedUntilUnregister,
-                Some(into_raw.mir_location.clone()),
-                None,
-            )
-        } else {
-            // 有回收，但配不上这次交出——可能是另一个对象，也可能是解析不出同一性。
+    let (ownership, into_raw_mir_location, reclaim_mir_location, unresolved_reason) =
+        if !attributable {
             (
                 AllocationOwnership::Unresolved,
+                None,
+                None,
+                Some(UnresolvedReason::AllocationMultipleCallbackParams),
+            )
+        } else if let Some((into_raw, reclaim)) = paired {
+            (
+                AllocationOwnership::RustRetainsAndMayFreeEarly,
                 Some(into_raw.mir_location.clone()),
+                Some(reclaim.mir_location.clone()),
                 None,
             )
-        }
-    } else {
-        // 看不到分配交出点：分配可能发生在别的函数里。
-        (AllocationOwnership::Unresolved, None, None)
-    };
+        } else if let Some(into_raw) = into_raws.first() {
+            if reclaims.is_empty() {
+                // 本体内没有任何回收：交出之后这段代码不再碰它。
+                (
+                    AllocationOwnership::ForeignOwnedUntilUnregister,
+                    Some(into_raw.mir_location.clone()),
+                    None,
+                    None,
+                )
+            } else {
+                // 有回收，但配不上这次交出——可能是另一个对象，也可能是解析不出同一性。
+                (
+                    AllocationOwnership::Unresolved,
+                    Some(into_raw.mir_location.clone()),
+                    None,
+                    Some(UnresolvedReason::AllocationReclaimNotPaired),
+                )
+            }
+        } else {
+            // 看不到分配交出点：分配可能发生在别的函数里。
+            (
+                AllocationOwnership::Unresolved,
+                None,
+                None,
+                Some(UnresolvedReason::AllocationNoIntoRaw),
+            )
+        };
 
     callback_params
         .into_iter()
@@ -21516,6 +21558,7 @@ fn allocation_ownerships(
             into_raw_mir_location: into_raw_mir_location.clone(),
             reclaim_mir_location: reclaim_mir_location.clone(),
             ownership,
+            unresolved_reason,
         })
         .collect()
 }

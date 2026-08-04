@@ -137,7 +137,7 @@ pub use static_fact::{
     RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
     ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, SafeEntryLineage, SafeEntryLineageFact,
-    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef,
+    StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef, UnresolvedReason,
 };
 pub use static_ranking_reveal::{
     RevealStaticRankingInput, V3_2_5_PRIVATE_GROUND_TRUTH_SCHEMA_V1,

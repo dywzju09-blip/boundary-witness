@@ -350,3 +350,68 @@ fn missing_halves_are_reported_as_gaps_not_dropped() {
         }
     }
 }
+
+/// 1.4 验收：同一源码与构建配置，重复运行必须产出**逐字节相同**的 Rust 侧事实。
+///
+/// 这是后面所有实验的地基。等到规模化阶段才发现两次结果不同，排查成本高一个量级；
+/// 而且不稳定的产物会让 vulnerable/fixed 对照失去意义——差异可能来自运行而不是代码。
+#[test]
+fn rust_side_facts_are_stable_across_runs() {
+    let canonical = |facts: Vec<StaticFactEnvelope>| -> Vec<String> {
+        let mut lines = facts
+            .iter()
+            .filter(|fact| {
+                matches!(
+                    fact.payload,
+                    StaticFact::CallbackLifetimeBound(_)
+                        | StaticFact::RegistrationGuard(_)
+                        | StaticFact::AllocationOwnership(_)
+                        | StaticFact::SafeEntryLineage(_)
+                )
+            })
+            .map(|fact| serde_json::to_string(&fact.payload).expect("fact should serialize"))
+            .collect::<Vec<_>>();
+        lines.sort();
+        lines
+    };
+
+    let first = canonical(relation_fixture_facts());
+    let second = canonical(relation_fixture_facts());
+
+    assert!(!first.is_empty(), "fixture 必须产出 Rust 侧事实");
+    assert_eq!(
+        first, second,
+        "同一源码重复运行产出的 Rust 侧事实必须逐字节相同"
+    );
+}
+
+/// 1.4 验收：`Unresolved` 必须说得出原因，不能只是一个笼统的取值。
+///
+/// 缺证原因是 attrition waterfall 的输入。只报「有多少条缺证」而说不出缺在哪，
+/// 那张表就填不出来，也无法判断哪一类缺证值得投入去消除。
+#[test]
+fn unresolved_facts_carry_a_reason_code() {
+    for fact in relation_fixture_facts() {
+        match &fact.payload {
+            StaticFact::RegistrationGuard(guard) => {
+                if guard.guard == RegistrationGuard::Unresolved {
+                    assert!(
+                        guard.unresolved_reason.is_some(),
+                        "{} 的 guard 落 Unresolved 却没说原因",
+                        guard.api_id
+                    );
+                }
+            }
+            StaticFact::AllocationOwnership(ownership) => {
+                if ownership.ownership == AllocationOwnership::Unresolved {
+                    assert!(
+                        ownership.unresolved_reason.is_some(),
+                        "{} 的分配归属落 Unresolved 却没说原因",
+                        ownership.api_id
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}

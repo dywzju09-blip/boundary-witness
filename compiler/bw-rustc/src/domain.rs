@@ -17,7 +17,7 @@ use bw_model::{
     ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
     ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
     AllocationOwnership, AllocationOwnershipFact, RawPointerTransferFact,
-    SafeEntryLineage, SafeEntryLineageFact,
+    SafeEntryLineage, SafeEntryLineageFact, UnresolvedReason,
     RawPointerTransferKind, RecordId, RegistrationGuard,
     RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
@@ -200,7 +200,7 @@ pub struct SafeEntryLineageObservation {
     pub owner_is_unsafe_fn: bool,
     pub entry_def_path: Option<String>,
     pub hops: Option<u32>,
-    pub lineage: SafeEntryLineage,
+    pub lineage: SafeEntryLineage,    pub unresolved_reason: Option<UnresolvedReason>,
 }
 
 /// 一个回调交出点上观察到的分配归属。
@@ -219,7 +219,7 @@ pub struct AllocationOwnershipObservation {
     pub into_raw_mir_location: Option<String>,
     /// 同一分配上被观察到的回收点的 MIR location。
     pub reclaim_mir_location: Option<String>,
-    pub ownership: AllocationOwnership,
+    pub ownership: AllocationOwnership,    pub unresolved_reason: Option<UnresolvedReason>,
 }
 
 /// 一个回调交出点上观察到的 registration guard 形状。
@@ -237,7 +237,7 @@ pub struct RegistrationGuardObservation {
     pub callback_param: String,
     pub guard_type: Option<String>,
     pub foreign_release_callee: Option<String>,
-    pub guard: RegistrationGuard,
+    pub guard: RegistrationGuard,    pub unresolved_reason: Option<UnresolvedReason>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -977,6 +977,7 @@ pub fn facts_from_mir_sites(
                     guard_type: guard.guard_type.clone(),
                     foreign_release_callee: guard.foreign_release_callee.clone(),
                     guard: guard.guard,
+                    unresolved_reason: guard.unresolved_reason,
                 }),
             )?,
         );
@@ -1033,6 +1034,7 @@ pub fn facts_from_mir_sites(
                     into_raw_site_id,
                     reclaim_site_id,
                     ownership: ownership.ownership,
+                    unresolved_reason: ownership.unresolved_reason,
                 }),
             )?,
         );
@@ -1071,6 +1073,7 @@ pub fn facts_from_mir_sites(
                     entry_def_path: lineage.entry_def_path.clone(),
                     hops: lineage.hops,
                     lineage: lineage.lineage,
+                    unresolved_reason: lineage.unresolved_reason,
                 }),
             )?,
         );

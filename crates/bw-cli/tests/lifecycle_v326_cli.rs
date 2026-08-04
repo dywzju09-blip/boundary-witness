@@ -6742,3 +6742,53 @@ fn evidence_lines_for(
         .filter_map(|record| record.source_ref.line_start)
         .collect()
 }
+
+/// 阶段 1.4 验收：`extract-rust-contracts` 必须能独立跑起来，并把缺证原因分类计数。
+///
+/// 在此之前装配逻辑只有测试在调用，Rust 侧**跑不起来**——而阶段 1 的完成条件要求它
+/// 能独立运行并回答「哪个 public safe API，在什么 hand-off，把什么义务交给了外部」。
+#[test]
+fn extract_rust_contracts_runs_standalone_and_counts_gaps() {
+    let temp = public_safe_tempdir();
+    let facts_path = temp.path().join("static-facts.jsonl");
+
+    // 一个交出点四样事实齐备，另一个只有 bound——后者必须落 gap 且写清缺什么。
+    let complete = r#"{"schema_version":"bw.static/0.2","record_id":"static:1","producer":"fixture","build_id":"b","payload":{"kind":"callback_lifetime_bound","site_id":"site:a1","semantic_site_key":"sem:a1","api_id":"demo::full","callback_param":"F","bound_lifetime":null,"bound_scope":"no_lifetime_bound"}}
+{"schema_version":"bw.static/0.2","record_id":"static:2","producer":"fixture","build_id":"b","payload":{"kind":"registration_guard","site_id":"site:a2","semantic_site_key":"sem:a2","api_id":"demo::full","callback_param":"F","guard":"none"}}
+{"schema_version":"bw.static/0.2","record_id":"static:3","producer":"fixture","build_id":"b","payload":{"kind":"allocation_ownership","site_id":"site:a3","semantic_site_key":"sem:a3","api_id":"demo::full","callback_param":"F","ownership":"foreign_owned_until_unregister"}}
+{"schema_version":"bw.static/0.2","record_id":"static:4","producer":"fixture","build_id":"b","payload":{"kind":"safe_entry_lineage","site_id":"site:a4","semantic_site_key":"sem:a4","api_id":"demo::full","callback_param":"F","owner_is_unsafe_fn":false,"lineage":"direct_public_safe_entry"}}
+{"schema_version":"bw.static/0.2","record_id":"static:5","producer":"fixture","build_id":"b","payload":{"kind":"callback_lifetime_bound","site_id":"site:b1","semantic_site_key":"sem:b1","api_id":"demo::partial","callback_param":"G","bound_lifetime":null,"bound_scope":"no_lifetime_bound"}}
+"#;
+    fs::write(&facts_path, complete).unwrap();
+
+    let output_dir = temp.path().join("contracts");
+    Command::cargo_bin("bw")
+        .unwrap()
+        .args([
+            "extract-rust-contracts",
+            "--facts",
+            facts_path.to_str().unwrap(),
+            "--output-dir",
+            output_dir.to_str().unwrap(),
+            "--run-id",
+            "run:stage14",
+        ])
+        .assert()
+        .code(0)
+        .stderr("")
+        .stdout(predicate::str::contains(r#""assembled":1"#))
+        .stdout(predicate::str::contains(r#""gapped":1"#));
+
+    let summary: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("rust-contract-summary.json")).unwrap(),
+    )
+    .unwrap();
+    // 缺证必须按原因分类，不能只报总数——这是 attrition waterfall 的输入。
+    assert_eq!(summary["gap_reasons"]["missing_guard"], 1);
+    assert_eq!(summary["gap_reasons"]["missing_allocation_ownership"], 1);
+    assert_eq!(summary["gap_reasons"]["missing_safe_entry_lineage"], 1);
+
+    let records = fs::read_to_string(output_dir.join("rust-contracts.jsonl")).unwrap();
+    assert!(records.contains("demo::full"));
+    assert!(records.contains("demo::partial"));
+}
