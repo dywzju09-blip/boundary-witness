@@ -10,6 +10,7 @@ name = "bw"
 path = "src/main.rs"
 
 [dependencies]
+bw-foreign-ir = { path = "../bw-foreign-ir" }
 bw-model = { path = "../bw-model" }
 bw-oracle = { path = "../bw-oracle" }
 clap.workspace = true

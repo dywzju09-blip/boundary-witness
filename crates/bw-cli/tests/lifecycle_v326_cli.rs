@@ -6792,3 +6792,137 @@ fn extract_rust_contracts_runs_standalone_and_counts_gaps() {
     assert!(records.contains("demo::full"));
     assert!(records.contains("demo::partial"));
 }
+
+/// 阶段 3 验收：`extract-foreign-facts` 必须能从文本 IR 独立跑出四项正交结论。
+///
+/// 这里用的 IR 是 matched fixture `retain_late_invoke_clearing.c` 的核心形状：注册把回调
+/// 与 user data 写进两个全局槽位，注销把两个都写回 null，派发函数从槽位读出后间接调用。
+#[test]
+fn extract_foreign_facts_runs_standalone_and_records_four_dimensions() {
+    let temp = public_safe_tempdir();
+    let ir_path = temp.path().join("stub.ll");
+    fs::write(
+        &ir_path,
+        r#"
+@g_callback = internal global void (i8*)* null, align 8
+@g_user_data = internal global i8* null, align 8
+
+define dso_local void @fixture_register(void (i8*)* noundef %0, i8* noundef %1) {
+  %3 = alloca void (i8*)*, align 8
+  %4 = alloca i8*, align 8
+  store void (i8*)* %0, void (i8*)** %3, align 8
+  store i8* %1, i8** %4, align 8
+  %5 = load void (i8*)*, void (i8*)** %3, align 8
+  store void (i8*)* %5, void (i8*)** @g_callback, align 8
+  %6 = load i8*, i8** %4, align 8
+  store i8* %6, i8** @g_user_data, align 8
+  ret void
+}
+
+define dso_local void @fixture_unregister() {
+  store void (i8*)* null, void (i8*)** @g_callback, align 8
+  store i8* null, i8** @g_user_data, align 8
+  ret void
+}
+
+define dso_local void @fixture_fire() {
+  %1 = load void (i8*)*, void (i8*)** @g_callback, align 8
+  %2 = load i8*, i8** @g_user_data, align 8
+  call void %1(i8* noundef %2)
+  ret void
+}
+"#,
+    )
+    .unwrap();
+
+    let roles_path = temp.path().join("roles.json");
+    fs::write(
+        &roles_path,
+        r#"{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": ["fixture"],
+  "roles": [
+    {
+      "register_symbol": "fixture_register",
+      "callback_arg_index": 0,
+      "userdata_arg_index": 1,
+      "clear_symbol": "fixture_unregister"
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let output_dir = temp.path().join("foreign");
+    Command::cargo_bin("bw")
+        .unwrap()
+        .args([
+            "extract-foreign-facts",
+            "--ir",
+            ir_path.to_str().unwrap(),
+            "--roles",
+            roles_path.to_str().unwrap(),
+            "--output-dir",
+            output_dir.to_str().unwrap(),
+            "--run-id",
+            "run:stage3",
+            "--foreign-artifact",
+            "artifact:fixture",
+        ])
+        .assert()
+        .code(0)
+        .stderr("")
+        .stdout(predicate::str::contains(r#""slots_total":2"#));
+
+    let summary: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("foreign-fact-summary.json")).unwrap(),
+    )
+    .unwrap();
+    // 四个维度必须分开计数，不能合并成一个总枚举（执行计划 3.4）。
+    assert_eq!(summary["retention_counts"]["may_retain"], 1);
+    assert_eq!(summary["invocation_counts"]["may_invoke_after_return"], 1);
+    assert_eq!(summary["clear_counts"]["clears_on_all_paths"], 1);
+    assert_eq!(
+        summary["path_compatibility_counts"]["retain_on_every_path"],
+        1
+    );
+
+    let records = fs::read_to_string(output_dir.join("foreign-facts.jsonl")).unwrap();
+    // 证据必须能回查到指令，否则结论无法复核。
+    assert!(records.contains("g_callback"));
+    assert!(records.contains("fixture_fire"));
+    // **产物里不得出现 HandOffId。** 身份要两侧各出一半，填占位会诱使下游拿去 join。
+    assert!(!records.contains("hand_off"));
+}
+
+/// RoleMap 的 schema 版本对不上必须直接拒绝，不能按默认值继续。
+#[test]
+fn extract_foreign_facts_rejects_an_unknown_role_map_schema() {
+    let temp = public_safe_tempdir();
+    let ir_path = temp.path().join("stub.ll");
+    fs::write(&ir_path, "define void @f() {\n  ret void\n}\n").unwrap();
+    let roles_path = temp.path().join("roles.json");
+    fs::write(
+        &roles_path,
+        r#"{"schema_version":"bw.foreign-role-map/9.9","roles":[]}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("bw")
+        .unwrap()
+        .args([
+            "extract-foreign-facts",
+            "--ir",
+            ir_path.to_str().unwrap(),
+            "--roles",
+            roles_path.to_str().unwrap(),
+            "--output-dir",
+            temp.path().join("out").to_str().unwrap(),
+            "--run-id",
+            "run:stage3",
+            "--foreign-artifact",
+            "artifact:fixture",
+        ])
+        .assert()
+        .failure();
+}

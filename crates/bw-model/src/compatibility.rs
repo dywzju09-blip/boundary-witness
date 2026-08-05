@@ -271,10 +271,29 @@ pub enum ForeignClear {
     Unresolved,
 }
 
+/// 保留发生在注册入口的哪些路径上。
+///
+/// **它不声称保留路径与晚调路径能在同一条轨迹上同时成立**——那需要解路径条件，超出首期
+/// 分析片段，是反证义务要补的那一步。本字段只回答一件能从 IR 直接读出的事：那条 store
+/// 是无条件发生的，还是只在某个分支上发生。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForeignPathCompatibility {
+    /// 注册入口每一条会返回的路径都执行了保留 store。
+    RetainOnEveryPath,
+    /// 存在一条会返回、却不经过保留 store 的路径。
+    RetainOnSomePaths,
+    Unresolved,
+}
+
 /// 外部侧行为事实。
 ///
+/// 四个取值是**正交**的，按执行计划阶段 3.4 分开记录：不得用一个总枚举覆盖前一个查询的
+/// 结果。`retention` 是 Q1，`invocation` 是降级 Q3，`clear` 是 Q4′，`path_compatibility`
+/// 是保留路径的无条件性。
+///
 /// **PF 阶段这些取值由 matched fixture 的 C stub 手工标注**，即评估设计里的
-/// `manual foreign oracle` 变体。P1/P2 会把它们换成从真实构建的 LLVM IR 推导的结果；
+/// `manual foreign oracle` 变体。阶段 3 起改由 `bw-foreign-ir` 从真实构建的 LLVM IR 推导；
 /// 关系本身不因来源改变。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -283,6 +302,7 @@ pub struct ForeignBehaviorFact {
     pub retention: ForeignRetention,
     pub invocation: ForeignInvocation,
     pub clear: ForeignClear,
+    pub path_compatibility: ForeignPathCompatibility,
     /// Q3 晚调证据的强度。降级实现只能给出
     /// [`EvidenceGrade::SameSlotInvokeCandidate`]。
     pub invoke_evidence: Option<EvidenceGrade>,

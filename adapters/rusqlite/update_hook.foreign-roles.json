@@ -1,0 +1,17 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "外部符号与参数角色，供 bw extract-foreign-facts 绑定用。",
+    "只声明符号与参数位置。是否保留、是否晚调、是否清槽一律由 IR 回答——执行计划阶段 3 的完成条件要求 RoleMap 不参与行为结论。",
+    "依据：sqlite3_update_hook 的公开 C 签名 void *sqlite3_update_hook(sqlite3*, void(*)(void*,int,char const*,char const*,sqlite3_int64), void*)。",
+    "clear_symbol 就是注册符号本身：该 API 没有独立的注销入口，解除注册的方式是再调一次并传 NULL 回调。Q4′ 因此应得出「槽位被实参改写」而不是「被写成字面 null」。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "sqlite3_update_hook",
+      "callback_arg_index": 1,
+      "userdata_arg_index": 2,
+      "clear_symbol": "sqlite3_update_hook"
+    }
+  ]
+}

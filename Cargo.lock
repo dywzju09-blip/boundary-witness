@@ -189,6 +189,7 @@ name = "bw-cli"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "bw-foreign-ir",
  "bw-model",
  "bw-oracle",
  "clap",
@@ -216,6 +217,15 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "bw-foreign-ir"
+version = "0.1.0"
+dependencies = [
+ "bw-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

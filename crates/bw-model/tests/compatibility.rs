@@ -9,9 +9,10 @@
 
 use bw_model::{
     AllocationOwnership, CompatibilityVerdict, EffectiveCaptureAdmission, EvidenceGrade,
-    ForeignBehaviorFact, ForeignClear, ForeignInvocation, ForeignRetention, HandOffId,
-    LifetimeSubject, RegistrationGuard, RustContractFact, StaticVerdict, WitnessObligation,
-    WitnessStatus, hand_off_is_incompatible, judge, judge_hand_off,
+    ForeignBehaviorFact, ForeignClear, ForeignInvocation, ForeignPathCompatibility,
+    ForeignRetention, HandOffId, LifetimeSubject, RegistrationGuard, RustContractFact,
+    StaticVerdict, WitnessObligation, WitnessStatus, hand_off_is_incompatible, judge,
+    judge_hand_off,
 };
 
 fn hand_off() -> HandOffId {
@@ -68,6 +69,8 @@ fn foreign(clear: ForeignClear) -> ForeignBehaviorFact {
         retention: ForeignRetention::MayRetain,
         invocation: ForeignInvocation::MayInvokeAfterReturn,
         clear,
+        // 两个 stub 的 `fixture_register` 都是直线代码，保留 store 无条件发生。
+        path_compatibility: ForeignPathCompatibility::RetainOnEveryPath,
         invoke_evidence: Some(EvidenceGrade::PathSupportedLateInvoke),
         evidence: vec!["foreign/retain_late_invoke*.c".to_owned()],
     }
@@ -79,7 +82,11 @@ fn foreign_synchronous() -> ForeignBehaviorFact {
         hand_off: hand_off(),
         retention: ForeignRetention::NoRetain,
         invocation: ForeignInvocation::SynchronousInvokeOnly,
-        clear: ForeignClear::ClearsOnAllPaths,
+        // 这个 stub 的 `fixture_unregister` 是空的：没有槽位，也就无所谓清不清。
+        // **不能记 `ClearsOnAllPaths`**——那会让判定器把不存在的注销当成有效保护。
+        // 判定不受影响：`NoRetain` 已经否定了晚调。
+        clear: ForeignClear::Unresolved,
+        path_compatibility: ForeignPathCompatibility::Unresolved,
         invoke_evidence: None,
         evidence: vec!["foreign/synchronous_only.c".to_owned()],
     }

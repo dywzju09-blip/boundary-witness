@@ -5,6 +5,7 @@ members = [
     "crates/bw-blind-model",
     "crates/bw-blind-runner",
     "crates/bw-experiment",
+    "crates/bw-foreign-ir",
     "crates/bw-fuzz-observer",
     "crates/bw-model",
     "crates/bw-oracle",

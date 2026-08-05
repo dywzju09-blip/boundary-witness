@@ -41,9 +41,9 @@ pub use candidate::{
 };
 pub use compatibility::{
     CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignInvocation,
-    ForeignRetention, HandOffId, LifetimeSubject, RustContractAssembly, RustContractFact,
-    RustContractGap, StaticVerdict, WitnessObligation, WitnessStatus, assemble_rust_contract_facts,
-    hand_off_is_incompatible, judge, judge_hand_off,
+    ForeignPathCompatibility, ForeignRetention, HandOffId, LifetimeSubject, RustContractAssembly,
+    RustContractFact, RustContractGap, StaticVerdict, WitnessObligation, WitnessStatus,
+    assemble_rust_contract_facts, hand_off_is_incompatible, judge, judge_hand_off,
 };
 pub use contract::{
     CALLBACK_RETENTION_API_MAP_SCHEMA_V01, CallbackApiEntry, CallbackRetentionApiMap,
