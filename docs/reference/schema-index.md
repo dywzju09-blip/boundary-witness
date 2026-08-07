@@ -53,6 +53,37 @@
 | `v3-2-7/pair-delta.schema.json` | `v3.2.7.pair_delta.1` | candidate-aligned `api_path + pattern_family` comparison |
 | `v3-3/scanner-freeze.schema.json` | `v3.3.scanner_freeze.1` | method/input/checksum freeze record |
 
+## 跨界回调持有期关系链（`bw.*`）
+
+| `schema_version` | 产出方 | 角色 |
+| --- | --- | --- |
+| `bw.static/0.2` | `bw-rustc` | 编译器静态事实（含阶段 4 新增的 `foreign_symbol_binding`） |
+| `bw.rust-contract/0.1` | `extract-rust-contracts` | Rust 侧契约事实 + Rust 侧半键 |
+| `bw.foreign-role-map/0.1` | 人工编写 | 外部符号与参数角色。**只声明绑定，不声明行为** |
+| `bw.foreign-behavior/0.1` | `extract-foreign-facts` | 外部侧四项正交结论 + 外部侧半键 |
+| `bw.joint-verdict/0.1` | `judge-hand-offs` | 联结结果与三态判定 |
+
+### 这一族没有 JSON Schema 文件
+
+约束由**严格反序列化**承担：`deny_unknown_fields`、类型化枚举、必填字段。这与
+`bw.static/0.2` 一致，也是 codebase-realignment 的 D2 复核判据「升版后仍是五个 schema
+目录」能成立的原因——阶段 4 的升版**没有新增任何 schema 目录**。
+
+**这不是免检。** 换来的义务是：
+
+- 协议版本号集中登记在 `crates/bw-model/src/schema.rs`，**不许散在各 CLI 文件里**；
+- `StaticFact` 的 wire token 有一张穷尽 match 的登记表（`static_fact_roundtrip.rs`），
+  新增事实种类时编不过；
+- 每条记录都有 roundtrip 测试。
+
+### 已知缺口
+
+- **`V326CallbackBoundVerdict` 尚未迁到三态。** 它属于 legacy witness-plan 链，按 D3
+  与反证生成器重写一起做，不在阶段 4 范围内。新关系链已经只用三态
+  `StaticVerdict`，两者目前并存。
+- **`bw.*` 这一族没有 `validate-*` CLI 子命令。** `v3.2.x` 那一族有
+  `validate_v3_2_6_*` 系列，`bw.*` 目前只在读取时由 serde 校验，没有独立的批量校验入口。
+
 ## 版本规则
 
 JSON Schema `$id` 与 record `schema_version` 都是协议身份，但 validator 以记录版本、strict deserialization、跨记录引用和 lineage 规则为最终约束。语义不兼容变更必须升版；不得静默改变旧字段含义。`verified_static_chain` 仅兼容保留，规范消费者读取 `verified_layers`/`missing_layers`。

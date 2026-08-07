@@ -9,6 +9,26 @@ pub const CONTRACT_SCHEMA_V01: &str = "bw.contract/0.1";
 pub const FINDING_SCHEMA_V01: &str = "bw.finding/0.1";
 pub const RUN_SCHEMA_V01: &str = "bw.run/0.1";
 
+// ---------------------------------------------------------------------------
+// 跨界回调持有期关系链（执行计划阶段 1.4 / 3 / 4）
+// ---------------------------------------------------------------------------
+//
+// **协议身份集中登记在这里。** 这四个常量原本散在三个 CLI 文件里各写一份；同一个协议
+// 版本号在多处定义，早晚会出现产物写 A、消费方认 B 的情况。
+//
+// 与 `v3.2.x` 那一族不同，`bw.*` 记录**不出 JSON Schema 文件**：约束由严格反序列化
+// 承担（`deny_unknown_fields` + 类型化枚举 + 必填字段）。这与 `bw.static/0.2` 一致。
+// 因此这次升版**没有新增 schema 目录**，符合 codebase-realignment 的 D2 复核判据。
+
+/// Rust 侧契约事实。
+pub const RUST_CONTRACT_SCHEMA_V01: &str = "bw.rust-contract/0.1";
+/// 外部侧行为事实。
+pub const FOREIGN_BEHAVIOR_SCHEMA_V01: &str = "bw.foreign-behavior/0.1";
+/// 外部符号与参数角色映射。**只声明绑定，不声明行为。**
+pub const FOREIGN_ROLE_MAP_SCHEMA_V01: &str = "bw.foreign-role-map/0.1";
+/// 两侧联结之后的三态判定。
+pub const JOINT_VERDICT_SCHEMA_V01: &str = "bw.joint-verdict/0.1";
+
 #[derive(Deserialize)]
 struct SchemaHeader {
     schema_version: String,

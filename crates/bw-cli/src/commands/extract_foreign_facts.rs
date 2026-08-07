@@ -60,8 +60,8 @@ struct RoleMapFile {
     roles: Vec<ForeignRoleMap>,
 }
 
-const ROLE_MAP_SCHEMA_VERSION: &str = "bw.foreign-role-map/0.1";
-const SCHEMA_VERSION: &str = "bw.foreign-behavior/0.1";
+use bw_model::FOREIGN_BEHAVIOR_SCHEMA_V01 as SCHEMA_VERSION;
+use bw_model::FOREIGN_ROLE_MAP_SCHEMA_V01 as ROLE_MAP_SCHEMA_VERSION;
 
 #[derive(Debug, Serialize)]
 struct ForeignFactRecord {

@@ -75,7 +75,7 @@ struct RustContractSummary {
     unresolved_reasons: BTreeMap<String, usize>,
 }
 
-const SCHEMA_VERSION: &str = "bw.rust-contract/0.1";
+use bw_model::RUST_CONTRACT_SCHEMA_V01 as SCHEMA_VERSION;
 
 pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
     let facts: Vec<StaticFactEnvelope> = read_jsonl(&args.facts, args.max_line_bytes)?

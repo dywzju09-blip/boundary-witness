@@ -409,3 +409,118 @@ fn call_boundary_object_binding_gap_roundtrips_with_its_own_token() {
         .expect("call boundary gap should deserialize through schema gate");
     assert_eq!(decoded, fact);
 }
+
+// ---------------------------------------------------------------------------
+// wire token 登记表（执行计划阶段 4.2 / codebase-realignment 的 D2）
+// ---------------------------------------------------------------------------
+
+/// 每个 [`StaticFact`] 变体在产物里的 `kind` 取值。
+///
+/// # 这个 match 不许写通配分支
+///
+/// wire token 是**协议身份**：产物里写什么、消费方认什么，全靠它。新增一个事实种类时
+/// 这个 match 编不过，作者被迫回答「这条事实在产物里叫什么」。
+///
+/// **这个机制已经生效过。** 阶段 4 新增 `ForeignSymbolBinding` 时，模型层与两个消费方
+/// 一共六处穷尽匹配同时报错；靠人逐条检查一定会漏，D2 的纪律说的就是这件事。
+fn wire_token(fact: &StaticFact) -> &'static str {
+    match fact {
+        StaticFact::ObjectSite(_) => "object_site",
+        StaticFact::CallbackSite(_) => "callback_site",
+        StaticFact::CallbackCapture(_) => "callback_capture",
+        StaticFact::DropSite(_) => "drop_site",
+        StaticFact::DropPrevention(_) => "drop_prevention",
+        StaticFact::CallbackUserDataReconstruction(_) => "callback_user_data_reconstruction",
+        StaticFact::RegistrationSite(_) => "registration_site",
+        StaticFact::RawPointerTransfer(_) => "raw_pointer_transfer",
+        StaticFact::ReleasePathProof(_) => "release_path_proof",
+        StaticFact::CallbackReleaseUseOrder(_) => "callback_release_use_order",
+        StaticFact::ExternalCallSite(_) => "external_call_site",
+        StaticFact::CallbackLifetimeBound(_) => "callback_lifetime_bound",
+        StaticFact::RegistrationGuard(_) => "registration_guard",
+        StaticFact::AllocationOwnership(_) => "allocation_ownership",
+        StaticFact::SafeEntryLineage(_) => "safe_entry_lineage",
+        StaticFact::ForeignSymbolBinding(_) => "foreign_symbol_binding",
+        StaticFact::ReturnedBorrowRelation(_) => "returned_borrow_relation",
+        StaticFact::PersistedReturnedBorrow(_) => "persisted_returned_borrow",
+        StaticFact::ReturnedBorrowInvalidationOrder(_) => "returned_borrow_invalidation_order",
+        StaticFact::ExternalBufferBinding(_) => "external_buffer_binding",
+        StaticFact::AtomicOrdering(_) => "atomic_ordering",
+        StaticFact::ObjectBindingGap(_) => "object_binding_gap",
+        StaticFact::ObjectFlow(_) => "object_flow",
+    }
+}
+
+/// 序列化出来的 `kind` 必须与登记表一致。
+///
+/// 光有上面那个 match 只保证「有人登记过」，不保证登记的名字与 serde 实际写出的一致。
+/// 两者对不上时，产物里的 token 会跟着 `rename_all` 悄悄变，而登记表纹丝不动。
+#[test]
+fn the_serialised_kind_matches_the_registered_wire_token() {
+    let samples = [
+        callback_capture().payload,
+        StaticFact::ForeignSymbolBinding(bw_model::ForeignSymbolBindingFact {
+            site_id: SiteId("site:binding".to_owned()),
+            semantic_site_key: SemanticSiteKey("semantic:binding".to_owned()),
+            api_id: "demo::register".to_owned(),
+            callback_param: "F".to_owned(),
+            symbol: Some("demo_register".to_owned()),
+            callback_arg_index: Some(0),
+            userdata_arg_index: Some(1),
+            resolution: bw_model::ForeignSymbolResolution::ExternItemName,
+        }),
+    ];
+    for fact in samples {
+        let value = serde_json::to_value(&fact).expect("fact should serialize");
+        assert_eq!(
+            value["kind"].as_str(),
+            Some(wire_token(&fact)),
+            "serde 写出的 kind 与登记表不一致：{fact:?}"
+        );
+    }
+}
+
+/// 符号解析成功与失败的两种形状都必须能原样往返。
+///
+/// **失败形状不许带半个符号。** 模型层的 `has_required_identifiers` 会拒绝
+/// `resolution` 说没解析出来、`symbol` 却有值的记录——半个符号比没有更糟，下游会拿它
+/// 去联结。
+#[test]
+fn foreign_symbol_binding_roundtrips_in_both_shapes() {
+    for (symbol, callback_arg_index, resolution) in [
+        (
+            Some("demo_register".to_owned()),
+            Some(0),
+            bw_model::ForeignSymbolResolution::ExternItemName,
+        ),
+        (
+            None,
+            None,
+            bw_model::ForeignSymbolResolution::AmbiguousForeignCalls,
+        ),
+    ] {
+        let envelope = StaticFactEnvelope {
+            schema_version: STATIC_SCHEMA_V02.to_owned(),
+            record_id: RecordId("fact:binding-1".to_owned()),
+            producer: "bw-rustc@test-commit".to_owned(),
+            build_id: BuildId("build:test".to_owned()),
+            artifact: None,
+            source_ref: None,
+            payload: StaticFact::ForeignSymbolBinding(bw_model::ForeignSymbolBindingFact {
+                site_id: SiteId("site:binding".to_owned()),
+                semantic_site_key: SemanticSiteKey("semantic:binding".to_owned()),
+                api_id: "demo::register".to_owned(),
+                callback_param: "F".to_owned(),
+                symbol,
+                callback_arg_index,
+                userdata_arg_index: None,
+                resolution,
+            }),
+        };
+        let json = serde_json::to_string(&envelope).expect("envelope should serialize");
+        assert_eq!(
+            StaticFactEnvelope::from_json_str(&json).expect("envelope should parse"),
+            envelope
+        );
+    }
+}

@@ -49,7 +49,7 @@ pub struct JudgeHandOffsArgs {
     max_line_bytes: usize,
 }
 
-const SCHEMA_VERSION: &str = "bw.joint-verdict/0.1";
+use bw_model::JOINT_VERDICT_SCHEMA_V01 as SCHEMA_VERSION;
 
 /// `extract-rust-contracts` 写出的一行。只取联结需要的那部分。
 #[derive(Debug, Deserialize)]
