@@ -6752,11 +6752,12 @@ fn extract_rust_contracts_runs_standalone_and_counts_gaps() {
     let temp = public_safe_tempdir();
     let facts_path = temp.path().join("static-facts.jsonl");
 
-    // 一个交出点四样事实齐备，另一个只有 bound——后者必须落 gap 且写清缺什么。
+    // 一个交出点五样事实齐备，另一个只有 bound——后者必须落 gap 且写清缺什么。
     let complete = r#"{"schema_version":"bw.static/0.2","record_id":"static:1","producer":"fixture","build_id":"b","payload":{"kind":"callback_lifetime_bound","site_id":"site:a1","semantic_site_key":"sem:a1","api_id":"demo::full","callback_param":"F","bound_lifetime":null,"bound_scope":"no_lifetime_bound"}}
 {"schema_version":"bw.static/0.2","record_id":"static:2","producer":"fixture","build_id":"b","payload":{"kind":"registration_guard","site_id":"site:a2","semantic_site_key":"sem:a2","api_id":"demo::full","callback_param":"F","guard":"none"}}
 {"schema_version":"bw.static/0.2","record_id":"static:3","producer":"fixture","build_id":"b","payload":{"kind":"allocation_ownership","site_id":"site:a3","semantic_site_key":"sem:a3","api_id":"demo::full","callback_param":"F","ownership":"foreign_owned_until_unregister"}}
-{"schema_version":"bw.static/0.2","record_id":"static:4","producer":"fixture","build_id":"b","payload":{"kind":"safe_entry_lineage","site_id":"site:a4","semantic_site_key":"sem:a4","api_id":"demo::full","callback_param":"F","owner_is_unsafe_fn":false,"lineage":"direct_public_safe_entry"}}
+{"schema_version":"bw.static/0.2","record_id":"static:4","producer":"fixture","build_id":"b","payload":{"kind":"safe_entry_lineage","site_id":"site:a4","semantic_site_key":"sem:a4","api_id":"demo::full","callback_param":"F","owner_is_unsafe_fn":false,"entry_def_path":"demo::full","lineage":"direct_public_safe_entry"}}
+{"schema_version":"bw.static/0.2","record_id":"static:6","producer":"fixture","build_id":"b","payload":{"kind":"foreign_symbol_binding","site_id":"site:a5","semantic_site_key":"sem:a5","api_id":"demo::full","callback_param":"F","symbol":"demo_register","callback_arg_index":0,"userdata_arg_index":1,"resolution":"extern_item_name"}}
 {"schema_version":"bw.static/0.2","record_id":"static:5","producer":"fixture","build_id":"b","payload":{"kind":"callback_lifetime_bound","site_id":"site:b1","semantic_site_key":"sem:b1","api_id":"demo::partial","callback_param":"G","bound_lifetime":null,"bound_scope":"no_lifetime_bound"}}
 "#;
     fs::write(&facts_path, complete).unwrap();
@@ -6772,6 +6773,10 @@ fn extract_rust_contracts_runs_standalone_and_counts_gaps() {
             output_dir.to_str().unwrap(),
             "--run-id",
             "run:stage14",
+            "--build-profile",
+            "x86_64-unknown-linux-gnu/dev",
+            "--rust-artifact",
+            "rust:fixture",
         ])
         .assert()
         .code(0)
@@ -6787,10 +6792,16 @@ fn extract_rust_contracts_runs_standalone_and_counts_gaps() {
     assert_eq!(summary["gap_reasons"]["missing_guard"], 1);
     assert_eq!(summary["gap_reasons"]["missing_allocation_ownership"], 1);
     assert_eq!(summary["gap_reasons"]["missing_safe_entry_lineage"], 1);
+    // **没有外部符号就没有联结主键。** 这条 gap 是阶段 4 加的：在它之前，缺符号的
+    // 交出点会带着占位串一路走到联结，得出两个不相干事实的组合。
+    assert_eq!(summary["gap_reasons"]["missing_foreign_symbol"], 1);
 
     let records = fs::read_to_string(output_dir.join("rust-contracts.jsonl")).unwrap();
     assert!(records.contains("demo::full"));
     assert!(records.contains("demo::partial"));
+    // 装配成功的那条必须带着真实符号，而不是占位串。
+    assert!(records.contains(r#""foreign_symbol":"demo_register""#));
+    assert!(!records.contains("pending-stage-2"));
 }
 
 /// 阶段 3 验收：`extract-foreign-facts` 必须能从文本 IR 独立跑出四项正交结论。
@@ -6868,6 +6879,8 @@ define dso_local void @fixture_fire() {
             "run:stage3",
             "--foreign-artifact",
             "artifact:fixture",
+            "--build-profile",
+            "x86_64-unknown-linux-gnu/dev",
         ])
         .assert()
         .code(0)
@@ -6891,8 +6904,13 @@ define dso_local void @fixture_fire() {
     // 证据必须能回查到指令，否则结论无法复核。
     assert!(records.contains("g_callback"));
     assert!(records.contains("fixture_fire"));
-    // **产物里不得出现 HandOffId。** 身份要两侧各出一半，填占位会诱使下游拿去 join。
-    assert!(!records.contains("hand_off"));
+    // **产物里只有外部侧那半个键。** 完整身份要两侧各出一半，由 `join_hand_off` 合成；
+    // 这里填出一个看起来完整的身份，下游就会拿它去 join 两个不相干的事实。
+    assert!(records.contains(r#""foreign_symbol":"fixture_register""#));
+    assert!(
+        !records.contains("safe_entry_instance"),
+        "外部侧看不见 safe entry，产物里出现它说明身份被伪造了"
+    );
 }
 
 /// RoleMap 的 schema 版本对不上必须直接拒绝，不能按默认值继续。
@@ -6922,6 +6940,8 @@ fn extract_foreign_facts_rejects_an_unknown_role_map_schema() {
             "run:stage3",
             "--foreign-artifact",
             "artifact:fixture",
+            "--build-profile",
+            "x86_64-unknown-linux-gnu/dev",
         ])
         .assert()
         .failure();

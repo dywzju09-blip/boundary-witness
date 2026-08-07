@@ -42,29 +42,128 @@ use serde::{Deserialize, Serialize};
 use crate::{
     StaticFact, StaticFactEnvelope,
     static_fact::{
-        AllocationOwnership, EffectiveCaptureAdmission, RegistrationGuard, SafeEntryLineage,
+        AllocationOwnership, EffectiveCaptureAdmission, ForeignSymbolBindingFact,
+        RegistrationGuard, SafeEntryLineage,
     },
 };
+
+/// 注册实例身份：同一槽位上「注册 A → 注销 → 注册 B」是不同的注册实例。
+///
+/// [ADR-0003](../../../docs/decisions/ADR-0003-target-verifier-dataflow-and-identity.md)
+/// 把它列为身份的第五层。`SameArtifactSlotAndRole` 保证两侧指的是同一个槽位，**但分不开
+/// 同一槽位上的不同注册实例**——把两次注册的证据拼在一起会得出谁都没发生过的结论。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationGeneration {
+    /// 本构建里该符号只有这一个静态注册点，代次由交出点唯一确定。
+    UniqueStaticSite,
+    /// 同一符号还有别的静态注册点。
+    ///
+    /// **这不是拒绝联结的理由。** 外部侧的行为结论描述的是外部函数的代码，对每个注册点
+    /// 一样成立；而安全客户端完全可以只调其中一个 API，那时就只有一次注册。真正分不开的
+    /// 是**运行期**的「注册 A → 注销 → 注册 B」，静态看不到，由反证负责。
+    ///
+    /// 早先这里判的是拒绝，结果任何有一个以上注册 API 的 crate 都产出零判定。
+    MultipleStaticSites,
+    /// 尚未判定。**join 必须拒绝**——不知道代次就无法把证据归属到任何一次注册。
+    Unresolved,
+}
 
 /// 交出点身份：跨越语言边界的那一次调用。
 ///
 /// 两侧事实只有在本身份完全相等时才能组合——这就是关系里的 `SameArtifactSlotAndRole`
-/// 那一项。**按函数名、API 名或候选分片联结一律禁止。**
+/// 那一项。**按函数名、API 名或候选分片联结一律禁止**（ADR-0003 第五条）。
 ///
-/// 当前各字段是占位的稳定字符串。P0 会把 `rust_artifact` / `foreign_artifact` 换成真实
-/// 构建产物的 hash、把 `rust_def_instance` 换成单态化实例 id，字段集合不变。
+/// # 字段按身份层次排列
+///
+/// [ADR-0003](../../../docs/decisions/ADR-0003-target-verifier-dataflow-and-identity.md)
+/// 第二条要求至少五层。槽位（第四层的后半）**不在这里**：Rust 侧看不见槽位，把它写进
+/// 两侧都要构造的身份会让 Rust 侧永远填不出来。槽位由外部侧携带，在
+/// [`crate::JointTrace`] 里合流。
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandOffId {
+    // ---- 第一层：构建产物身份 ----
+    /// Rust 侧构建产物的 hash。
     pub rust_artifact: String,
-    pub rust_def_instance: String,
-    pub call_occurrence: String,
+    /// 外部侧构建产物的 hash。阶段 2 的 capture manifest 记的那个。
     pub foreign_artifact: String,
+    /// 构建配置。切 feature、target 或优化级别都必须让它变化，否则会错误联结。
+    pub build_profile: String,
+
+    // ---- 第二层：安全入口身份 ----
+    /// 该交出点所属的 public safe 入口的单态化实例 id。
+    ///
+    /// 研究对象是「安全 API 允许 UB」，只证明回调到达 extern 参数不够——还要证明安全
+    /// 客户端到得了这里（ADR-0003 第三条）。
+    pub safe_entry_instance: String,
+
+    // ---- 第三层：静态交出点身份 ----
+    /// 声明回调参数的那个函数的单态化实例 id。
+    pub rust_def_instance: String,
+    /// 该实例内交出点的稳定位置标识。
+    pub call_occurrence: String,
+
+    // ---- 第四层：符号与参数角色 ----
+    /// 外部链接符号。`#[link_name]` 解析不出来时不得用函数名近似（ADR-0003 第四条）。
     pub foreign_symbol: String,
     pub callback_arg_index: u32,
     pub userdata_arg_index: Option<u32>,
+    /// 同一符号上区分多个注册槽位的键（例如一个 API 同时注册 update 与 commit 钩子）。
     pub registration_key: Option<String>,
+
+    // ---- 第五层：注册实例身份 ----
+    pub registration_generation: RegistrationGeneration,
+}
+
+/// 装配 Rust 侧半键时，只有构建层面才知道的那两项。
+///
+/// 其余字段全部来自静态事实本身——**不接受调用方传入符号或参数角色**，那是编译器的
+/// 观察结果，从外面塞进来就等于人工标注。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RustHandOffBuildContext {
+    pub rust_artifact: String,
     pub build_profile: String,
+}
+
+/// Rust 侧在联结前能填出的那半个身份。
+///
+/// # 为什么要分成两半
+///
+/// [`HandOffId`] **哪一侧都填不全**：Rust 侧不知道哪个外部构建产物提供了这个符号，外部
+/// 侧不知道交出点是从哪个 public safe 入口来的。阶段 1.4 当时用 `"pending-stage-2"` 之类
+/// 的占位串把它凑齐，那是假数据——一旦有人拿去 join，得到的是两个不相干事实的组合。
+///
+/// 因此两侧各产出半个键，完整身份**只能由 [`crate::join_hand_off`] 合成**，且合成前会
+/// 校验重叠部分（符号与参数角色）确实一致。
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustHandOffKey {
+    pub rust_artifact: String,
+    pub build_profile: String,
+    pub safe_entry_instance: String,
+    pub rust_def_instance: String,
+    pub call_occurrence: String,
+    /// 编译器解析出的外部链接符号。这是与外部侧唯一的重叠部分，也是联结的主键。
+    pub foreign_symbol: String,
+    pub callback_arg_index: u32,
+    pub userdata_arg_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_key: Option<String>,
+    pub registration_generation: RegistrationGeneration,
+}
+
+/// 外部侧在联结前能填出的那半个身份。
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignHandOffKey {
+    pub foreign_artifact: String,
+    pub build_profile: String,
+    pub foreign_symbol: String,
+    pub callback_arg_index: u32,
+    pub userdata_arg_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_key: Option<String>,
 }
 
 /// 判定必须分开的两类生命周期。
@@ -88,7 +187,7 @@ impl LifetimeSubject {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustContractFact {
-    pub hand_off: HandOffId,
+    pub hand_off: RustHandOffKey,
     pub capture_admission: EffectiveCaptureAdmission,
     pub guard: RegistrationGuard,
     pub allocation: AllocationOwnership,
@@ -113,6 +212,10 @@ pub enum RustContractGap {
     NotReachableFromSafeEntry,
     /// safe-entry 可达性未判定。
     SafeEntryLineageUnresolved,
+    /// 没有外部符号绑定事实。**没有符号就没有联结主键**，这个交出点接不上外部侧。
+    MissingForeignSymbol,
+    /// 有符号绑定事实，但没解析出符号（函数体里找不到外部调用，或找到多个）。
+    ForeignSymbolUnresolved,
 }
 
 /// 一个交出点上装配的结果：要么是完整的契约事实，要么是缺了哪一半。
@@ -137,15 +240,15 @@ pub enum RustContractAssembly {
 /// 不构成本研究的证据，因此不装配，并记
 /// [`RustContractGap::NotReachableFromSafeEntry`]。
 ///
-/// # `HandOffId` 是占位的
+/// # 身份只填 Rust 侧那一半
 ///
-/// 当前只填得出 Rust 侧那几段；`foreign_artifact` / `foreign_symbol` 等要等 P0 接上
-/// 外部构建才有真值。装配出的事实因此**只能用于 Rust 侧回归**，不能直接进 P3 的
-/// 联结——那需要完整身份。
+/// `hand_off_key` 产出 [`RustHandOffKey`]，**不是完整的 [`HandOffId`]**。外部 artifact
+/// 与槽位这一侧看不见，凑占位串再拼成完整身份会得到假数据。完整身份由
+/// [`crate::join_hand_off`] 在校验重叠部分之后合成。
 #[must_use]
 pub fn assemble_rust_contract_facts(
     facts: &[StaticFactEnvelope],
-    hand_off_id: &dyn Fn(&str, &str) -> HandOffId,
+    build: &RustHandOffBuildContext,
 ) -> Vec<RustContractAssembly> {
     use std::collections::BTreeMap;
 
@@ -155,6 +258,8 @@ pub fn assemble_rust_contract_facts(
         guard: Option<RegistrationGuard>,
         allocation: Option<AllocationOwnership>,
         lineage: Option<SafeEntryLineage>,
+        entry_def_path: Option<String>,
+        binding: Option<ForeignSymbolBindingFact>,
         evidence: Vec<String>,
     }
 
@@ -187,9 +292,28 @@ pub fn assemble_rust_contract_facts(
                     .entry((fact.api_id.clone(), fact.callback_param.clone()))
                     .or_default();
                 parts.lineage = Some(fact.lineage);
+                parts.entry_def_path = fact.entry_def_path.clone();
+                parts.evidence.push(fact.site_id.to_string());
+            }
+            StaticFact::ForeignSymbolBinding(fact) => {
+                let parts = by_hand_off
+                    .entry((fact.api_id.clone(), fact.callback_param.clone()))
+                    .or_default();
+                parts.binding = Some(fact.clone());
                 parts.evidence.push(fact.site_id.to_string());
             }
             _ => {}
+        }
+    }
+
+    // 注册代次：同一个外部符号被本构建里几个交出点注册过。
+    //
+    // 一个就能由交出点唯一确定代次；多个就分不开证据属于哪一次——**这不是可以忽略的
+    // 细节**，「注册 A → 注销 → 注册 B」的证据拼在一起会得出谁都没发生过的结论。
+    let mut sites_per_symbol = BTreeMap::<String, usize>::new();
+    for parts in by_hand_off.values() {
+        if let Some(symbol) = parts.binding.as_ref().and_then(|fact| fact.symbol.as_ref()) {
+            *sites_per_symbol.entry(symbol.clone()).or_default() += 1;
         }
     }
 
@@ -219,6 +343,14 @@ pub fn assemble_rust_contract_facts(
                     | SafeEntryLineage::ReachableFromPublicSafeEntry,
                 ) => {}
             }
+            // 没有符号就没有联结主键，这个交出点接不上外部侧。
+            match parts.binding.as_ref() {
+                None => gaps.push(RustContractGap::MissingForeignSymbol),
+                Some(fact) if fact.symbol.is_none() || fact.callback_arg_index.is_none() => {
+                    gaps.push(RustContractGap::ForeignSymbolUnresolved);
+                }
+                Some(_) => {}
+            }
             if !gaps.is_empty() {
                 return RustContractAssembly::Gap {
                     api_id,
@@ -228,8 +360,29 @@ pub fn assemble_rust_contract_facts(
             }
             let mut evidence = parts.evidence;
             evidence.sort();
+            let binding = parts.binding.expect("checked above");
+            let symbol = binding.symbol.expect("checked above");
+            let registration_generation = match sites_per_symbol.get(&symbol) {
+                Some(1) => RegistrationGeneration::UniqueStaticSite,
+                Some(_) => RegistrationGeneration::MultipleStaticSites,
+                None => RegistrationGeneration::Unresolved,
+            };
             RustContractAssembly::Assembled(Box::new(RustContractFact {
-                hand_off: hand_off_id(&api_id, &callback_param),
+                hand_off: RustHandOffKey {
+                    rust_artifact: build.rust_artifact.clone(),
+                    build_profile: build.build_profile.clone(),
+                    // lineage 为可达时必有入口；`DirectPublicSafeEntry` 时入口就是它自己。
+                    safe_entry_instance: parts.entry_def_path.unwrap_or_else(|| api_id.clone()),
+                    // 单态化实例 id 还需要更多编译器工作，当前用定义路径。它**不参与
+                    // 跨侧匹配**（那只看符号与参数角色），因此不违反 ADR-0003 第五条。
+                    rust_def_instance: api_id.clone(),
+                    call_occurrence: binding.site_id.to_string(),
+                    foreign_symbol: symbol,
+                    callback_arg_index: binding.callback_arg_index.expect("checked above"),
+                    userdata_arg_index: binding.userdata_arg_index,
+                    registration_key: None,
+                    registration_generation,
+                },
                 capture_admission: parts.admission.expect("checked above"),
                 guard: parts.guard.expect("checked above"),
                 allocation: parts.allocation.expect("checked above"),
@@ -298,7 +451,7 @@ pub enum ForeignPathCompatibility {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForeignBehaviorFact {
-    pub hand_off: HandOffId,
+    pub hand_off: ForeignHandOffKey,
     pub retention: ForeignRetention,
     pub invocation: ForeignInvocation,
     pub clear: ForeignClear,
@@ -351,6 +504,12 @@ pub enum WitnessStatus {
 pub enum WitnessObligation {
     /// 只有降级 Q3 证据，需要真实执行证明晚调确实发生。
     EstablishLateInvoke,
+    /// 身份五层全部对上，但**路径条件相容性没有被证明**。
+    ///
+    /// 这就是 research thesis §2.5 的 `JointTraceObligation`。两侧各自的 may-property
+    /// 成立，不蕴含它们能在同一条执行上同时发生：保留只在部分路径上发生时，那条路径
+    /// 未必就是能走到晚调的那条。首期不解路径条件，因此这一步交给反证。
+    EstablishJointTrace,
 }
 
 /// 一个交出点上、针对一类生命周期的判定结果。
@@ -488,15 +647,25 @@ pub fn judge(
 ) -> CompatibilityVerdict {
     let mut assumptions = Vec::new();
 
-    // `SameArtifactSlotAndRole`：身份不等的两侧事实不得组合。
+    // `SameArtifactSlotAndRole`：身份对不上的两侧事实不得组合。
+    //
+    // 正式联结在 [`crate::join_hand_off`]，这里再挡一道是因为 `judge` 是公开入口：
+    // 少了它，任意两条事实都能被凑进来判一次。
     let foreign = match foreign {
-        Some(fact) if fact.hand_off != rust.hand_off => {
+        Some(fact) if !rust.hand_off.joins_with(&fact.hand_off) => {
             assumptions.push("foreign fact hand-off identity does not match".to_owned());
             None
         }
         other => other,
     };
 
+    if rust.hand_off.registration_generation == RegistrationGeneration::MultipleStaticSites {
+        assumptions.push(
+            "the same foreign symbol is registered from more than one static site; \
+             attributing a runtime registration to this one needs a witness"
+                .to_owned(),
+        );
+    }
     let (separation, guard_defeated) =
         safe_lifetime_separation_possible(rust, subject, foreign, &mut assumptions);
     let late_use = foreign_late_use_possible(foreign, &mut assumptions);
@@ -527,14 +696,36 @@ pub fn judge(
                 witness_obligation = Some(WitnessObligation::EstablishLateInvoke);
                 StaticVerdict::InsufficientEvidence
             } else {
-                StaticVerdict::SupportedIncompatibility
+                // `JointTraceFeasible` 的第五项：路径条件相容。前四项由 `join_hand_off`
+                // 负责，这一项只有外部侧看得到。
+                //
+                // **两条 may-property 分别成立不等于它们能在同一条执行上同时发生。**
+                // 保留 store 只落在部分路径上时，那条路径未必就是能走到晚调的那条；
+                // 此时给出「不相容」就是把联合命题当成了两个独立命题的合取。
+                match foreign.map(|fact| fact.path_compatibility) {
+                    Some(ForeignPathCompatibility::RetainOnEveryPath) => {
+                        StaticVerdict::SupportedIncompatibility
+                    }
+                    other => {
+                        assumptions.push(match other {
+                            Some(ForeignPathCompatibility::RetainOnSomePaths) => {
+                                "retention happens on only some returning paths; \
+                                 joint trace feasibility not established"
+                                    .to_owned()
+                            }
+                            _ => "path compatibility unresolved".to_owned(),
+                        });
+                        witness_obligation = Some(WitnessObligation::EstablishJointTrace);
+                        StaticVerdict::InsufficientEvidence
+                    }
+                }
             }
         }
         _ => StaticVerdict::InsufficientEvidence,
     };
 
     CompatibilityVerdict {
-        hand_off: rust.hand_off.clone(),
+        hand_off: HandOffId::from_keys(&rust.hand_off, foreign.map(|fact| &fact.hand_off)),
         subject,
         static_verdict,
         evidence_grade,

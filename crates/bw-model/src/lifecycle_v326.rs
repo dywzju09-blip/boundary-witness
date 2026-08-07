@@ -819,6 +819,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         StaticFact::RegistrationGuard(fact) => Some(fact.api_id.clone()),
         StaticFact::AllocationOwnership(fact) => Some(fact.api_id.clone()),
         StaticFact::SafeEntryLineage(fact) => Some(fact.api_id.clone()),
+        StaticFact::ForeignSymbolBinding(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowRelation(fact) => Some(fact.api_id.clone()),
         StaticFact::PersistedReturnedBorrow(fact) => Some(fact.api_id.clone()),
         StaticFact::ReturnedBorrowInvalidationOrder(fact) => Some(fact.api_id.clone()),
@@ -890,6 +891,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<String> {
         StaticFact::RegistrationGuard(fact) => vec![fact.site_id.to_string()],
         StaticFact::AllocationOwnership(fact) => vec![fact.site_id.to_string()],
         StaticFact::SafeEntryLineage(fact) => vec![fact.site_id.to_string()],
+        StaticFact::ForeignSymbolBinding(fact) => vec![fact.site_id.to_string()],
         StaticFact::ReturnedBorrowRelation(fact) => vec![
             fact.site_id.to_string(),
             fact.source_site_id.to_string(),
@@ -6176,6 +6178,7 @@ fn lifecycle_static_fact_fields(
         StaticFact::RegistrationGuard(_)
             | StaticFact::AllocationOwnership(_)
             | StaticFact::SafeEntryLineage(_)
+            | StaticFact::ForeignSymbolBinding(_)
     ) {
         return None;
     }
@@ -6468,7 +6471,8 @@ fn lifecycle_static_fact_fields(
         // 是为了让**下一个**新增的事实种类仍然撞上穷尽匹配。
         StaticFact::RegistrationGuard(_)
         | StaticFact::AllocationOwnership(_)
-        | StaticFact::SafeEntryLineage(_) => {
+        | StaticFact::SafeEntryLineage(_)
+        | StaticFact::ForeignSymbolBinding(_) => {
             unreachable!("these facts return early")
         }
     })

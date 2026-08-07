@@ -9,23 +9,37 @@
 
 use bw_model::{
     AllocationOwnership, CompatibilityVerdict, EffectiveCaptureAdmission, EvidenceGrade,
-    ForeignBehaviorFact, ForeignClear, ForeignInvocation, ForeignPathCompatibility,
-    ForeignRetention, HandOffId, LifetimeSubject, RegistrationGuard, RustContractFact,
-    StaticVerdict, WitnessObligation, WitnessStatus, hand_off_is_incompatible, judge,
-    judge_hand_off,
+    ForeignBehaviorFact, ForeignClear, ForeignHandOffKey, ForeignInvocation,
+    ForeignPathCompatibility, ForeignRetention, LifetimeSubject, RegistrationGeneration,
+    RegistrationGuard, RustContractFact, RustHandOffKey, StaticVerdict, WitnessObligation,
+    WitnessStatus, hand_off_is_incompatible, judge, judge_hand_off,
 };
 
-fn hand_off() -> HandOffId {
-    HandOffId {
+/// Rust 侧半键。**两侧各持一半**：完整身份只能由 `join_hand_off` 合成。
+fn hand_off() -> RustHandOffKey {
+    RustHandOffKey {
         rust_artifact: "artifact:callback-retention-relation".to_owned(),
+        build_profile: "x86_64-unknown-linux-gnu/default".to_owned(),
+        safe_entry_instance: "Registry::register".to_owned(),
         rust_def_instance: "Registry::register".to_owned(),
         call_occurrence: "call:0".to_owned(),
-        foreign_artifact: "artifact:fixture-foreign".to_owned(),
         foreign_symbol: "fixture_register".to_owned(),
         callback_arg_index: 0,
         userdata_arg_index: Some(1),
         registration_key: Some("slot:global".to_owned()),
+        registration_generation: RegistrationGeneration::UniqueStaticSite,
+    }
+}
+
+/// 外部侧半键，与上面那半在重叠部分一致。
+fn foreign_hand_off() -> ForeignHandOffKey {
+    ForeignHandOffKey {
+        foreign_artifact: "artifact:fixture-foreign".to_owned(),
         build_profile: "x86_64-unknown-linux-gnu/default".to_owned(),
+        foreign_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 0,
+        userdata_arg_index: Some(1),
+        registration_key: Some("slot:global".to_owned()),
     }
 }
 
@@ -65,7 +79,7 @@ fn rust_static_alloc_freed_early() -> RustContractFact {
 /// `retain_late_invoke.c` / `retain_late_invoke_leaky.c` 的共同部分。
 fn foreign(clear: ForeignClear) -> ForeignBehaviorFact {
     ForeignBehaviorFact {
-        hand_off: hand_off(),
+        hand_off: foreign_hand_off(),
         retention: ForeignRetention::MayRetain,
         invocation: ForeignInvocation::MayInvokeAfterReturn,
         clear,
@@ -79,7 +93,7 @@ fn foreign(clear: ForeignClear) -> ForeignBehaviorFact {
 /// `synchronous_only.c`。
 fn foreign_synchronous() -> ForeignBehaviorFact {
     ForeignBehaviorFact {
-        hand_off: hand_off(),
+        hand_off: foreign_hand_off(),
         retention: ForeignRetention::NoRetain,
         invocation: ForeignInvocation::SynchronousInvokeOnly,
         // 这个 stub 的 `fixture_unregister` 是空的：没有槽位，也就无所谓清不清。
@@ -339,9 +353,12 @@ fn degraded_q3_evidence_cannot_reach_supported_incompatibility() {
 
 #[test]
 fn identity_mismatch_is_not_joined() {
-    // 两侧事实的交出点身份不等时不得组合——`SameArtifactSlotAndRole`。
+    // 两侧半键的**重叠部分**对不上时不得组合——`SameArtifactSlotAndRole`。
+    //
+    // 重叠部分只有构建配置、符号与三项参数角色；`call_occurrence` 之类只有 Rust 侧有，
+    // 不参与这一步。这里改符号：两条事实根本没在谈同一个函数。
     let mut fact = foreign(ForeignClear::MayLeaveSlotPopulated);
-    fact.hand_off.call_occurrence = "call:7".to_owned();
+    fact.hand_off.foreign_symbol = "other_register".to_owned();
 
     let verdict = judge(
         &rust_borrowed_with_guard(),

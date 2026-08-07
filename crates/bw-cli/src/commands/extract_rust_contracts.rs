@@ -14,7 +14,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use bw_model::{HandOffId, RustContractAssembly, StaticFactEnvelope, assemble_rust_contract_facts};
+use bw_model::{
+    RustContractAssembly, RustHandOffBuildContext, StaticFactEnvelope, assemble_rust_contract_facts,
+};
 use clap::Args;
 use serde::Serialize;
 
@@ -32,9 +34,12 @@ pub struct ExtractRustContractsArgs {
     output_dir: PathBuf,
     #[arg(long)]
     run_id: String,
-    /// 参与 `HandOffId` 的构建配置标识。阶段 2 会换成真实 build profile。
-    #[arg(long = "build-profile", default_value = "unbound")]
+    /// 参与身份的构建配置标识。切 feature、target 或优化级别都必须让它变化。
+    #[arg(long = "build-profile")]
     build_profile: String,
+    /// Rust 侧构建产物标识。与外部侧的 artifact 一起构成身份第一层。
+    #[arg(long = "rust-artifact")]
+    rust_artifact: String,
     #[arg(long, default_value_t = DEFAULT_MAX_LINE_BYTES)]
     max_line_bytes: usize,
 }
@@ -45,7 +50,11 @@ struct RustContractRecord {
     schema_version: &'static str,
     run_id: String,
     api_id: String,
-    callback_param: String,
+    /// 联结主键。装配失败时无值。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    foreign_symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    callback_param: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     contract: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -74,20 +83,14 @@ pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
         .map(|located| located.value)
         .collect();
 
-    let build_profile = args.build_profile.clone();
-    let hand_off_id = move |api_id: &str, callback_param: &str| HandOffId {
-        rust_artifact: String::from("pending-stage-2"),
-        rust_def_instance: api_id.to_owned(),
-        call_occurrence: format!("callback_param:{callback_param}"),
-        foreign_artifact: String::from("pending-stage-2"),
-        foreign_symbol: String::from("pending-stage-2"),
-        callback_arg_index: 0,
-        userdata_arg_index: None,
-        registration_key: None,
-        build_profile: build_profile.clone(),
+    // 身份里只有这两项来自构建层面，其余全部从静态事实里读。**不接受调用方塞入符号
+    // 或参数角色**——那是编译器的观察结果，从命令行传进来就等于人工标注。
+    let build = RustHandOffBuildContext {
+        rust_artifact: args.rust_artifact.clone(),
+        build_profile: args.build_profile.clone(),
     };
 
-    let assembly = assemble_rust_contract_facts(&facts, &hand_off_id);
+    let assembly = assemble_rust_contract_facts(&facts, &build);
     let mut summary = RustContractSummary {
         schema_version: SCHEMA_VERSION,
         run_id: args.run_id.clone(),
@@ -107,11 +110,8 @@ pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
                     schema_version: SCHEMA_VERSION,
                     run_id: args.run_id.clone(),
                     api_id: fact.hand_off.rust_def_instance.clone(),
-                    callback_param: fact
-                        .hand_off
-                        .call_occurrence
-                        .trim_start_matches("callback_param:")
-                        .to_owned(),
+                    foreign_symbol: Some(fact.hand_off.foreign_symbol.clone()),
+                    callback_param: None,
                     contract: Some(
                         serde_json::to_value(&*fact)
                             .map_err(|error| CliError::internal(error.to_string()))?,
@@ -141,7 +141,8 @@ pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
                     schema_version: SCHEMA_VERSION,
                     run_id: args.run_id.clone(),
                     api_id,
-                    callback_param,
+                    foreign_symbol: None,
+                    callback_param: Some(callback_param),
                     contract: None,
                     gaps,
                 });
@@ -153,6 +154,7 @@ pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
         left.api_id
             .cmp(&right.api_id)
             .then(left.callback_param.cmp(&right.callback_param))
+            .then(left.foreign_symbol.cmp(&right.foreign_symbol))
     });
 
     std::fs::create_dir_all(&args.output_dir)?;

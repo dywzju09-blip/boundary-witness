@@ -17,10 +17,9 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::{
-    ir::{Function, Inst, InstKind, IrModule, Operand},
-    slot::SlotId,
-};
+use bw_model::SlotId;
+
+use crate::ir::{Function, Inst, InstKind, IrModule, Operand};
 
 /// 一个 SSA 值的来源。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,7 +182,7 @@ impl<'a> FunctionFlow<'a> {
             Operand::Global(symbol) => {
                 let global = module.globals.get(symbol)?;
                 (!global.is_constant).then(|| SlotId {
-                    base: crate::slot::SlotBase::Global {
+                    base: bw_model::SlotBase::Global {
                         symbol: symbol.clone(),
                     },
                     field_path: indices.to_vec(),

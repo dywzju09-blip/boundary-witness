@@ -11,6 +11,7 @@ mod error;
 mod failure_taxonomy;
 mod finding;
 mod id;
+mod joint;
 mod jsonl;
 mod lifecycle;
 mod lifecycle_v326;
@@ -19,6 +20,7 @@ mod run;
 mod runtime_event;
 mod scanner_freeze;
 mod schema;
+mod slot;
 mod static_fact;
 mod static_ranking_reveal;
 mod validate;
@@ -40,9 +42,10 @@ pub use candidate::{
     V32PatternFamily, V32RecommendedNextStep, candidate_from_boundary, validate_v3_2_candidates,
 };
 pub use compatibility::{
-    CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignInvocation,
-    ForeignPathCompatibility, ForeignRetention, HandOffId, LifetimeSubject, RustContractAssembly,
-    RustContractFact, RustContractGap, StaticVerdict, WitnessObligation, WitnessStatus,
+    CompatibilityVerdict, EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignHandOffKey,
+    ForeignInvocation, ForeignPathCompatibility, ForeignRetention, HandOffId, LifetimeSubject,
+    RegistrationGeneration, RustContractAssembly, RustContractFact, RustContractGap,
+    RustHandOffBuildContext, RustHandOffKey, StaticVerdict, WitnessObligation, WitnessStatus,
     assemble_rust_contract_facts, hand_off_is_incompatible, judge, judge_hand_off,
 };
 pub use contract::{
@@ -66,6 +69,7 @@ pub use finding::{
     EvidenceReference, EvidenceSourceKind, Finding, FindingClassification, FindingStateSnapshot,
 };
 pub use id::{BuildId, InstanceId, RecordId, RunId, SemanticSiteKey, SiteId, TraceId};
+pub use joint::{JoinOutcome, JoinRejection, JointTrace, join_hand_off};
 pub use jsonl::{JsonlReader, Located};
 pub use lifecycle::{
     V3_2_LIFECYCLE_GRAPH_SCHEMA_V1, V3_2_RANKED_CANDIDATE_SCHEMA_V1, V32LifecycleEdge,
@@ -125,16 +129,18 @@ pub use schema::{
     CONTRACT_SCHEMA_V01, FINDING_SCHEMA_V01, RUN_SCHEMA_V01, STATIC_SCHEMA_V01, STATIC_SCHEMA_V02,
     TRACE_SCHEMA_V01,
 };
+pub use slot::{SlotBase, SlotId};
 pub use static_fact::{
     AllocationOwnership, AllocationOwnershipFact, AtomicOperationKind, AtomicOrderingFact,
     AtomicOrderingKind, CallbackCaptureFact, CallbackLifetimeBoundFact, CallbackLifetimeBoundScope,
     CallbackReleaseUseOrderFact, CallbackReleaseUseOrdering, CallbackSiteFact,
     CallbackUserDataReconstructionFact, CallbackUserDataReconstructionKind, CaptureMode, DropKind,
     DropPreventionFact, DropPreventionKind, DropSiteFact, EffectiveCaptureAdmission,
-    ExternalBufferBindingFact, ExternalCallRole, ExternalCallSiteFact, ObjectBindingGapFact,
-    ObjectBindingGapKind, ObjectFlowFact, ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact,
-    PersistedReturnedBorrowFact, RawPointerTransferFact, RawPointerTransferKind, RegistrationGuard,
-    RegistrationGuardFact, RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
+    ExternalBufferBindingFact, ExternalCallRole, ExternalCallSiteFact, ForeignSymbolBindingFact,
+    ForeignSymbolResolution, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
+    ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
+    RawPointerTransferFact, RawPointerTransferKind, RegistrationGuard, RegistrationGuardFact,
+    RegistrationRole, RegistrationSiteFact, ReleasePathProofFact,
     ReturnedBorrowInvalidationOrderFact, ReturnedBorrowInvalidationOrdering,
     ReturnedBorrowRelationFact, ReturnedBorrowRelationKind, SafeEntryLineage, SafeEntryLineageFact,
     StaticArtifactIdentity, StaticFact, StaticFactEnvelope, StaticSourceRef, UnresolvedReason,

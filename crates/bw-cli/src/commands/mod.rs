@@ -26,6 +26,7 @@ mod extract_rust_contracts;
 mod extract_static_facts;
 mod generate_witness_harness;
 mod index_boundaries;
+mod judge_hand_offs;
 mod materialize_lifecycle_contracts;
 mod rank_lifecycle;
 mod rank_lifecycle_v2;
@@ -115,6 +116,8 @@ pub enum Command {
     ExtractRustContracts(extract_rust_contracts::ExtractRustContractsArgs),
     /// 从真实构建捕获的外部 LLVM IR 提取外部侧行为事实（执行计划阶段 3）。
     ExtractForeignFacts(extract_foreign_facts::ExtractForeignFactsArgs),
+    /// 按分层身份精确联结两侧事实并产出三态判定（执行计划阶段 4）。
+    JudgeHandOffs(judge_hand_offs::JudgeHandOffsArgs),
     /// 用 compiler wrapper 批量物化 V3.2.x 静态事实与 MIR 覆盖。
     ExtractStaticFacts(extract_static_facts::ExtractStaticFactsArgs),
     /// 基于 V3.2.6 facts/contracts 构建 object-bound lifecycle graph v3。
@@ -158,6 +161,7 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::ExtractLifecycleEvidence(args) => extract_lifecycle_evidence::run(args),
         Command::ExtractRustContracts(args) => extract_rust_contracts::run(args),
         Command::ExtractForeignFacts(args) => extract_foreign_facts::run(args),
+        Command::JudgeHandOffs(args) => judge_hand_offs::run(args),
         Command::ExtractStaticFacts(args) => extract_static_facts::run(args),
         Command::BuildLifecycleGraphV3(args) => build_lifecycle_graph_v3::run(args),
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),

@@ -19,6 +19,7 @@ fn help_lists_public_commands() {
     assert!(stdout.contains("extract-lifecycle-evidence"));
     assert!(stdout.contains("extract-rust-contracts"));
     assert!(stdout.contains("extract-foreign-facts"));
+    assert!(stdout.contains("judge-hand-offs"));
     assert!(stdout.contains("build-lifecycle-graph-v3"));
     assert!(stdout.contains("rank-lifecycle-v2"));
     assert!(stdout.contains("build-witness-plan"));

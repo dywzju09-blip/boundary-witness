@@ -13,9 +13,10 @@ use bw_foreign_ir::{
     BoundaryReason, ForeignRoleMap, RetainedSubject, SlotClearEvidence, SlotId, analyze_text,
 };
 use bw_model::{
-    AllocationOwnership, EffectiveCaptureAdmission, EvidenceGrade, ForeignClear, ForeignInvocation,
-    ForeignPathCompatibility, ForeignRetention, HandOffId, LifetimeSubject, RegistrationGuard,
-    RustContractFact, StaticVerdict, judge,
+    AllocationOwnership, EffectiveCaptureAdmission, EvidenceGrade, ForeignClear, ForeignHandOffKey,
+    ForeignInvocation, ForeignPathCompatibility, ForeignRetention, LifetimeSubject,
+    RegistrationGeneration, RegistrationGuard, RustContractFact, RustHandOffKey, StaticVerdict,
+    judge,
 };
 
 const IR_DIR: &str = "../../benchmarks/compiler-fixtures/callback-retention-relation/foreign/ir";
@@ -252,24 +253,36 @@ fn the_four_foreign_dimensions_are_recorded_separately() {
     );
 }
 
-fn hand_off() -> HandOffId {
-    HandOffId {
-        rust_artifact: "artifact:callback-retention-relation".to_owned(),
-        rust_def_instance: "Registry::register_guarded".to_owned(),
-        call_occurrence: "call:0".to_owned(),
+fn foreign_hand_off() -> ForeignHandOffKey {
+    ForeignHandOffKey {
         foreign_artifact: "artifact:fixture-foreign".to_owned(),
+        build_profile: "dev".to_owned(),
         foreign_symbol: "fixture_register".to_owned(),
         callback_arg_index: 0,
         userdata_arg_index: Some(1),
         registration_key: None,
+    }
+}
+
+fn rust_hand_off() -> RustHandOffKey {
+    RustHandOffKey {
+        rust_artifact: "artifact:callback-retention-relation".to_owned(),
         build_profile: "dev".to_owned(),
+        safe_entry_instance: "Registry::register_guarded".to_owned(),
+        rust_def_instance: "Registry::register_guarded".to_owned(),
+        call_occurrence: "call:0".to_owned(),
+        foreign_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 0,
+        userdata_arg_index: Some(1),
+        registration_key: None,
+        registration_generation: RegistrationGeneration::UniqueStaticSite,
     }
 }
 
 /// fixture 2 与 fixture 3 共用的 Rust 形状：`register_guarded`。
 fn guarded_rust_contract() -> RustContractFact {
     RustContractFact {
-        hand_off: hand_off(),
+        hand_off: rust_hand_off(),
         capture_admission: EffectiveCaptureAdmission::PermitsNonStaticCapture,
         guard: RegistrationGuard::OwnerDropUnregisters,
         allocation: AllocationOwnership::ForeignOwnedUntilUnregister,
@@ -284,10 +297,10 @@ fn the_same_rust_side_gets_different_verdicts_from_the_ir_alone() {
 
     let clearing = analyze_text(&ir("retain_late_invoke_clearing.ll"), &roles())
         .expect("parses")
-        .into_behavior_fact(hand_off());
+        .into_behavior_fact(foreign_hand_off());
     let leaky = analyze_text(&ir("retain_late_invoke_leaky.ll"), &roles())
         .expect("parses")
-        .into_behavior_fact(hand_off());
+        .into_behavior_fact(foreign_hand_off());
 
     let clearing_verdict = judge(&rust, Some(&clearing), LifetimeSubject::CapturedReferent);
     let leaky_verdict = judge(&rust, Some(&leaky), LifetimeSubject::CapturedReferent);

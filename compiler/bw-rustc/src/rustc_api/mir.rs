@@ -17,7 +17,7 @@ use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitabl
 use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
 use bw_model::{
     AllocationOwnership, AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
-    SafeEntryLineage, UnresolvedReason,
+    ForeignSymbolResolution, SafeEntryLineage, UnresolvedReason,
     CallbackReleaseUseOrdering, CallbackUserDataReconstructionKind, DropKind, DropPreventionKind,
     ObjectBindingGapKind, ObjectFlowKind, ObjectFlowObjectKind, RawPointerTransferKind,
     RegistrationGuard, ReturnedBorrowInvalidationOrdering, ReturnedBorrowRelationKind,
@@ -34,6 +34,7 @@ use crate::{
         ObjectBindingGapObservation, ObjectFlowEndpointObservation, ObjectFlowObservation,
         ObjectFlowStaticSiteObservation, PersistedReturnedBorrowObservation, RawPointerReference,
         AllocationOwnershipObservation, RawPointerTransferObservation,
+        ForeignSymbolBindingObservation,
         SafeEntryLineageObservation,
         RegistrationGuardObservation, RegistrationObservation,
         ReleasePathProofObservation, ReturnedBorrowInvalidationOrderObservation,
@@ -57,6 +58,7 @@ pub struct MirSiteObservations {
     pub registration_guards: Vec<RegistrationGuardObservation>,
     pub allocation_ownerships: Vec<AllocationOwnershipObservation>,
     pub safe_entry_lineages: Vec<SafeEntryLineageObservation>,
+    pub foreign_symbol_bindings: Vec<ForeignSymbolBindingObservation>,
     pub returned_borrow_relations: Vec<ReturnedBorrowRelationObservation>,
     pub persisted_returned_borrows: Vec<PersistedReturnedBorrowObservation>,
     pub returned_borrow_invalidation_orders: Vec<ReturnedBorrowInvalidationOrderObservation>,
@@ -354,6 +356,9 @@ pub fn collect_mir_sites<'tcx>(
         let (call_graph, complete) = crate_call_graph(tcx, &call_graph_owners);
         observations.safe_entry_lineages =
             safe_entry_lineages(tcx, &hand_off_sites, &call_graph, complete);
+        // 与 lineage 同源：都按 `hand_off_sites` 逐个交出点产出，保证两条事实按
+        // `(api_id, callback_param)` 一一配得上。
+        observations.foreign_symbol_bindings = foreign_symbol_bindings(tcx, &hand_off_sites);
     }
 
     let (openssl_releases, openssl_proofs) = infer_openssl_ex_data_release_path_proofs(
@@ -21350,6 +21355,145 @@ fn safe_entry_lineages(
             }
         })
         .collect()
+}
+
+/// 每个交出点最终把回调交给了哪个外部链接符号。
+///
+/// # 这条事实之前是缺的
+///
+/// Rust 侧原本没有任何事实携带链接符号：记的都是 `api_id`（Rust API 路径），而外部侧
+/// IR 里只有符号。两侧因此**没有共同的键**，阶段 1.4 只能填占位串。符号与参数角色是
+/// 两侧唯一的重叠部分，也就是精确联结的主键。
+///
+/// # 找不到就说找不到
+///
+/// 判据只认「交出点所在函数体内、直接调用一个 `extern` 块里声明的函数、且实参里有函数
+/// 指针」这一种形状。找到多个一律
+/// [`ForeignSymbolResolution::AmbiguousForeignCalls`]，**不挑一个当答案**——按
+/// ADR-0003 第四条，符号解析歧义必须返回 Unknown，不得用名称近似补齐。
+fn foreign_symbol_bindings(
+    tcx: TyCtxt<'_>,
+    hand_offs: &[(LocalDefId, String, String, PathBuf, String)],
+) -> Vec<ForeignSymbolBindingObservation> {
+    hand_offs
+        .iter()
+        .map(|(def_id, api_id, callback_param, source_path, span)| {
+            let calls = foreign_callback_calls(tcx, *def_id);
+            let (symbol, callback_arg_index, userdata_arg_index, resolution) = match calls.as_slice()
+            {
+                [] => (
+                    None,
+                    None,
+                    None,
+                    ForeignSymbolResolution::NoForeignCallInBody,
+                ),
+                [call] => (
+                    Some(call.symbol.clone()),
+                    Some(call.callback_arg_index),
+                    call.userdata_arg_index,
+                    call.resolution,
+                ),
+                _ => (
+                    None,
+                    None,
+                    None,
+                    ForeignSymbolResolution::AmbiguousForeignCalls,
+                ),
+            };
+            ForeignSymbolBindingObservation {
+                owner_def_path: tcx.def_path_str(def_id.to_def_id()),
+                source_path: source_path.clone(),
+                span: span.clone(),
+                mir_location: format!("mir:foreign_symbol_binding:{callback_param}"),
+                api_id: api_id.clone(),
+                callback_param: callback_param.clone(),
+                symbol,
+                callback_arg_index,
+                userdata_arg_index,
+                resolution,
+            }
+        })
+        .collect()
+}
+
+/// 一次「把函数指针交给外部符号」的调用。
+struct ForeignCallbackCall {
+    symbol: String,
+    callback_arg_index: u32,
+    userdata_arg_index: Option<u32>,
+    resolution: ForeignSymbolResolution,
+}
+
+fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCallbackCall> {
+    let body = tcx.optimized_mir(def_id);
+    let mut calls = Vec::new();
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, .. } = &terminator.kind else {
+            continue;
+        };
+        let Some((callee_def_id, _)) = func.const_fn_def() else {
+            continue;
+        };
+        // `extern` 块里声明的函数才有外部链接符号。ABI 是 C 的 Rust 函数不算。
+        if !tcx.is_foreign_item(callee_def_id) {
+            continue;
+        }
+        let mut callback_arg_index = None;
+        let mut userdata_arg_index = None;
+        for (index, arg) in args.iter().enumerate() {
+            let ty = arg.node.ty(&body.local_decls, tcx);
+            let index = index as u32;
+            if callback_arg_index.is_none() && ty_carries_fn_pointer(ty) {
+                callback_arg_index = Some(index);
+            } else if userdata_arg_index.is_none() && ty.is_raw_ptr() {
+                userdata_arg_index = Some(index);
+            }
+        }
+        let Some(callback_arg_index) = callback_arg_index else {
+            continue;
+        };
+        // `symbol_name` 是链接符号的权威来源，`#[link_name]` 由它自己处理。直接读属性
+        // 会随 rustc 内部结构变动而失效，而且属性形式不止一种。
+        let symbol = tcx
+            .symbol_name(ty::Instance::mono(tcx, callee_def_id))
+            .name
+            .to_owned();
+        // 符号与 extern 项名不同，说明是 `#[link_name]` 之类改过名。两者可信度不同，
+        // 分开记录（ADR-0003 第四条）。
+        let resolution = if symbol == tcx.item_name(callee_def_id).as_str() {
+            ForeignSymbolResolution::ExternItemName
+        } else {
+            ForeignSymbolResolution::LinkNameAttribute
+        };
+        calls.push(ForeignCallbackCall {
+            symbol,
+            callback_arg_index,
+            userdata_arg_index,
+            resolution,
+        });
+    }
+    calls
+}
+
+/// 这个类型是不是函数指针，或**恰好裹了一层 `Option` 的函数指针**。
+///
+/// 后一种是 C 头文件绑定的常态：`void (*cb)(void*)` 在 Rust 侧是
+/// `Option<unsafe extern "C" fn(*mut c_void)>`，靠空指针优化占同样的位宽。只判
+/// `is_fn_ptr()` 会把真实 FFI 里绝大多数注册调用全部漏掉。
+fn ty_carries_fn_pointer(ty: Ty<'_>) -> bool {
+    if ty.is_fn_ptr() {
+        return true;
+    }
+    let ty::Adt(adt, args) = ty.kind() else {
+        return false;
+    };
+    if !adt.is_enum() || adt.variants().len() != 2 {
+        return false;
+    }
+    args.types().any(|inner| inner.is_fn_ptr())
 }
 
 fn fn_is_unsafe(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {

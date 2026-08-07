@@ -83,6 +83,7 @@ fn analyze_crate<'tcx>(
         &mir_sites.registration_guards,
         &mir_sites.allocation_ownerships,
         &mir_sites.safe_entry_lineages,
+        &mir_sites.foreign_symbol_bindings,
         &mir_sites.returned_borrow_relations,
         &mir_sites.persisted_returned_borrows,
         &mir_sites.returned_borrow_invalidation_orders,

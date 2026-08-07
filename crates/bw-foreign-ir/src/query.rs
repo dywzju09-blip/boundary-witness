@@ -19,15 +19,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bw_model::{
-    EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignInvocation, ForeignPathCompatibility,
-    ForeignRetention, HandOffId,
+    EvidenceGrade, ForeignBehaviorFact, ForeignClear, ForeignHandOffKey, ForeignInvocation,
+    ForeignPathCompatibility, ForeignRetention, SlotId,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     dataflow::{FunctionFlow, PathInfo, ValueOrigin, path_info},
     ir::{Function, InstKind, IrModule, Operand},
-    slot::SlotId,
 };
 
 /// 外部符号与参数角色。**只用于绑定，不参与行为结论。**
@@ -166,10 +165,10 @@ pub struct ForeignAnalysis {
 impl ForeignAnalysis {
     /// 装配成模型层的外部侧事实。
     ///
-    /// `hand_off` 必须由调用方给出：本 crate 只看外部 IR，凑不齐交出点身份里 Rust 侧
-    /// 那一半。**身份不完整就不得进 P3 的联结。**
+    /// `hand_off` 只是外部侧那半个键：本 crate 看不到 safe entry 与 Rust 构建产物。
+    /// 完整身份由 `bw_model::join_hand_off` 校验重叠部分后合成。
     #[must_use]
-    pub fn into_behavior_fact(self, hand_off: HandOffId) -> ForeignBehaviorFact {
+    pub fn into_behavior_fact(self, hand_off: ForeignHandOffKey) -> ForeignBehaviorFact {
         let mut evidence: Vec<String> = Vec::new();
         for site in &self.retention_sites {
             evidence.push(format!(

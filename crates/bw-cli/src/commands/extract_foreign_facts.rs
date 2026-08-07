@@ -15,6 +15,7 @@ use std::{
 };
 
 use bw_foreign_ir::{ForeignAnalysis, ForeignRoleMap, SlotId, analyze_text};
+use bw_model::ForeignHandOffKey;
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,11 @@ pub struct ExtractForeignFactsArgs {
     /// 被分析的外部 artifact 标识，写进产物供阶段 4 绑定回查。
     #[arg(long = "foreign-artifact")]
     foreign_artifact: String,
+    /// 构建配置。**必须与 Rust 侧同值**，否则联结会以 build mismatch 被拒绝。
+    ///
+    /// 它在提取时就记进产物，而不是留到联结时由调用方断言——事后断言等于没有检查。
+    #[arg(long = "build-profile")]
+    build_profile: String,
 }
 
 /// RoleMap 文件。
@@ -61,7 +67,9 @@ const SCHEMA_VERSION: &str = "bw.foreign-behavior/0.1";
 struct ForeignFactRecord {
     schema_version: &'static str,
     run_id: String,
-    foreign_artifact: String,
+    /// 外部侧那半个交出点身份。**另一半在 Rust 侧**，完整身份由联结合成。
+    hand_off: ForeignHandOffKey,
+    /// 仅作诊断：符号已经在 `hand_off` 里，这里重复一份是为了让产物可读。
     register_symbol: String,
     /// 分析结论与全部证据。
     analysis: ForeignAnalysis,
@@ -137,7 +145,14 @@ pub fn run(args: ExtractForeignFactsArgs) -> Result<CommandStatus, CliError> {
         records.push(ForeignFactRecord {
             schema_version: SCHEMA_VERSION,
             run_id: args.run_id.clone(),
-            foreign_artifact: args.foreign_artifact.clone(),
+            hand_off: ForeignHandOffKey {
+                foreign_artifact: args.foreign_artifact.clone(),
+                build_profile: args.build_profile.clone(),
+                foreign_symbol: roles.register_symbol.clone(),
+                callback_arg_index: roles.callback_arg_index as u32,
+                userdata_arg_index: roles.userdata_arg_index.map(|index| index as u32),
+                registration_key: None,
+            },
             register_symbol: roles.register_symbol.clone(),
             analysis,
         });

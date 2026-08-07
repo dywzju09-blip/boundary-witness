@@ -411,6 +411,53 @@ pub enum UnresolvedReason {
     LineageCallGraphIncomplete,
 }
 
+/// 外部链接符号是怎么定下来的。
+///
+/// [ADR-0003](../../../docs/decisions/ADR-0003-target-verifier-dataflow-and-identity.md)
+/// 第四条：符号解析歧义、`#[link_name]` 不可解析一律返回 Unknown，**不得用名称近似补齐**。
+/// 因此这里把「按 extern 名」与「按 `#[link_name]`」分开记录，两者的可信度不同。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForeignSymbolResolution {
+    /// `extern "C" { fn foo(); }`，链接符号就是 `foo`。
+    ExternItemName,
+    /// `#[link_name = "..."]` 显式指定。
+    LinkNameAttribute,
+    /// 交出点所在函数体里找不到接受函数指针的外部调用。
+    NoForeignCallInBody,
+    /// 找到多个，静态分不开是哪一个。**不得挑一个当答案。**
+    AmbiguousForeignCalls,
+}
+
+/// 一个交出点最终把回调交给了哪个外部链接符号，以及参数各自是什么角色。
+///
+/// # 为什么这条事实是联结的前提
+///
+/// 在它之前，Rust 侧没有任何事实携带外部符号：`RegistrationSiteFact` 与
+/// `ExternalCallSiteFact` 记的是 `api_id`（Rust API 路径），而外部侧 IR 里只有链接符号。
+/// 两侧因此**没有共同的键**，阶段 1.4 只能填 `"pending-stage-2"` 之类的占位串。
+///
+/// 符号与参数角色是两侧唯一的重叠部分，也就是 `bw_model::join_hand_off` 的主键。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignSymbolBindingFact {
+    pub site_id: SiteId,
+    pub semantic_site_key: SemanticSiteKey,
+    pub api_id: String,
+    /// 与本事实配对的回调泛型参数名，与 [`CallbackLifetimeBoundFact::callback_param`] 同值。
+    pub callback_param: String,
+    /// 链接符号。`resolution` 为两种失败取值之一时无值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// 函数指针实参在外部调用里的位置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_arg_index: Option<u32>,
+    /// 裸指针 user data 实参的位置。没有 user data 的 API 无值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub userdata_arg_index: Option<u32>,
+    pub resolution: ForeignSymbolResolution,
+}
+
 /// 这个交出点能不能被**安全客户端**走到。
 ///
 /// 判定的对象是「安全 API 允许 UB」。一个只能从 `unsafe fn` 或从 crate 内部私有路径
@@ -676,6 +723,7 @@ pub enum StaticFact {
     RegistrationGuard(RegistrationGuardFact),
     AllocationOwnership(AllocationOwnershipFact),
     SafeEntryLineage(SafeEntryLineageFact),
+    ForeignSymbolBinding(ForeignSymbolBindingFact),
     ReturnedBorrowRelation(ReturnedBorrowRelationFact),
     PersistedReturnedBorrow(PersistedReturnedBorrowFact),
     ReturnedBorrowInvalidationOrder(ReturnedBorrowInvalidationOrderFact),
@@ -850,6 +898,25 @@ impl StaticFact {
                     && has_required_text(&fact.api_id)
                     && has_required_text(&fact.callback_param)
                     && fact.entry_def_path.as_deref().is_none_or(has_required_text)
+            }
+            Self::ForeignSymbolBinding(fact) => {
+                has_required_text(fact.site_id.as_str())
+                    && has_required_text(fact.semantic_site_key.as_str())
+                    && has_required_text(&fact.api_id)
+                    && has_required_text(&fact.callback_param)
+                    // 解析成功就必须有符号，失败就必须没有——半个符号比没有更糟，
+                    // 下游会拿它去联结。
+                    && match fact.resolution {
+                        ForeignSymbolResolution::ExternItemName
+                        | ForeignSymbolResolution::LinkNameAttribute => {
+                            fact.symbol.as_deref().is_some_and(has_required_text)
+                                && fact.callback_arg_index.is_some()
+                        }
+                        ForeignSymbolResolution::NoForeignCallInBody
+                        | ForeignSymbolResolution::AmbiguousForeignCalls => {
+                            fact.symbol.is_none() && fact.callback_arg_index.is_none()
+                        }
+                    }
             }
             Self::AllocationOwnership(fact) => {
                 has_required_text(fact.site_id.as_str())

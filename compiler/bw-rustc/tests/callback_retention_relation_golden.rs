@@ -11,9 +11,17 @@
 use std::{collections::BTreeMap, fs, process::Command};
 
 use bw_model::{
-    AllocationOwnership, EffectiveCaptureAdmission, HandOffId, RegistrationGuard,
-    RustContractAssembly, StaticFact, StaticFactEnvelope, assemble_rust_contract_facts,
+    AllocationOwnership, EffectiveCaptureAdmission, ForeignSymbolResolution, RegistrationGeneration,
+    RegistrationGuard, RustContractAssembly, RustHandOffBuildContext, StaticFact,
+    StaticFactEnvelope, assemble_rust_contract_facts,
 };
+
+fn build_context() -> RustHandOffBuildContext {
+    RustHandOffBuildContext {
+        rust_artifact: "artifact:callback-retention-relation".to_owned(),
+        build_profile: "fixture".to_owned(),
+    }
+}
 
 /// 事实层观察到的一个交出点：回调 bound 与 guard 必须能按 `(api_id, callback_param)` 配对。
 #[derive(Debug, Default)]
@@ -243,19 +251,7 @@ fn allocation_ownership_is_derived_from_raw_pointer_transfers() {
 #[test]
 fn rust_contract_facts_assemble_from_compiler_output() {
     let facts = relation_fixture_facts();
-    let hand_off_id = |api_id: &str, callback_param: &str| HandOffId {
-        rust_artifact: "artifact:callback-retention-relation".to_owned(),
-        rust_def_instance: api_id.to_owned(),
-        call_occurrence: format!("callback_param:{callback_param}"),
-        foreign_artifact: "artifact:pending-p0".to_owned(),
-        foreign_symbol: "fixture_register".to_owned(),
-        callback_arg_index: 0,
-        userdata_arg_index: Some(1),
-        registration_key: None,
-        build_profile: "fixture".to_owned(),
-    };
-
-    let assembled = assemble_rust_contract_facts(&facts, &hand_off_id)
+    let assembled = assemble_rust_contract_facts(&facts, &build_context())
         .into_iter()
         .filter_map(|item| match item {
             RustContractAssembly::Assembled(fact) => {
@@ -313,6 +309,60 @@ fn rust_contract_facts_assemble_from_compiler_output() {
     }
 }
 
+/// 4.1 验收：外部链接符号与参数角色必须**由编译器推出来**，不是测试喂进去的。
+///
+/// 在这之前 Rust 侧没有任何事实携带符号，装配时只能由调用方硬写一个
+/// `foreign_symbol: "fixture_register"`。那样的话「两侧按符号联结」就是自证——
+/// 联结用的键本来就是人手对齐的。
+#[test]
+fn the_foreign_symbol_is_derived_from_mir_not_supplied() {
+    let facts = relation_fixture_facts();
+
+    // 先看事实层：`unsafe extern "C" { fn fixture_register(...) }` 没有 `#[link_name]`，
+    // 因此符号就是 extern 项名。
+    let bindings: BTreeMap<String, _> = facts
+        .iter()
+        .filter_map(|fact| match &fact.payload {
+            StaticFact::ForeignSymbolBinding(binding) => Some((
+                format!("{}::{}", binding.api_id, binding.callback_param),
+                binding.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+
+    let guarded = &bindings["Registry::register_guarded::F"];
+    assert_eq!(guarded.symbol.as_deref(), Some("fixture_register"));
+    assert_eq!(guarded.resolution, ForeignSymbolResolution::ExternItemName);
+    // 回调是 `Option<unsafe extern "C" fn(*mut c_void)>`——**空指针优化后的函数指针**。
+    // 只判 `is_fn_ptr()` 会把真实 FFI 绑定里绝大多数注册调用全部漏掉。
+    assert_eq!(guarded.callback_arg_index, Some(0));
+    assert_eq!(guarded.userdata_arg_index, Some(1));
+
+    // 再看装配层：半键里的符号与参数角色必须来自上面那条事实。
+    let assembled = assemble_rust_contract_facts(&facts, &build_context())
+        .into_iter()
+        .filter_map(|item| match item {
+            RustContractAssembly::Assembled(fact) => {
+                Some((fact.hand_off.rust_def_instance.clone(), *fact))
+            }
+            RustContractAssembly::Gap { .. } => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    let guarded = &assembled["Registry::register_guarded"];
+    assert_eq!(guarded.hand_off.foreign_symbol, "fixture_register");
+    assert_eq!(guarded.hand_off.callback_arg_index, 0);
+    assert_eq!(guarded.hand_off.userdata_arg_index, Some(1));
+
+    // 四个 Rust 形状都注册同一个符号。这不是缺陷，是这组 fixture 的真实形状；重要的是
+    // 它没有被悄悄当成唯一注册点——联结仍然成立，但判定里会留一条归属假设。
+    assert_eq!(
+        guarded.hand_off.registration_generation,
+        RegistrationGeneration::MultipleStaticSites,
+        "同一符号有多个注册点时不得报成 UniqueStaticSite"
+    );
+}
+
 /// 装配缺任何一半时必须产出写明缺什么的 gap，不能静默丢弃。
 #[test]
 fn missing_halves_are_reported_as_gaps_not_dropped() {
@@ -323,19 +373,7 @@ fn missing_halves_are_reported_as_gaps_not_dropped() {
         .into_iter()
         .filter(|fact| matches!(fact.payload, StaticFact::CallbackLifetimeBound(_)))
         .collect::<Vec<_>>();
-    let hand_off_id = |_: &str, _: &str| HandOffId {
-        rust_artifact: String::new(),
-        rust_def_instance: String::new(),
-        call_occurrence: String::new(),
-        foreign_artifact: String::new(),
-        foreign_symbol: String::new(),
-        callback_arg_index: 0,
-        userdata_arg_index: None,
-        registration_key: None,
-        build_profile: String::new(),
-    };
-
-    let assembly = assemble_rust_contract_facts(&facts, &hand_off_id);
+    let assembly = assemble_rust_contract_facts(&facts, &build_context());
     assert!(!assembly.is_empty());
     for item in &assembly {
         match item {
@@ -346,6 +384,7 @@ fn missing_halves_are_reported_as_gaps_not_dropped() {
                 assert!(gaps.contains(&RustContractGap::MissingGuard));
                 assert!(gaps.contains(&RustContractGap::MissingAllocationOwnership));
                 assert!(gaps.contains(&RustContractGap::MissingSafeEntryLineage));
+                assert!(gaps.contains(&RustContractGap::MissingForeignSymbol));
             }
         }
     }

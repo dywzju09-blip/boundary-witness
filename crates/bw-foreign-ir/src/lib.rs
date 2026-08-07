@@ -21,7 +21,6 @@
 mod dataflow;
 mod ir;
 mod query;
-mod slot;
 
 pub use dataflow::{PathInfo, ValueOrigin, path_info};
 pub use ir::{Block, Function, Global, Inst, InstKind, IrModule, Operand, ParseError};
@@ -29,7 +28,9 @@ pub use query::{
     AnalysisBoundary, BoundaryReason, ClearSite, ForeignAnalysis, ForeignRoleMap, InvokeSite,
     RetainedSubject, RetentionSite, SlotClearEvidence, analyze,
 };
-pub use slot::{SlotBase, SlotId};
+// 槽位身份是**事实模型**的一部分，定义在 `bw-model`。这里只转出，不另立一份——
+// 同一个概念在两个 crate 各定义一次，早晚会漂移。
+pub use bw_model::{SlotBase, SlotId};
 
 /// 解析文本 IR 并按 RoleMap 跑完三个查询。
 ///

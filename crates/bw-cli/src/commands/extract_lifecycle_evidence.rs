@@ -1065,6 +1065,7 @@ fn static_fact_symbol_path(envelope: &StaticFactEnvelope) -> Option<String> {
         bw_model::StaticFact::RegistrationGuard(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::AllocationOwnership(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::SafeEntryLineage(fact) => Some(fact.api_id.clone()),
+        bw_model::StaticFact::ForeignSymbolBinding(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::CallbackCapture(_)
         | bw_model::StaticFact::DropSite(_)
         | bw_model::StaticFact::DropPrevention(_)
@@ -1691,6 +1692,7 @@ fn static_fact_site_ids(envelope: &StaticFactEnvelope) -> Vec<(String, String)> 
         bw_model::StaticFact::RegistrationGuard(fact) => vec![fact.site_id.to_string()],
         bw_model::StaticFact::AllocationOwnership(fact) => vec![fact.site_id.to_string()],
         bw_model::StaticFact::SafeEntryLineage(fact) => vec![fact.site_id.to_string()],
+        bw_model::StaticFact::ForeignSymbolBinding(fact) => vec![fact.site_id.to_string()],
         bw_model::StaticFact::ObjectBindingGap(fact) => vec![fact.site_id.to_string()],
         bw_model::StaticFact::ObjectFlow(fact) => vec![
             fact.site_id.to_string(),
@@ -1722,6 +1724,7 @@ fn static_fact_api_or_symbol(envelope: &StaticFactEnvelope) -> Option<String> {
         bw_model::StaticFact::RegistrationGuard(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::AllocationOwnership(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::SafeEntryLineage(fact) => Some(fact.api_id.clone()),
+        bw_model::StaticFact::ForeignSymbolBinding(fact) => Some(fact.api_id.clone()),
         bw_model::StaticFact::CallbackCapture(_)
         | bw_model::StaticFact::DropSite(_)
         | bw_model::StaticFact::DropPrevention(_)

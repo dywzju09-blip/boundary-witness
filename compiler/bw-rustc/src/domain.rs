@@ -13,7 +13,7 @@ use bw_model::{
     CallbackLifetimeBoundFact, CallbackLifetimeBoundScope, CallbackReleaseUseOrderFact,
     CallbackReleaseUseOrdering, CallbackSiteFact, CallbackUserDataReconstructionFact,
     CallbackUserDataReconstructionKind, CaptureMode, DropKind, DropPreventionFact,
-    DropPreventionKind, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
+    DropPreventionKind, ForeignSymbolBindingFact, ForeignSymbolResolution, DropSiteFact, ExternalBufferBindingFact, ExternalCallRole,
     ExternalCallSiteFact, ObjectBindingGapFact, ObjectBindingGapKind, ObjectFlowFact,
     ObjectFlowKind, ObjectFlowObjectKind, ObjectSiteFact, PersistedReturnedBorrowFact,
     AllocationOwnership, AllocationOwnershipFact, RawPointerTransferFact,
@@ -201,6 +201,24 @@ pub struct SafeEntryLineageObservation {
     pub entry_def_path: Option<String>,
     pub hops: Option<u32>,
     pub lineage: SafeEntryLineage,    pub unresolved_reason: Option<UnresolvedReason>,
+}
+
+/// 一个回调交出点最终交给了哪个外部链接符号。
+///
+/// 与另外几个 Rust 侧事实按 `owner_def_path` + `callback_param` 配对。**它是两侧联结的
+/// 主键来源**：在它之前 Rust 侧没有任何事实携带链接符号。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForeignSymbolBindingObservation {
+    pub owner_def_path: String,
+    pub source_path: PathBuf,
+    pub span: String,
+    pub mir_location: String,
+    pub api_id: String,
+    pub callback_param: String,
+    pub symbol: Option<String>,
+    pub callback_arg_index: Option<u32>,
+    pub userdata_arg_index: Option<u32>,
+    pub resolution: ForeignSymbolResolution,
 }
 
 /// 一个回调交出点上观察到的分配归属。
@@ -558,6 +576,7 @@ pub fn facts_from_mir_sites(
     registration_guards: &[RegistrationGuardObservation],
     allocation_ownerships: &[AllocationOwnershipObservation],
     safe_entry_lineages: &[SafeEntryLineageObservation],
+    foreign_symbol_bindings: &[ForeignSymbolBindingObservation],
     returned_borrow_relations: &[ReturnedBorrowRelationObservation],
     persisted_returned_borrows: &[PersistedReturnedBorrowObservation],
     returned_borrow_invalidation_orders: &[ReturnedBorrowInvalidationOrderObservation],
@@ -1074,6 +1093,44 @@ pub fn facts_from_mir_sites(
                     hops: lineage.hops,
                     lineage: lineage.lineage,
                     unresolved_reason: lineage.unresolved_reason,
+                }),
+            )?,
+        );
+    }
+
+    for binding in foreign_symbol_bindings {
+        if !source_is_stable(context, &binding.source_path) {
+            continue;
+        }
+        let descriptor = SiteDescriptor::new(
+            &context.package,
+            &context.target,
+            &binding.owner_def_path,
+            SiteRole::ForeignSymbolBinding,
+            source_path(context, &binding.source_path),
+        )
+        .with_repo_root(&context.repo_root)
+        .with_mir_location(&binding.mir_location)
+        .with_span(&binding.span);
+        let site_id = descriptor.try_site_id()?;
+        insert_fact(
+            &mut facts,
+            envelope_with_source(
+                context,
+                "foreign_symbol_binding",
+                &site_id,
+                &binding.source_path,
+                &binding.span,
+                Some(&binding.owner_def_path),
+                StaticFact::ForeignSymbolBinding(ForeignSymbolBindingFact {
+                    site_id: site_id.clone(),
+                    semantic_site_key: descriptor.semantic_key(),
+                    api_id: binding.api_id.clone(),
+                    callback_param: binding.callback_param.clone(),
+                    symbol: binding.symbol.clone(),
+                    callback_arg_index: binding.callback_arg_index,
+                    userdata_arg_index: binding.userdata_arg_index,
+                    resolution: binding.resolution,
                 }),
             )?,
         );
