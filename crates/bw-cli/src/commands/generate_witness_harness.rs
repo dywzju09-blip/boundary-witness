@@ -52,6 +52,9 @@ pub struct GenerateWitnessHarnessArgs {
     /// `adapter.target.versions` 里要生成的版本；缺省取第一个。
     #[arg(long = "crate-version")]
     crate_version: Option<String>,
+    /// patch 指向的被分析 crate 源码目录。缺省沿用 rusqlite vendor 约定。
+    #[arg(long = "crate-source-dir")]
+    crate_source_dir: Option<PathBuf>,
     #[arg(long = "output-dir")]
     output_dir: PathBuf,
     #[arg(long)]
@@ -181,24 +184,27 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
 }
 
 /// 从 `FnMut(A, B, C)` 形状的签名里解析回调参数类型列表。
-fn parse_callback_params(signature: &str) -> Option<Vec<String>> {
+fn parse_callback_signature(signature: &str) -> Option<(Vec<String>, String)> {
     let open = signature.find('(')?;
     let close = signature.rfind(')')?;
     if close <= open {
         return None;
     }
     let inner = &signature[open + 1..close];
-    if inner.trim().is_empty() {
-        return Some(Vec::new());
-    }
-    let params = inner
-        .split(',')
-        .map(|part| part.trim().to_owned())
-        .collect::<Vec<_>>();
-    if params.iter().any(|part| part.is_empty()) {
-        return None;
-    }
-    Some(params)
+    let params = if inner.trim().is_empty() {
+        Vec::new()
+    } else {
+        let params = inner
+            .split(',')
+            .map(|part| part.trim().to_owned())
+            .collect::<Vec<_>>();
+        if params.iter().any(|part| part.is_empty()) {
+            return None;
+        }
+        params
+    };
+    let ret = signature[close + 1..].trim().strip_prefix("->").unwrap_or("").trim();
+    Some((params, ret.to_owned()))
 }
 
 /// 渲染 `src/main.rs`。
@@ -209,6 +215,7 @@ fn render_main(
     adapter: &AdapterConfig,
     decision: &InvalidateDecision,
     callback_params: &[String],
+    callback_ret: &str,
     referent: &str,
 ) -> String {
     let setup = adapter
@@ -222,22 +229,38 @@ fn render_main(
         .map(|ty| format!("_: {ty}"))
         .collect::<Vec<_>>()
         .join(", ");
+    // 回调返回类型：`bool` 需要尾表达式 `true`；`()`/缺省不需要；其余由调用方拒绝。
+    let ret_tail = match callback_ret {
+        "" | "()" => "",
+        "bool" => "\n        true",
+        _ => "",
+    };
     // 注册调用不写死 `?`：真实 API 的注册方法常返回 `()`（rusqlite 0.26.1 的
     // update_hook 即如此）。`let _ =` 对 `()` 与 `Result` 两种返回都成立。
+    // 参数形状由 adapter 的 accepts_none_to_clear 决定：true → 传 `Some(callback)`
+    // （rusqlite 形状），false → 直接传 `callback`（git2 的
+    // set_progress_callback 形状）。
+    let register_arg = if adapter.registration.accepts_none_to_clear {
+        "Some(callback)"
+    } else {
+        "callback"
+    };
     let register = format!(
-        "let _ = {}.{}(Some(callback));",
-        adapter.registration.receiver, adapter.registration.method
+        "let _ = {}.{}({register_arg});",
+        adapter.registration.receiver,
+        adapter.registration.method,
+        register_arg = register_arg,
     );
     let (invalidate_block, expected_compile) = match decision {
         InvalidateDecision::Generated => (
             format!(
-                "    // invalidate：让 referent 在注册仍然有效时失效（由判定推出）。\n    // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的\n    // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。\n    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n    let callback = |{params}| {{\n        let _ = {referent}.len();\n    }};\n    {register}\n    drop({referent});"
+                "    // invalidate：让 referent 在注册仍然有效时失效（由判定推出）。\n    // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的\n    // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。\n    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n    let callback = |{params}| {{\n        let _ = {referent}.len();{ret_tail}\n    }};\n    {register}\n    drop({referent});"
             ),
             true,
         ),
         InvalidateDecision::Refused { reason } => (
             format!(
-                "    // invalidate 未生成：{reason}\n    // referent 未声明，本程序必然编不过——负对照行为。\n    let callback = |{params}| {{\n        let _ = {referent}.len();\n    }};\n    {register}"
+                "    // invalidate 未生成：{reason}\n    // referent 未声明，本程序必然编不过——负对照行为。\n    let callback = |{params}| {{\n        let _ = {referent}.len();{ret_tail}\n    }};\n    {register}"
             ),
             false,
         ),
@@ -278,9 +301,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
 /// 外部构建同源（bundled sqlite 由 libsqlite3-sys 构建）。
 fn render_cargo_toml(
     harness_name: &str,
-    repo_root: &Path,
+    crate_name: &str,
     version: &str,
     features: &[String],
+    crate_source_dir: &Path,
 ) -> String {
     let features = features
         .iter()
@@ -302,15 +326,16 @@ name = "{harness_name}"
 path = "src/main.rs"
 
 [dependencies]
-rusqlite = {{ version = "={version}", features = [{features}] }}
+{crate_name} = {{ version = "={version}", features = [{features}] }}
 
 [patch.crates-io]
-rusqlite = {{ path = "{root}/benchmarks/historical-cves/rusqlite/vendor/rusqlite-{version}" }}
+{crate_name} = {{ path = "{source}" }}
 "#,
         harness_name = harness_name,
-        root = repo_root.display(),
+        crate_name = crate_name,
         version = version,
         features = features,
+        source = crate_source_dir.display(),
     )
 }
 
@@ -362,14 +387,15 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
         ));
     }
     // vendored 源缺失 = 无法链接与静态分析绑定的精确构建，缺证拒绝而不是凑合。
-    let vendor_dir = args
-        .repo_root
-        .join("benchmarks/historical-cves/rusqlite/vendor")
-        .join(format!("rusqlite-{version}"));
-    if !vendor_dir.is_dir() {
+    let crate_source_dir = args.crate_source_dir.clone().unwrap_or_else(|| {
+        args.repo_root
+            .join("benchmarks/historical-cves/rusqlite/vendor")
+            .join(format!("rusqlite-{version}"))
+    });
+    if !crate_source_dir.is_dir() {
         return Err(CliError::input(
             "BW-VENDOR",
-            format!("vendored rusqlite-{version} 不存在（{}）", vendor_dir.display()),
+            format!("被分析 crate 源码目录不存在（{}）", crate_source_dir.display()),
         ));
     }
 
@@ -409,8 +435,8 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
 
     let decision = decide_invalidate(contract_row.contract.as_ref());
     let expected_compile = matches!(decision, InvalidateDecision::Generated);
-    let callback_params = parse_callback_params(&adapter.registration.callback_signature)
-        .ok_or_else(|| {
+    let (callback_params, callback_ret) =
+        parse_callback_signature(&adapter.registration.callback_signature).ok_or_else(|| {
             CliError::input(
                 "BW-ADAPTER",
                 format!(
@@ -419,9 +445,23 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
                 ),
             )
         })?;
+    if !matches!(callback_ret.as_str(), "" | "()" | "bool") {
+        return Err(CliError::input(
+            "BW-ADAPTER",
+            format!(
+                "回调返回类型 {callback_ret} 无法自动构造返回值（只支持 () 与 bool）"
+            ),
+        ));
+    }
 
     let referent = "witness_referent";
-    let main_rs = render_main(&adapter, &decision, &callback_params, referent);
+    let main_rs = render_main(
+        &adapter,
+        &decision,
+        &callback_params,
+        &callback_ret,
+        referent,
+    );
     let harness_name = format!(
         "bw-witness-{}-{}",
         sanitize_slug(&adapter.adapter_id),
@@ -429,9 +469,10 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
     );
     let cargo_toml = render_cargo_toml(
         &harness_name,
-        &args.repo_root,
+        &adapter.target.crate_name,
         &version,
         &adapter.target.features,
+        &crate_source_dir,
     );
 
     fs::create_dir_all(args.output_dir.join("src"))
@@ -532,6 +573,7 @@ rust = "drop(conn);"
                 "&str".to_owned(),
                 "i64".to_owned(),
             ],
+            "",
             "witness_referent",
         );
         assert!(main_rs.contains("let witness_referent = Box::new(String::from(\"bw-witness-referent\"));"));
@@ -551,6 +593,7 @@ rust = "drop(conn);"
             &adapter(),
             &decision,
             &["rusqlite::hooks::Action".to_owned(), "&str".to_owned()],
+            "",
             "witness_referent",
         );
         // 不生成 referent 声明与 drop；回调仍引用它 → 必然编不过（负对照行为）。
@@ -580,8 +623,9 @@ rust = "drop(conn);"
     }
 
     #[test]
-    fn parse_callback_params_splits_signature() {
-        let params = parse_callback_params("FnMut(rusqlite::hooks::Action, &str, &str, i64)").unwrap();
+    fn parse_callback_signature_splits_params_and_ret() {
+        let (params, ret) =
+            parse_callback_signature("FnMut(rusqlite::hooks::Action, &str, &str, i64) -> bool").unwrap();
         assert_eq!(
             params,
             vec![
@@ -591,17 +635,21 @@ rust = "drop(conn);"
                 "i64".to_owned()
             ]
         );
-        assert_eq!(parse_callback_params("FnMut()").unwrap(), Vec::<String>::new());
-        assert!(parse_callback_params("FnMut((").is_none());
+        assert_eq!(ret, "bool");
+        let (params, ret) = parse_callback_signature("FnMut()").unwrap();
+        assert_eq!(params, Vec::<String>::new());
+        assert_eq!(ret, "");
+        assert!(parse_callback_signature("FnMut((").is_none());
     }
 
     #[test]
     fn cargo_toml_pins_version_and_vendor() {
         let cargo = render_cargo_toml(
             "bw-witness-adapter-rusqlite-update_hook-0-26-1",
-            Path::new("/repo"),
+            "rusqlite",
             "0.26.1",
             &["bundled".to_owned(), "hooks".to_owned()],
+            Path::new("/repo/benchmarks/historical-cves/rusqlite/vendor/rusqlite-0.26.1"),
         );
         assert!(cargo.contains("rusqlite = { version = \"=0.26.1\", features = [\"bundled\", \"hooks\"] }"));
         assert!(cargo.contains("vendor/rusqlite-0.26.1"));

@@ -28,7 +28,7 @@ accepts_none_to_clear = false
 
 [trigger]
 step = "write_pack"
-rust = "let mut out = Vec::new();\n    packbuilder.write_buf(&mut out)?;"
+rust = "let mut out = git2::Buf::new();\n    packbuilder.write_buf(&mut out)?;"
 
 [teardown]
 step = "drop_packbuilder"
