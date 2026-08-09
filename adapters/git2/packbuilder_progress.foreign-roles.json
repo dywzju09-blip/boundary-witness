@@ -1,0 +1,15 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "git2 的 git_packbuilder_set_callbacks 角色：int git_packbuilder_set_callbacks(git_packbuilder*, git_packbuilder_progress, void*)。",
+    "只声明符号与参数位置；是否保留、是否晚调、是否清槽由 IR 回答。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "git_packbuilder_set_callbacks",
+      "callback_arg_index": 1,
+      "userdata_arg_index": 2,
+      "clear_symbol": "git_packbuilder_set_callbacks"
+    }
+  ]
+}

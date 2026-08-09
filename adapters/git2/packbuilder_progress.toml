@@ -1,0 +1,35 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:git2:packbuilder_progress"
+
+# 冻结记录。Gate B：adapter 必须在目标 P3 判定出来之前冻结。
+[freeze]
+frozen_at = "2026-08-10T19:00:00Z"
+frozen_at_commit = "cd64552"
+p3_verdict_available_at_freeze = false
+authored_from = "git2 0.18.1 src/packbuilder.rs 公开 API 文档"
+
+[target]
+crate = "git2"
+versions = ["0.18.1"]
+features = ["vendored-libgit2"]
+api_path = "git2::PackBuilder::set_progress_callback"
+
+# 以下只描述「如何合法调用这个公开 API」，不含任何缺陷信息。
+[[setup]]
+step = "init_repo"
+rust = "let dir = std::env::temp_dir().join(format!(\"bw-git2-witness-{}\", std::process::id()));\n    std::fs::create_dir_all(&dir)?;\n    let repo = git2::Repository::init(&dir)?;\n    let mut index = repo.index()?;\n    let tree_id = index.write_tree()?;\n    let tree = repo.find_tree(tree_id)?;\n    let sig = git2::Signature::now(\"bw\", \"bw@example.com\")?;\n    let _ = repo.commit(Some(\"HEAD\"), &sig, &sig, \"init\", &tree, &[])?;\n    let mut packbuilder = repo.packbuilder()?;"
+
+[registration]
+receiver = "packbuilder"
+method = "set_progress_callback"
+callback_signature = "FnMut(git2::PackBuilderStage, u32, u32) -> bool"
+callback_arg_index = 0
+accepts_none_to_clear = false
+
+[trigger]
+step = "write_pack"
+rust = "let mut out = Vec::new();\n    packbuilder.write_buf(&mut out)?;"
+
+[teardown]
+step = "drop_packbuilder"
+rust = "drop(packbuilder);"
