@@ -11,7 +11,7 @@
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
 | C1 safe-only 可执行反证合成 | `Planned` | 反证合成（roadmap P4）未开始。这是重排后的**首要**创新点。**delta 已收窄**：deepSURF 已生成 safe-only harness 并用 ASan，safe-only 本身不是创新点 |
-| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 关系已实现并通过 Gate R（PF）。**Rust 侧三个事实做完两个**（PC 的 `EffectiveCaptureAdmission`、PG-1 的 `RegistrationGuard`），分配归属（PG-2）仍为零行代码。外部侧 Q1/Q3/Q4′（P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
+| C2 类型契约 × 外部 effect 的精化检查 | `Implemented`（机制） | 关系通过 Gate R；Rust 侧三个契约事实自动产出；外部侧 Q1/Q3 在真实 IR 上有指令级证据（阶段 3）；5.2 在 rusqlite 0.26.1 上跑通真实 source-to-verdict。**Q4′ 在真实库上无结论**（入口校验提前返回），Full 的端到端判别力有待 witness 阶段（5.4） |
 | C3 生态级度量与新发现 | `Planned` | 猎物存在性尚未测量（roadmap PP），无法判断新发现目标是否可达 |
 
 **artifact-aligned hand-off identity 不再列为创新点**，降为实现属性（roadmap P0）。**旧 N2「消除人工 API 清单」已于 2026-07-31 撤销**：Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立；结构化角色推断仍会实现，但作为工程属性。
@@ -22,7 +22,7 @@
 
 **Gate R 证明的是关系本身，不是 Q4′ 可实现。** 外部侧取值目前由 C stub 手工标注（manual foreign oracle，来源等级与自动分析不同），能否从真实构建的 LLVM IR 推导出同样的取值，由 P1/P2 回答。
 
-**当前最高优先级是 PG-2 `AllocationOwnership`。其后依次完成 safe-entry lineage、RustContractFact、真实外部 IR、Q1/Q4′/降级 Q3、P0/P3 和 P4；Gate P 与规模评估后置到单目标核心闭环完成之后。** 完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
+**当前最高优先级是 5.3 反证生成器重写（D3）**：把 `generate_witness_harness.rs` 的硬编码模板重写为声明式四槽生成器（setup/register/invalidate/trigger），产出 `#![forbid(unsafe_code)]` 客户端；随后 5.4 ASan + 独立 oracle、5.5 rusqlite 0.26.2 负对照。Gate P 与规模评估后置到单目标核心闭环完成之后。完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
 
 ## 状态总览
 
@@ -44,7 +44,8 @@
 | `Planned` | `AllocationOwnership` 检测（roadmap PG-2） | **零行代码。** `'static` 只管住捕获、不管 `Box<F>` 存活；缺它漏掉整类问题。原材料（raw pointer transfer / release path proof）已有 |
 | `Planned` | 把编译器输出装成 `RustContractFact`（roadmap P0） | 目前无生产者；PF 阶段的 Rust 侧事实是手写的 |
 | `Planned` | 猎物存在性探针（roadmap PP） | 未测量。P-a 前置是 PC、PG-2、`is_unsafe_fn`、safe-entry lineage 与 L1 binding；P-b 还依赖 P0–P4 核心闭环 |
-| `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
+| `Implemented` | 外部侧 Q1/Q4′/降级 Q3（阶段 3） | 从真实构建 IR 推导，RoleMap 只做符号与参数角色绑定。Q3 降级为「同槽间接调用存在性」，Q4′ 在真实库上无结论（`clear_only_on_some_paths`） |
+| `Implemented` | 5.2 真实目标 source-to-verdict（rusqlite 0.26.1） | `Connection::update_hook → sqlite3_update_hook` 联结成功（1 joined / 0 rejected），判定 `InsufficientEvidence` 且缺证原因具体。见 [stage5-2 记录](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md)。**未产生任何 SupportedIncompatibility** |
 | `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |
 | `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现，属 future work，持有期一维闭环前不扩维 |
 | `Planned` | safe-only 反证合成与执行（roadmap P4） | witness plan 到自动 harness/executor/receipt 的闭环不完整。这是 C1 的全部内容 |

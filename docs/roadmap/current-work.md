@@ -6,23 +6,33 @@
 
 **执行顺序的权威是 [execution plan](execution-plan.md)**；本文只说现在在哪一步。
 
-**Rust 侧三个契约事实做完两个，外部侧零行代码。** 研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系。当前进度：
+**阶段 0–4 完成，5.0 完成，5.2 完成。** 研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系。当前进度：
 
 | 阶段 | 状态 |
 | --- | --- |
 | PF 核心关系与四 fixture（Gate R） | ✅ `Implemented` |
 | PC `EffectiveCaptureAdmission` | ✅ `Implemented` |
 | PG-1 `RegistrationGuard` | ✅ `Implemented` |
-| PG-2 `AllocationOwnership` | ⬜ 零行代码，**下一步** |
+| PG-2 `AllocationOwnership` | ✅ `Implemented`（覆盖缺口见阶段 1.1 limitation） |
+| 阶段 2 真实外部 IR | ✅ `Implemented` |
+| 阶段 3 Q1/Q4′/降级 Q3 | ✅ `Implemented` |
+| 阶段 4 联结与三态判定 | ✅ `Implemented`（schema 升版 4.2 未做，见 stage4 记录） |
+| 5.0 符号解析（rusqlite 6/6） | ✅ 完成 |
+| **5.2 真实目标 source-to-verdict** | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md)） |
+| 5.3 反证生成器重写（D3） | ⬜ **下一步** |
+| 5.4 ASan 执行 + 独立 oracle | ⬜ |
+| 5.5 rusqlite 0.26.2 负对照 | ⬜ |
 | PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
-| P0 / P1 / P2 / P3 / P4 | ⬜ `Planned`，按 execution plan 完成单目标闭环 |
 
-Rust 侧现在可以走完「从签名读出契约 → 与外部边界事实关联 → 把判定与判定来源写入产物」整条链。但外部侧那一半的证据来自 API 清单分类出的注册与注销事实，不是外部代码本身的行为。因此：
+Rust 侧契约事实、外部侧行为事实与精确联结现在都能从真实构建产物自动产出。5.2 在
+rusqlite 0.26.1 上跑通 `Connection::update_hook → sqlite3_update_hook` 的
+source-to-verdict：判定为 `InsufficientEvidence`（Q3 降级 + Q4′ 无结论），所有缺证
+原因具体可回查。因此：
 
 | 创新点 | 状态 |
 | --- | --- |
-| C1 safe-only 可执行反证合成 | 未开始（roadmap P4） |
-| C2 类型契约 × 外部 effect 的精化检查 | 未成立——两侧事实还不是真正的两侧（roadmap P1/P2/P3） |
+| C1 safe-only 可执行反证合成 | 未开始（roadmap P4 / 5.3） |
+| C2 类型契约 × 外部 effect 的精化检查 | 机制成立（真实 IR 上 Q1/Q3 有指令级证据）；Q4′ 在真实库上尚无结论，Full 判别力待 witness 阶段 |
 | C3 生态级度量与新发现 | 未开始 |
 
 ## 已完成：PF 核心关系与四个 matched fixture（Gate R）
