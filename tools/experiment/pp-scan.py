@@ -53,11 +53,16 @@ def scan_crate(
     row_out = output_root / digest(crate_id)
     row_out.mkdir(parents=True, exist_ok=True)
 
+    # extract-static-facts 要求 manifest 内所有行同属一个 corpus_id；
+    # 逐 crate 生成单行 manifest。
+    row_manifest = row_out / "manifest.jsonl"
+    row_manifest.write_text(json.dumps(manifest_row) + "\n")
+
     env = dict(extra_env)
     facts_proc = run(
         [
             str(bw), "extract-static-facts",
-            "--manifest", str(manifest_row["_manifest_path"]),
+            "--manifest", str(row_manifest),
             "--output-dir", str(row_out / "analysis"),
             "--logs-root", str(row_out / "logs"),
             "--run-id", run_id,
@@ -147,11 +152,6 @@ def main() -> int:
     rows = [json.loads(line) for line in args.manifest.read_text().splitlines() if line.strip()]
     if args.max_crates is not None:
         rows = rows[: args.max_crates]
-    # materialize_corpus 的产物带 source_ref；这里由调用方确保 manifest 的
-    # source_ref 可直接解析，逐行注入 manifest 路径供 extract-static-facts 使用。
-    for row in rows:
-        row["_manifest_path"] = args.manifest
-
     args.output_root.mkdir(parents=True, exist_ok=True)
     import os
 

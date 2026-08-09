@@ -22,7 +22,10 @@
 | 5.3 反证生成器重写（D3） | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-3-witness-generator-rewrite-2026-08-10.md)） |
 | 5.4 ASan 执行 + 独立 oracle | ✅ **完成**（2026-08-10，vulnerable 0.26.1 ASan 出证 heap-use-after-free，见 [结果记录](../experiments/results/stage5-4-asan-oracle-2026-08-10.md)） |
 | 5.5 rusqlite 0.26.2 负对照 | ✅ **完成**（2026-08-10：fixed 编不过 + owned/unregister/no-trigger 三变体 ASan 干净，见 [结果记录](../experiments/results/stage5-5-fixed-negative-control-2026-08-10.md)） |
-| 阶段 6 Core Complete 验收 | ⬜ **下一步**（fixture 全量 + vulnerable/fixed/对照 + Gate A1/B 最小线） |
+| 阶段 6 Core Complete 验收 | ⬜ 进行中（fixture 全量重跑 ✓、负向测试 ✓、重复运行 5/5 ✓、waterfall ✓；剩 Gate A1 正式判据与 receipt） |
+| PG-1 扩展：owner-held 判据 | ✅ 完成（2026-08-10，`RegistrationGuard::OwnerHoldsCallback`，见 [记录](../experiments/results/pg1-owner-held-2026-08-10.md)） |
+| Gate P 工具：PP 批量驱动器 | ✅ 完成（2026-08-10，`tools/experiment/pp-scan.py`，盲化 Tier A-R/A-A 统计） |
+| Gate P 正式运行 | ⬜ 等维护者定样本框与预注册判据 |
 | PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
 
 Rust 侧契约事实、外部侧行为事实与精确联结现在都能从真实构建产物自动产出。5.2 在
