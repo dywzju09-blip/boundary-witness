@@ -1,0 +1,43 @@
+# Gate A1（exploratory）：Full vs Rust-only 的判别力
+
+- 日期：2026-08-10
+- 状态：**exploratory**。正式判据（比较单位、最小效应量）未预注册，本记录只给出
+  机制层面的方向性证据，不构成 Gate A1 通过。
+- 数据来源：阶段 6 fixture 全量重跑（当前 commit，`register_guarded` 同一 Rust
+  函数 + 两个外部 stub）。
+
+## 1. 对比
+
+| 变体 | 输入 | register_guarded 判定 |
+| --- | --- | --- |
+| **Full** | Rust 契约 + 外部 IR 事实 | clearing → `CompatibleWithinAnalyzedFragment`；leaky → `InsufficientEvidence`（GuardDefeated + EstablishLateInvoke） |
+| **Rust-only** | 只有 Rust 契约，无外部事实 | 无法回答「注销是否真清槽」→ 只能缺证（InsufficientEvidence） |
+
+**机制方向**：同一 Rust 侧（guard 形状、`'c` bound），Full 能分开「真清槽」与
+「没清干净」，Rust-only 对两者给出相同结果（都无法判定）。外部侧的净贡献落在
+Q4′（清槽结论）上——与 [research thesis §2.6] 的预判一致。
+
+[research thesis §2.6]: ../../project/research-thesis.md
+
+## 2. 为什么这是方向性证据而不是通过
+
+1. **n=1 且是开发对象**：fixture 是 Gate R 的自写形状，rusqlite 是开发目标，
+   两者的数字都不进论文主表；
+2. **Rust-only 变体是概念性对比**：本次没有独立跑一个「关闭外部分析」的代码路径，
+   Rust-only 的结论来自模型语义（没有 Q4′ 证据时 guard 分支只能缺证），不是
+   一个独立执行的消融变体；
+3. **判据未预注册**：最小效应量、比较单位（交出点 / API / crate）未定。
+
+## 3. 正式 Gate A1 需要什么
+
+- 在同一 candidate universe 上实现并运行 Rust-only 模式（关闭外部分析的代码路径）；
+- 预注册：比较单位、最小效应量、允许的 Unknown 比例；
+- 至少覆盖 guard 分支（外部证据净贡献的归属点，见 thesis §2.6 与 current-work.md）。
+
+## 4. 这一步证明了什么，没证明什么
+
+**证明了**：机制方向——外部侧（Q4′）确实携带 Rust 侧拿不到的判别力，且本次
+端到端数据与 stage3/stage4 的模型层测试一致。
+
+**没证明**：Gate A1 通过（判据未预注册、无独立 Rust-only 执行路径、n=1 开发对象）；
+也没有任何「增益大小」的数字。
