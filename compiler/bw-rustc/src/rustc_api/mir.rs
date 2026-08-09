@@ -358,7 +358,8 @@ pub fn collect_mir_sites<'tcx>(
             safe_entry_lineages(tcx, &hand_off_sites, &call_graph, complete);
         // 与 lineage 同源：都按 `hand_off_sites` 逐个交出点产出，保证两条事实按
         // `(api_id, callback_param)` 一一配得上。
-        observations.foreign_symbol_bindings = foreign_symbol_bindings(tcx, &hand_off_sites);
+        observations.foreign_symbol_bindings =
+            foreign_symbol_bindings(tcx, &hand_off_sites, &call_graph);
     }
 
     let (openssl_releases, openssl_proofs) = infer_openssl_ex_data_release_path_proofs(
@@ -21362,44 +21363,73 @@ fn safe_entry_lineages(
 /// # 这条事实之前是缺的
 ///
 /// Rust 侧原本没有任何事实携带链接符号：记的都是 `api_id`（Rust API 路径），而外部侧
-/// IR 里只有符号。两侧因此**没有共同的键**，阶段 1.4 只能填占位串。符号与参数角色是
-/// 两侧唯一的重叠部分，也就是精确联结的主键。
+/// IR 里只有符号。两侧因此**没有共同的键**。符号与参数角色是两侧唯一的重叠部分，也就是
+/// 精确联结的主键。
 ///
-/// # 找不到就说找不到
+/// # 为什么要走过程间
 ///
-/// 判据只认「交出点所在函数体内、直接调用一个 `extern` 块里声明的函数、且实参里有函数
-/// 指针」这一种形状。找到多个一律
-/// [`ForeignSymbolResolution::AmbiguousForeignCalls`]，**不挑一个当答案**——按
-/// ADR-0003 第四条，符号解析歧义必须返回 Unknown，不得用名称近似补齐。
+/// 真实 crate 几乎不在声明回调参数的那个函数里直接调 extern。rusqlite 是
+/// `Connection::update_hook` → `InnerConnection::update_hook` → `ffi::sqlite3_update_hook`。
+/// 只扫本函数体时，实测 36 个交出点里 **30 个** 落 `NoForeignCall`——包括全部四个公开
+/// hook API。因此从交出点出发按调用图逐层向下找，取**最近一层**的结果。
+///
+/// # 找不到与找不准分开记
+///
+/// 超过搜索上界仍没找到 → [`ForeignSymbolResolution::NoForeignCallWithinSearchDepth`]，
+/// 这**不等于「这个交出点不交给外部」**。找到多个**不同符号** →
+/// [`ForeignSymbolResolution::AmbiguousForeignSymbols`]，不挑一个当答案（ADR-0003 第四条）。
 fn foreign_symbol_bindings(
     tcx: TyCtxt<'_>,
     hand_offs: &[(LocalDefId, String, String, PathBuf, String)],
+    call_graph: &HashMap<LocalDefId, HashSet<LocalDefId>>,
 ) -> Vec<ForeignSymbolBindingObservation> {
     hand_offs
         .iter()
         .map(|(def_id, api_id, callback_param, source_path, span)| {
-            let calls = foreign_callback_calls(tcx, *def_id);
-            let (symbol, callback_arg_index, userdata_arg_index, resolution) = match calls.as_slice()
-            {
-                [] => (
-                    None,
-                    None,
-                    None,
-                    ForeignSymbolResolution::NoForeignCallInBody,
-                ),
-                [call] => (
-                    Some(call.symbol.clone()),
-                    Some(call.callback_arg_index),
-                    call.userdata_arg_index,
-                    call.resolution,
-                ),
-                _ => (
-                    None,
-                    None,
-                    None,
-                    ForeignSymbolResolution::AmbiguousForeignCalls,
-                ),
-            };
+            let found = nearest_foreign_callback_calls(tcx, *def_id, call_graph);
+            let (symbol, callback_arg_index, userdata_arg_index, resolution, search_hops) =
+                match found {
+                    None => (
+                        None,
+                        None,
+                        None,
+                        ForeignSymbolResolution::NoForeignCallWithinSearchDepth,
+                        None,
+                    ),
+                    Some((hops, calls)) => {
+                        // **按符号与参数角色去重**，不是按调用次数。
+                        //
+                        // `match hook { Some(..) => reg(db, cb, data), _ => reg(db, None, null) }`
+                        // 这种注册/注销双分支在真实 FFI 绑定里是常态，两条分支指向同一个
+                        // 外部函数。早先按次数判，rusqlite 的四个 hook 全部变成歧义。
+                        let mut distinct: Vec<&ForeignCallbackCall> = Vec::new();
+                        for call in &calls {
+                            if !distinct.iter().any(|kept| {
+                                kept.symbol == call.symbol
+                                    && kept.callback_arg_index == call.callback_arg_index
+                                    && kept.userdata_arg_index == call.userdata_arg_index
+                            }) {
+                                distinct.push(call);
+                            }
+                        }
+                        match distinct.as_slice() {
+                            [call] => (
+                                Some(call.symbol.clone()),
+                                Some(call.callback_arg_index),
+                                call.userdata_arg_index,
+                                call.resolution,
+                                Some(hops),
+                            ),
+                            _ => (
+                                None,
+                                None,
+                                None,
+                                ForeignSymbolResolution::AmbiguousForeignSymbols,
+                                None,
+                            ),
+                        }
+                    }
+                };
             ForeignSymbolBindingObservation {
                 owner_def_path: tcx.def_path_str(def_id.to_def_id()),
                 source_path: source_path.clone(),
@@ -21411,9 +21441,49 @@ fn foreign_symbol_bindings(
                 callback_arg_index,
                 userdata_arg_index,
                 resolution,
+                search_hops,
             }
         })
         .collect()
+}
+
+/// 从交出点出发按调用图逐层向下找外部调用，返回**最近一层**的全部结果。
+///
+/// 取最近一层而不是全部层：包装函数自己调的那个 extern 才是这个 API 交出去的目标；
+/// 再往下是被调方内部的事，混进来只会制造假歧义。
+fn nearest_foreign_callback_calls(
+    tcx: TyCtxt<'_>,
+    root: LocalDefId,
+    call_graph: &HashMap<LocalDefId, HashSet<LocalDefId>>,
+) -> Option<(u32, Vec<ForeignCallbackCall>)> {
+    /// 搜索上界。rusqlite 的公开 hook 只隔一层包装；给到 3 层留出余量，再深就说明
+    /// 「这个 API 把回调交给了那个符号」这个结论本身已经不可靠了。
+    const MAX_HOPS: u32 = 3;
+
+    let mut frontier = vec![root];
+    let mut seen = HashSet::from([root]);
+    for hops in 0..=MAX_HOPS {
+        let mut calls = Vec::new();
+        for def_id in &frontier {
+            calls.extend(foreign_callback_calls(tcx, *def_id));
+        }
+        if !calls.is_empty() {
+            return Some((hops, calls));
+        }
+        let mut next = Vec::new();
+        for def_id in &frontier {
+            for callee in call_graph.get(def_id).into_iter().flatten() {
+                if seen.insert(*callee) {
+                    next.push(*callee);
+                }
+            }
+        }
+        if next.is_empty() {
+            return None;
+        }
+        frontier = next;
+    }
+    None
 }
 
 /// 一次「把函数指针交给外部符号」的调用。
@@ -21425,6 +21495,15 @@ struct ForeignCallbackCall {
 }
 
 fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCallbackCall> {
+    // **调用图里有没有 MIR 的 def_id**：常量、静态项、只有声明没有默认体的 trait 方法
+    // 都会出现在边上。对它们查 `optimized_mir` 会走到 typeck 的 `span_bug!
+    // ("can't type-check body of ...")`，而包装器 panic 会**把被扫 crate 的整个编译
+    // 带崩**——不是我们的分析失败，是用户的构建失败。
+    //
+    // 只扫本函数体时碰不到这条路，因为交出点自身必有 body；过程间搜索一走出去就撞上。
+    if !tcx.is_mir_available(def_id) {
+        return Vec::new();
+    }
     let body = tcx.optimized_mir(def_id);
     let mut calls = Vec::new();
     for block in body.basic_blocks.iter() {
@@ -21478,11 +21557,6 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
     calls
 }
 
-/// 这个类型是不是函数指针，或**恰好裹了一层 `Option` 的函数指针**。
-///
-/// 后一种是 C 头文件绑定的常态：`void (*cb)(void*)` 在 Rust 侧是
-/// `Option<unsafe extern "C" fn(*mut c_void)>`，靠空指针优化占同样的位宽。只判
-/// `is_fn_ptr()` 会把真实 FFI 里绝大多数注册调用全部漏掉。
 fn ty_carries_fn_pointer(ty: Ty<'_>) -> bool {
     if ty.is_fn_ptr() {
         return true;

@@ -219,6 +219,7 @@ pub struct ForeignSymbolBindingObservation {
     pub callback_arg_index: Option<u32>,
     pub userdata_arg_index: Option<u32>,
     pub resolution: ForeignSymbolResolution,
+    pub search_hops: Option<u32>,
 }
 
 /// 一个回调交出点上观察到的分配归属。
@@ -1131,6 +1132,7 @@ pub fn facts_from_mir_sites(
                     callback_arg_index: binding.callback_arg_index,
                     userdata_arg_index: binding.userdata_arg_index,
                     resolution: binding.resolution,
+                    search_hops: binding.search_hops,
                 }),
             )?,
         );

@@ -423,10 +423,16 @@ pub enum ForeignSymbolResolution {
     ExternItemName,
     /// `#[link_name = "..."]` 显式指定。
     LinkNameAttribute,
-    /// 交出点所在函数体里找不到接受函数指针的外部调用。
-    NoForeignCallInBody,
-    /// 找到多个，静态分不开是哪一个。**不得挑一个当答案。**
-    AmbiguousForeignCalls,
+    /// 在搜索深度内找不到接受函数指针的外部调用。
+    ///
+    /// **不等于「这个交出点不交给外部」**：可能只是包装层数超过了搜索上界。
+    NoForeignCallWithinSearchDepth,
+    /// 找到**多个不同符号**，静态分不开交给了哪一个。**不得挑一个当答案。**
+    ///
+    /// 同一符号的多个调用点不算歧义：`match hook { Some(..) => reg(cb), _ => reg(None) }`
+    /// 这种注册/注销双分支在真实 FFI 绑定里是常态，两条分支指向同一个外部函数。
+    /// 早先按「调用次数」判，rusqlite 的四个 hook 全部因此变成歧义。
+    AmbiguousForeignSymbols,
 }
 
 /// 一个交出点最终把回调交给了哪个外部链接符号，以及参数各自是什么角色。
@@ -456,6 +462,12 @@ pub struct ForeignSymbolBindingFact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub userdata_arg_index: Option<u32>,
     pub resolution: ForeignSymbolResolution,
+    /// 从交出点所在函数走到那个外部调用用了几跳。0 表示就在本函数体内。
+    ///
+    /// 这是**证据**不是身份：包装层数越深，「这个符号确实是这个 API 交出去的」这个
+    /// 结论越弱，需要在报告里看得见。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_hops: Option<u32>,
 }
 
 /// 这个交出点能不能被**安全客户端**走到。
@@ -912,8 +924,8 @@ impl StaticFact {
                             fact.symbol.as_deref().is_some_and(has_required_text)
                                 && fact.callback_arg_index.is_some()
                         }
-                        ForeignSymbolResolution::NoForeignCallInBody
-                        | ForeignSymbolResolution::AmbiguousForeignCalls => {
+                        ForeignSymbolResolution::NoForeignCallWithinSearchDepth
+                        | ForeignSymbolResolution::AmbiguousForeignSymbols => {
                             fact.symbol.is_none() && fact.callback_arg_index.is_none()
                         }
                     }

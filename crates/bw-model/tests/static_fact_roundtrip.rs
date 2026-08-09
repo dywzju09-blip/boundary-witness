@@ -468,6 +468,7 @@ fn the_serialised_kind_matches_the_registered_wire_token() {
             callback_arg_index: Some(0),
             userdata_arg_index: Some(1),
             resolution: bw_model::ForeignSymbolResolution::ExternItemName,
+            search_hops: Some(0),
         }),
     ];
     for fact in samples {
@@ -496,7 +497,7 @@ fn foreign_symbol_binding_roundtrips_in_both_shapes() {
         (
             None,
             None,
-            bw_model::ForeignSymbolResolution::AmbiguousForeignCalls,
+            bw_model::ForeignSymbolResolution::AmbiguousForeignSymbols,
         ),
     ] {
         let envelope = StaticFactEnvelope {
@@ -515,6 +516,7 @@ fn foreign_symbol_binding_roundtrips_in_both_shapes() {
                 callback_arg_index,
                 userdata_arg_index: None,
                 resolution,
+                search_hops: None,
             }),
         };
         let json = serde_json::to_string(&envelope).expect("envelope should serialize");
