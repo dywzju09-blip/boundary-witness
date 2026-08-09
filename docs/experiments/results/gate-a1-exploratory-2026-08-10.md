@@ -23,9 +23,11 @@ Q4′（清槽结论）上——与 [research thesis §2.6] 的预判一致。
 
 1. **n=1 且是开发对象**：fixture 是 Gate R 的自写形状，rusqlite 是开发目标，
    两者的数字都不进论文主表；
-2. **Rust-only 变体是概念性对比**：本次没有独立跑一个「关闭外部分析」的代码路径，
-   Rust-only 的结论来自模型语义（没有 Q4′ 证据时 guard 分支只能缺证），不是
-   一个独立执行的消融变体；
+2. ~~Rust-only 变体是概念性对比~~ **已更新（2026-08-10）**：`judge-hand-offs
+   --rust-only` 已实现（同一判定函数、无外部证据路径，`judge_hand_off(rust,
+   None)`），fixture 实测：`register_guarded` 在 Rust-only 下
+   InsufficientEvidence、Full(clearing) 下 Compatible——**独立执行路径可用**；
+   正式 Gate A1 仍缺预注册判据；
 3. **判据未预注册**：最小效应量、比较单位（交出点 / API / crate）未定。
 
 ## 3. 正式 Gate A1 需要什么

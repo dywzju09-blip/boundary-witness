@@ -19,7 +19,7 @@
 //! waterfall 少掉最重要的一段——大多数交出点是在哪一层掉的。
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -38,9 +38,13 @@ pub struct JudgeHandOffsArgs {
     /// `extract-rust-contracts` 的产物。
     #[arg(long = "rust-contracts")]
     rust_contracts: PathBuf,
-    /// `extract-foreign-facts` 的产物。
+    /// `extract-foreign-facts` 的产物。`--rust-only` 时不需要。
     #[arg(long = "foreign-facts")]
-    foreign_facts: PathBuf,
+    foreign_facts: Option<PathBuf>,
+    /// Rust-only 消融：不读外部事实，判定全部按「无外部证据」路径
+    /// （judge_hand_off(rust, None)）。Gate A1 的对比变体。
+    #[arg(long)]
+    rust_only: bool,
     #[arg(long = "output-dir")]
     output_dir: PathBuf,
     #[arg(long)]
@@ -95,6 +99,13 @@ struct JointSummary {
     verdicts: BTreeMap<String, usize>,
     /// 按 `WitnessObligation` 分别计数。
     obligations: BTreeMap<String, usize>,
+    /// `full` 或 `rust_only`（Gate A1 消融变体）。
+    #[serde(default = "default_mode")]
+    mode: String,
+}
+
+fn default_mode() -> String {
+    "full".to_owned()
 }
 
 pub fn run(args: JudgeHandOffsArgs) -> Result<CommandStatus, CliError> {
@@ -102,10 +113,27 @@ pub fn run(args: JudgeHandOffsArgs) -> Result<CommandStatus, CliError> {
         .into_iter()
         .map(|located| located.value)
         .collect();
-    let foreign: Vec<ForeignFactRecord> = read_jsonl(&args.foreign_facts, args.max_line_bytes)?
-        .into_iter()
-        .map(|located| located.value)
-        .collect();
+    let foreign: Vec<ForeignFactRecord> = match &args.foreign_facts {
+        Some(path) if !args.rust_only => read_jsonl(path, args.max_line_bytes)?
+            .into_iter()
+            .map(|located| located.value)
+            .collect(),
+        _ => {
+            if args.rust_only && args.foreign_facts.is_some() {
+                return Err(CliError::input(
+                    "BW-JUDGE",
+                    "--rust-only 与 --foreign-facts 互斥；Rust-only 消融不读外部事实",
+                ));
+            }
+            if !args.rust_only {
+                return Err(CliError::input(
+                    "BW-JUDGE",
+                    "缺少 --foreign-facts（非 rust-only 模式必需）",
+                ));
+            }
+            Vec::new()
+        }
+    };
 
     // 外部侧按符号建索引。**这是唯一允许的检索键**：符号是两侧共有的那一项。
     // 按 API 名或候选分片检索一律禁止（ADR-0003 第五条）。
@@ -119,6 +147,7 @@ pub fn run(args: JudgeHandOffsArgs) -> Result<CommandStatus, CliError> {
         run_id: args.run_id.clone(),
         rust_contracts_total: rust.len(),
         foreign_facts_total: foreign.len(),
+        mode: if args.rust_only { "rust_only" } else { "full" }.to_owned(),
         ..JointSummary::default()
     };
 
@@ -128,16 +157,28 @@ pub fn run(args: JudgeHandOffsArgs) -> Result<CommandStatus, CliError> {
         let Some(contract) = record.contract.as_ref() else {
             continue;
         };
-        let Some(foreign) = foreign_by_symbol.get(contract.hand_off.foreign_symbol.as_str()) else {
-            summary.no_foreign_counterpart += 1;
-            continue;
+        let outcome = if args.rust_only {
+            // Rust-only 消融：同一判定函数、无外部证据路径。
+            use bw_model::{HandOffId, JointTrace};
+            let verdicts = bw_model::judge_hand_off(contract, None);
+            JoinOutcome::Joined(Box::new(JointTrace {
+                hand_off: HandOffId::from_keys(&contract.hand_off, None),
+                slots: BTreeSet::new(),
+                verdicts,
+            }))
+        } else {
+            let Some(foreign) =
+                foreign_by_symbol.get(contract.hand_off.foreign_symbol.as_str())
+            else {
+                summary.no_foreign_counterpart += 1;
+                continue;
+            };
+            let behavior = foreign
+                .analysis
+                .clone()
+                .into_behavior_fact(foreign.hand_off.clone());
+            join_hand_off(contract, &behavior, &foreign.analysis.slots)
         };
-
-        let behavior = foreign
-            .analysis
-            .clone()
-            .into_behavior_fact(foreign.hand_off.clone());
-        let outcome = join_hand_off(contract, &behavior, &foreign.analysis.slots);
 
         match &outcome {
             JoinOutcome::Joined(trace) => {
