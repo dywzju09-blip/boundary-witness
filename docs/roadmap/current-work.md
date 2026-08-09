@@ -20,8 +20,8 @@
 | 5.0 符号解析（rusqlite 6/6） | ✅ 完成 |
 | **5.2 真实目标 source-to-verdict** | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md)） |
 | 5.3 反证生成器重写（D3） | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-3-witness-generator-rewrite-2026-08-10.md)） |
-| 5.4 ASan 执行 + 独立 oracle | ⬜ **下一步** |
-| 5.5 rusqlite 0.26.2 负对照 | ⬜ |
+| 5.4 ASan 执行 + 独立 oracle | ✅ **完成**（2026-08-10，vulnerable 0.26.1 ASan 出证 heap-use-after-free，见 [结果记录](../experiments/results/stage5-4-asan-oracle-2026-08-10.md)） |
+| 5.5 rusqlite 0.26.2 负对照 | ⬜ **下一步** |
 | PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
 
 Rust 侧契约事实、外部侧行为事实与精确联结现在都能从真实构建产物自动产出。5.2 在

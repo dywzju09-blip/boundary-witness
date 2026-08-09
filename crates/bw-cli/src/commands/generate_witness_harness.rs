@@ -231,7 +231,7 @@ fn render_main(
     let (invalidate_block, expected_compile) = match decision {
         InvalidateDecision::Generated => (
             format!(
-                "    // invalidate：让 referent 在注册仍然有效时失效（由判定推出）。\n    let {referent} = String::from(\"bw-witness-referent\");\n    let callback = |{params}| {{\n        let _ = {referent}.len();\n    }};\n    {register}\n    drop({referent});"
+                "    // invalidate：让 referent 在注册仍然有效时失效（由判定推出）。\n    // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的\n    // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。\n    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n    let callback = |{params}| {{\n        let _ = {referent}.len();\n    }};\n    {register}\n    drop({referent});"
             ),
             true,
         ),
@@ -534,7 +534,7 @@ rust = "drop(conn);"
             ],
             "witness_referent",
         );
-        assert!(main_rs.contains("let witness_referent = String::from(\"bw-witness-referent\");"));
+        assert!(main_rs.contains("let witness_referent = Box::new(String::from(\"bw-witness-referent\"));"));
         assert!(main_rs.contains("drop(witness_referent);"));
         assert!(main_rs.contains("let _ = conn.update_hook(Some(callback));"));
         assert!(main_rs.contains("let _ = witness_referent.len();"));
