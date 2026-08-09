@@ -56,7 +56,19 @@ where F: FnMut(PackBuilderStage, u32, u32) -> bool + 'repo
 - 注册参数形状由 `accepts_none_to_clear` 决定（`Some(callback)` vs `callback`）；
 - 回调返回类型支持 `bool`（闭包尾表达式 `true`）；其余类型拒绝（缺证）。
 
-## 5. 这一步证明了什么，没证明什么
+## 5. foreach 类 API 的判定尝试（覆盖缺口记录）
+
+对 git2 的 foreach 类（`git_tag_foreach` 等 4 个）用真实 libgit2 IR 跑
+`extract-foreign-facts`：**全部 unresolved 且无边界原因**。
+
+- IR 事实：`git_tag_foreach` 把 callback/payload 塞进**栈上** `tag_cb_data`
+  结构后传给内部同步遍历函数——回调不进入跨调用存储；
+- 分析器现状：对「callback 经栈上 struct 中转再传给内部函数」的形状，Q1
+  保留判定落 unresolved（无 reason）——**是分析器覆盖缺口，不是安全结论**；
+- 按纪律：缺证不猜。这 4 个 API 保持 `InsufficientEvidence`，不因 IR 显示同步
+  而判 Compatible（内部遍历函数内是否保存，当前单文件分析看不到）。
+
+## 6. 这一步证明了什么，没证明什么
 
 **证明了**：
 
