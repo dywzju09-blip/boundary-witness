@@ -21292,6 +21292,11 @@ fn registration_guards<'tcx>(
 /// 中间节点**不要求**是安全的：一个安全的公开 wrapper 调用私有 `unsafe fn` 时，
 /// 责任在 wrapper，客户端仍然只写安全代码。所以只有入口那一跳看 safety。
 ///
+/// **0 跳优先于调用图完整性**：交出点自身就是安全入口时，客户端直接调用该 API 即可
+/// 到达交出点，不经过任何中间边，因此不受调用图不完整影响；调用图不完整只降级
+/// 「经中间边可达」的判定。真实 crate 里 trampoline/闭包间接调用普遍存在，若让 0 跳
+/// 也跟随全 crate 降级，所有公开 API 的 lineage 会恒为 `Unresolved`。
+///
 /// # 取值方向不对称
 ///
 /// [`SafeEntryLineage::NoPublicSafeEntry`] 会把候选排除掉，是漏报方向，因此只在调用图
@@ -21316,19 +21321,21 @@ fn safe_entry_lineages(
         .iter()
         .map(|(def_id, api_id, callback_param, source_path, span)| {
             let owner_is_unsafe_fn = fn_is_unsafe(tcx, *def_id);
-            let (lineage, entry_def_path, hops, unresolved_reason) = if !call_graph_complete {
-                (
-                    SafeEntryLineage::Unresolved,
-                    None,
-                    None,
-                    Some(UnresolvedReason::LineageCallGraphIncomplete),
-                )
-            } else if is_public_safe_entry(tcx, *def_id) {
+            let (lineage, entry_def_path, hops, unresolved_reason) = if is_public_safe_entry(tcx, *def_id) {
+                // 0 跳：交出点自身就是安全入口，判定只依赖可见性与 unsafe 标记，
+                // 不依赖调用图。调用图不完整影响的是「经中间边可达」的判定。
                 (
                     SafeEntryLineage::DirectPublicSafeEntry,
                     Some(tcx.def_path_str(def_id.to_def_id())),
                     Some(0),
                     None,
+                )
+            } else if !call_graph_complete {
+                (
+                    SafeEntryLineage::Unresolved,
+                    None,
+                    None,
+                    Some(UnresolvedReason::LineageCallGraphIncomplete),
                 )
             } else {
                 match nearest_public_safe_caller(tcx, *def_id, &callers) {
@@ -21521,19 +21528,26 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
             continue;
         }
         let mut callback_arg_index = None;
-        let mut userdata_arg_index = None;
         for (index, arg) in args.iter().enumerate() {
             let ty = arg.node.ty(&body.local_decls, tcx);
             let index = index as u32;
             if callback_arg_index.is_none() && ty_carries_fn_pointer(ty) {
                 callback_arg_index = Some(index);
-            } else if userdata_arg_index.is_none() && ty.is_raw_ptr() {
-                userdata_arg_index = Some(index);
             }
         }
         let Some(callback_arg_index) = callback_arg_index else {
             continue;
         };
+        // userdata 只认 callback **之后**的第一个裸指针参数：真实 C API 的接收者
+        // （sqlite3* 之类 handle）几乎总是 callback 之前的指针参数，把「第一个指针」
+        // 当 userdata 会把 handle 误认成上下文——rusqlite 的 `self.db()` 参数即此误判，
+        // 造成 userdata 角色错配。callback 之前/之后都没有裸指针 → None（缺证，不猜）。
+        let userdata_arg_index = args
+            .iter()
+            .enumerate()
+            .skip(callback_arg_index as usize + 1)
+            .find(|(_, arg)| arg.node.ty(&body.local_decls, tcx).is_raw_ptr())
+            .map(|(index, _)| index as u32);
         // `symbol_name` 是链接符号的权威来源，`#[link_name]` 由它自己处理。直接读属性
         // 会随 rustc 内部结构变动而失效，而且属性形式不止一种。
         let symbol = tcx
