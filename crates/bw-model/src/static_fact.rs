@@ -327,6 +327,13 @@ pub enum RegistrationGuard {
     /// **PG-1 不产出这一取值**：它的判据是 owner 类型的 drop 路径证明，不是返回值形状，
     /// 与 [`ReleasePathProofFact`] 同源。见 `docs/roadmap/implementation-plan.md` 的 PG-1。
     OwnerDropUnregisters,
+    /// 注册函数把回调分配**存进 receiver 的字段**（owner-held），随 owner drop 释放。
+    ///
+    /// 类型层效果与返回 guard 等价：闭包作为 receiver 字段持有，借用检查器要求
+    /// 被捕对象活到 owner drop，referent 与 allocation 的分离都不可构造。
+    /// 判据是函数体 MIR（receiver 字段上出现含 `dyn Fn` 的 store），不是返回值形状。
+    /// git2 的 `set_progress_callback`（`self._progress = Some(boxed)`）即此形状。
+    OwnerHoldsCallback,
     /// 存在疑似 guard 的形状，但无法确定它约束了什么。
     ///
     /// 返回类型解析不到 ADT、该 ADT 定义在别的 crate 因而取不到 `Drop` 的 MIR、

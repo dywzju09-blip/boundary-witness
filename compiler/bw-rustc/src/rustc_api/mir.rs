@@ -21211,8 +21211,17 @@ fn registration_guards<'tcx>(
                 .any(|index| return_lifetimes.contains(index));
             let (guard, foreign_release_callee, unresolved_reason) = if return_lifetimes.is_empty()
             {
-                // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的任何东西上。
-                (RegistrationGuard::None, None, None)
+                // 返回值不携带任何声明 lifetime。先查 owner-held 形状：注册函数把回调
+                // 分配存进 receiver 字段（如 git2 的 `self._progress = Some(boxed)`），
+                // 闭包随 owner drop 释放，referent 与 allocation 的分离都不可构造。
+                // 这是函数体 MIR 判据，不是返回值形状（阶段 5.5 在 git2 上实证的缺口）。
+                if owner_holds_callback(tcx, def_id) {
+                    (RegistrationGuard::OwnerHoldsCallback, None, None)
+                } else {
+                    // 返回值不携带任何声明 lifetime，也没有 owner-held 持有：
+                    // 注册的存活没有被绑到调用方的任何东西上。
+                    (RegistrationGuard::None, None, None)
+                }
             } else if !ties_to_callback_bound {
                 if bound_lifetimes.is_empty() {
                     // 回调没有显式 outlives bound，返回值却带 lifetime。形状像 guard，但
@@ -21385,6 +21394,67 @@ fn safe_entry_lineages(
 /// 超过搜索上界仍没找到 → [`ForeignSymbolResolution::NoForeignCallWithinSearchDepth`]，
 /// 这**不等于「这个交出点不交给外部」**。找到多个**不同符号** →
 /// [`ForeignSymbolResolution::AmbiguousForeignSymbols`]，不挑一个当答案（ADR-0003 第四条）。
+/// 注册函数是否把回调分配存进 receiver 字段（owner-held）。
+///
+/// MIR 判据：函数体里存在对 `(*self).<field>`（或其借用临时）的 store，且字段类型
+/// 含 `dyn Fn` trait object（`Option<Box<Box<dyn FnMut...>>>` 之类）。
+/// git2 的 `self._progress = Some(boxed)` 即此形状。
+///
+/// 只认 receiver（第一个参数）字段，不认任意局部：owner-held 的语义是「闭包随
+/// receiver 对象 drop 释放」，只有 receiver 字段能给出这个保证。
+fn owner_holds_callback(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    let Some(receiver_local) = body.args_iter().next() else {
+        return false;
+    };
+    // 第一步：收集 `&mut (*self).<field>` 的借用临时（rustc 常经临时再 store）。
+    let mut field_borrows = std::collections::HashSet::new();
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                continue;
+            };
+            let (place, rvalue) = &**assignment;
+            let Rvalue::Ref(_, _, borrowed) = rvalue else {
+                continue;
+            };
+            // `(*self).<field>` 的基址 local 就是 receiver。
+            if borrowed.local == receiver_local {
+                field_borrows.insert(place.local);
+            }
+        }
+    }
+    // 第二步：store 到 receiver 字段或其借用临时，且类型含 dyn Fn。
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                continue;
+            };
+            let (place, _) = &**assignment;
+            let place_ty = place.ty(&body.local_decls, tcx).ty;
+            if !ty_contains_dyn_fn(place_ty) {
+                continue;
+            }
+            if place.local == receiver_local || field_borrows.contains(&place.local) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 类型是否含 `dyn Fn*` trait object（穿透 Box / Option / 泛型参数）。
+fn ty_contains_dyn_fn(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        ty::Dynamic(..) => true,
+        ty::Adt(_, args) => args.types().any(ty_contains_dyn_fn),
+        _ => false,
+    }
+}
+
 fn foreign_symbol_bindings(
     tcx: TyCtxt<'_>,
     hand_offs: &[(LocalDefId, String, String, PathBuf, String)],

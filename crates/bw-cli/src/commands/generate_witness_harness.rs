@@ -165,6 +165,10 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
     match contract.capture_admission {
         EffectiveCaptureAdmission::PermitsNonStaticCapture => match contract.guard {
             RegistrationGuard::None => InvalidateDecision::Generated,
+            // owner-held：闭包存 receiver 字段随 owner drop，referent 分离不可构造。
+            RegistrationGuard::OwnerHoldsCallback => InvalidateDecision::Refused {
+                reason: "owner_holds_callback: 回调分配由 receiver 字段持有到 owner drop，                分离不可构造".to_owned(),
+            },
             other => InvalidateDecision::Refused {
                 reason: format!(
                     "guard_binds_slot_to_subject: guard={other:?} 把槽位存活绑到被捕对象上，分离不可构造"

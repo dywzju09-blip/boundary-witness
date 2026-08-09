@@ -13,7 +13,9 @@
 
 use std::{collections::BTreeMap, fs, process::Command};
 
-use bw_model::{ForeignSymbolResolution, SafeEntryLineage, StaticFact, StaticFactEnvelope};
+use bw_model::{
+    ForeignSymbolResolution, RegistrationGuard, SafeEntryLineage, StaticFact, StaticFactEnvelope,
+};
 
 #[derive(Debug, Clone)]
 struct Binding {
@@ -31,7 +33,7 @@ struct Lineage {
 
 #[test]
 fn userdata_role_follows_callback_parameter() {
-    let (bindings, _) = analyze();
+    let (bindings, _, _) = analyze();
 
     // handle 在 callback 前：userdata 必须是 callback 后的第一个裸指针，不得把
     // handle（参数 0）误判成 userdata。
@@ -54,8 +56,20 @@ fn userdata_role_follows_callback_parameter() {
 }
 
 #[test]
+fn owner_held_capture_is_detected_as_guard() {
+    let (_, _, guards) = analyze();
+    assert_eq!(
+        guards["CallbackHolder::<'a>::set_callback::F"],
+        Some(RegistrationGuard::OwnerHoldsCallback),
+        "注册函数把回调分配存进 receiver 字段时必须判 OwnerHoldsCallback"
+    );
+    // 对照组：直接交给外部的形状不得误判为 owner-held。
+    assert_eq!(guards["register_plain::F"], Some(RegistrationGuard::None));
+}
+
+#[test]
 fn zero_hop_safe_entry_wins_over_incomplete_call_graph() {
-    let (_, lineages) = analyze();
+    let (_, lineages, _) = analyze();
 
     // 调用图因 dispatch 的间接调用不完整，但 0 跳 public safe entry 不依赖调用图。
     for api in [
@@ -82,7 +96,7 @@ fn zero_hop_safe_entry_wins_over_incomplete_call_graph() {
     );
 }
 
-fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>) {
+fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>, BTreeMap<String, Option<RegistrationGuard>>) {
     let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -130,8 +144,15 @@ fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>) {
 
     let mut bindings = BTreeMap::new();
     let mut lineages = BTreeMap::new();
+    let mut guards = BTreeMap::new();
     for fact in &facts {
         match &fact.payload {
+            StaticFact::RegistrationGuard(guard) => {
+                guards.insert(
+                    format!("{}::{}", guard.api_id, guard.callback_param),
+                    Some(guard.guard),
+                );
+            }
             StaticFact::ForeignSymbolBinding(binding) => {
                 bindings.insert(
                     format!("{}::{}", binding.api_id, binding.callback_param),
@@ -161,5 +182,5 @@ fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>) {
     }
     assert!(!bindings.is_empty(), "fixture 必须产出 foreign symbol binding 事实");
     assert!(!lineages.is_empty(), "fixture 必须产出 safe-entry lineage 事实");
-    (bindings, lineages)
+    (bindings, lineages, guards)
 }

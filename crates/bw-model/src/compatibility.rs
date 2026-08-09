@@ -578,7 +578,9 @@ fn safe_lifetime_separation_possible(
             assumptions.push("registration guard shape unresolved".to_owned());
             Tri::Unresolved
         }
-        RegistrationGuard::TiesSlotToSubject | RegistrationGuard::OwnerDropUnregisters => {
+        RegistrationGuard::TiesSlotToSubject
+        | RegistrationGuard::OwnerDropUnregisters
+        | RegistrationGuard::OwnerHoldsCallback => {
             match foreign.map(|fact| fact.clear) {
                 // guard 有效：注销真的清空槽位。
                 Some(ForeignClear::ClearsOnAllPaths) => Tri::Denied,

@@ -96,3 +96,20 @@ where
 pub fn dispatch(callback: unsafe extern "C" fn(*mut c_void), data: *mut c_void) {
     unsafe { callback(data) }
 }
+
+/// owner-held 持有形状：注册函数把回调分配存进 receiver 字段（git2 的
+/// `set_progress_callback` 同款）。闭包随 owner drop 释放，referent 与 allocation
+/// 的分离都不可构造——guard 判据必须识别为 `OwnerHoldsCallback`。
+pub struct CallbackHolder<'a> {
+    held: Option<Box<dyn FnMut() + 'a>>,
+}
+
+impl<'a> CallbackHolder<'a> {
+    pub fn set_callback<F>(&mut self, callback: F)
+    where
+        F: FnMut() + 'a,
+    {
+        let boxed: Box<dyn FnMut() + 'a> = Box::new(callback);
+        self.held = Some(boxed);
+    }
+}
