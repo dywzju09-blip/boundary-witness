@@ -39,28 +39,54 @@ vulnerable harness（rusqlite 0.26.1，ASan 构建）连续运行 5 次：
 bw-model（14 组）、bw-cli、bw-rustc 全部测试通过，无失败。5.2–5.5 的代码改动
 （compiler 判据两处、生成器重写、bridge 拆分、fixture 新增）无回归。
 
-## 4. 阶段 6 未完成的部分（需要外部决策，不在本次范围）
+## 4. fixture 全量重跑与负向测试（本次补充完成）
+
+### 4.1 Gate R fixture 端到端（当前 commit 重跑）
+
+`callback-retention-relation` fixture crate（Rust 侧 44 条事实、4 条契约装配）+ 两个
+C stub IR，完整命令链重跑：
+
+| Rust 形状 | 外部 stub | captured_referent 判定 | 外部侧证据 |
+| --- | --- | --- | --- |
+| `register_guarded` | clearing（真清槽） | **CompatibleWithinAnalyzedFragment** | clears_on_all_paths |
+| `register_guarded`（同一函数） | leaky（没清干净） | **InsufficientEvidence + GuardDefeated + EstablishLateInvoke** | may_leave_slot_populated |
+
+**fixture 2 与 3 的分离在真实流水线上成立**：Rust 侧一字未改，判别力全部来自外部
+IR 的清槽结论——与 stage4 记录一致，且当前 commit 对齐。
+
+配套新增 `adapters/fixture/fixture_register.foreign-roles.json`（Gate R fixture 的
+正式 role map，只声明符号与参数位置）。
+
+### 4.2 负向测试
+
+| 制造失败 | 结果 | 分类 |
+| --- | --- | --- |
+| build-profile 不一致（foreign 侧 wrong-profile） | joined=0，rejected=4 | `build_profile_mismatch` ×4 |
+| IR 文件不存在 | `BW-IO: /nonexistent.ll: No such file or directory` | 输入错误分类 |
+
+## 5. 阶段 6 剩余（需要外部决策，不在本次范围）
 
 | 验收项 | 状态 | 缺什么 |
 | --- | --- | --- |
-| 四个 matched fixture 全量重跑 | ⬜ | fixture 级端到端（Gate R 验收）未在本次重跑；stage4 已有记录但需当前 commit 对齐 |
 | Gate A1（Full vs Rust-only） | ⬜ | 同一 candidate universe 上的消融运行，判据需预注册（维护者） |
 | Gate B 最小线（unseen 目标） | ⬜ | 需要一个未参与 adapter 开发的新目标 crate（维护者选定） |
-| build mismatch / IR 缺失负向测试 | ⬜ | 人为制造失败的分类验证 |
 | receipt 打包 | ⬜ | 正式 receipt 格式与重放脚本 |
 
-## 5. 这一步证明了什么，没证明什么
+## 6. 这一步证明了什么，没证明什么
 
 **证明了**：
 
 - 缺陷触发是确定性的：5/5 次 ASan 报告一致；
 - 全量回归在当前 commit 上全绿；
 - 真实目标的 attrition waterfall 第一版数字可用，且 supported=0 / confirmed=1 的
-  组合是义务消费机制的正常结果。
+  组合是义务消费机制的正常结果；
+- Gate R 的 fixture 2/3 分离在**当前 commit** 的完整流水线上成立（Rust 侧同一
+  函数，外部侧清槽结论不同 → 判定不同）；
+- build mismatch 与 IR 缺失都被正确分类拒绝。
 
 **没证明**：
 
-- **阶段 6 完成。** Gate A1/B、fixture 全量重跑、负向测试与 receipt 未做；
+- **阶段 6 完成。** Gate A1/B 与 receipt 打包未做（需要维护者决策）；
 - **任何精度数字。** waterfall 是单目标、开发对象的数字，不进论文主表；
 - **Q4′ / Q3 的缺口没有变。** 判定层仍是 InsufficientEvidence 主导，判别力靠
   反证补齐。
