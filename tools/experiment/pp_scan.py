@@ -99,10 +99,21 @@ def scan_crate(
             "failure": contracts_proc.stdout.strip().splitlines()[-1:] or contracts_proc.stderr.strip().splitlines()[-1:],
         }
 
+    stats = summarize_contracts(row_out / "contracts" / "rust-contracts.jsonl")
+    stats["crate"] = digest(crate_id)
+    stats["family"] = digest(family)
+    stats["status"] = "ok"
+    return stats
+
+
+def summarize_contracts(contracts_path: pathlib.Path) -> dict:
+    """从 `extract-rust-contracts` 产物计算 Tier A-R / Tier A-A 与流失原因。
+
+    判据（prey-existence-probe runbook §3.1）：装配成功 = C-1/C-2/C-4 同时成立；
+    Tier A-R = 装配 ∧ permits_non_static_capture；
+    Tier A-A = 装配 ∧ rust_retains_and_may_free_early。
+    """
     stats = {
-        "crate": digest(crate_id),
-        "family": digest(family),
-        "status": "ok",
         "handoffs_total": 0,
         "assembled": 0,
         "gapped": 0,
@@ -114,7 +125,7 @@ def scan_crate(
         "guard_unresolved": 0,
         "gap_reasons": collections.Counter(),
     }
-    for line in (row_out / "contracts" / "rust-contracts.jsonl").read_text().splitlines():
+    for line in contracts_path.read_text().splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
@@ -131,7 +142,13 @@ def scan_crate(
         if contract["allocation"] == "rust_retains_and_may_free_early":
             stats["tier_a_a"] += 1
         guard = contract["guard"]
-        key = f"guard_{guard}"
+        # 枚举全名 → 统计短名；未知取值落到 guard_<raw> 不进已知桶。
+        key = {
+            "none": "guard_none",
+            "ties_slot_to_subject": "guard_ties",
+            "owner_holds_callback": "guard_owner_holds",
+            "unresolved": "guard_unresolved",
+        }.get(guard, f"guard_{guard}")
         if key in stats:
             stats[key] += 1
     stats["gap_reasons"] = dict(stats["gap_reasons"])
