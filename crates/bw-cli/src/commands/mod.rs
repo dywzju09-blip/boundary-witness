@@ -24,6 +24,7 @@ mod extract_foreign_facts;
 mod extract_lifecycle_evidence;
 mod extract_rust_contracts;
 mod extract_static_facts;
+mod bridge_witness_facts;
 mod generate_witness_harness;
 mod index_boundaries;
 mod judge_hand_offs;
@@ -129,7 +130,7 @@ pub enum Command {
     /// 从已绑定的 witness plan 生成本地受控 harness 源码。
     GenerateWitnessHarness(generate_witness_harness::GenerateWitnessHarnessArgs),
     /// 把 harness 的运行时 site id 补进静态事实，供 oracle 判定。
-    BridgeWitnessFacts(generate_witness_harness::BridgeWitnessFactsArgs),
+    BridgeWitnessFacts(bridge_witness_facts::BridgeWitnessFactsArgs),
     /// 审计 V3.2.x 本地 lifecycle contract registry 覆盖。
     AuditLifecycleContracts(audit_lifecycle_contracts::AuditLifecycleContractsArgs),
     /// 从版本化 callback retention contract registry materialize 生命周期 contract。
@@ -167,7 +168,7 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),
         Command::BuildWitnessPlan(args) => build_witness_plan::run(args),
         Command::GenerateWitnessHarness(args) => generate_witness_harness::run(args),
-        Command::BridgeWitnessFacts(args) => generate_witness_harness::run_bridge(args),
+        Command::BridgeWitnessFacts(args) => bridge_witness_facts::run(args),
         Command::AuditLifecycleContracts(args) => audit_lifecycle_contracts::run(args),
         Command::MaterializeLifecycleContracts(args) => materialize_lifecycle_contracts::run(args),
         Command::CompareAnonymousPairs(args) => compare_anonymous_pairs::run(args),

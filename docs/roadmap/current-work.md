@@ -19,8 +19,8 @@
 | 阶段 4 联结与三态判定 | ✅ `Implemented`（schema 升版 4.2 未做，见 stage4 记录） |
 | 5.0 符号解析（rusqlite 6/6） | ✅ 完成 |
 | **5.2 真实目标 source-to-verdict** | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md)） |
-| 5.3 反证生成器重写（D3） | ⬜ **下一步** |
-| 5.4 ASan 执行 + 独立 oracle | ⬜ |
+| 5.3 反证生成器重写（D3） | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-3-witness-generator-rewrite-2026-08-10.md)） |
+| 5.4 ASan 执行 + 独立 oracle | ⬜ **下一步** |
 | 5.5 rusqlite 0.26.2 负对照 | ⬜ |
 | PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
 
