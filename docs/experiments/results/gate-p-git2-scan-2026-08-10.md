@@ -64,3 +64,21 @@ unseen crate 上的扫描流水线（static-facts → contracts）可以跑通�
 **没证明**：任何一个 git2 API 的不相容或安全——**没有外部 IR 就没有判定**；
 `set_progress_callback` 的 guard 形状（self._progress 持有）可能是健全设计，也可能
 不是，未跑判定前不下任何结论。
+
+## 6. 扩展后重扫（2026-08-10 追加）
+
+trait object 回调识别扩展（Box<dyn> 参数 + type alias 展开 + impl 块
+lifetime）后重扫 git2 0.18.1：
+
+| 指标 | 扩展前 | 扩展后 |
+| --- | --- | --- |
+| hand-offs | 32 | **44** |
+| 装配契约 | 11 | **23** |
+| Tier A-R（permits） | 11 | 11（不变） |
+
+新增 12 条装配均为 **trait object 回调**（diff::foreach ×4、
+index::add_all/remove_all/update_all、patch::print 等），此前完全不可见；
+admission 全部 unresolved（这些回调的 bound 形状另属一层缺口），guard 全
+none。**工具对 git2 的可见性翻倍**——Tier A-R 不受影响（新增的都不是
+permits），Gate P 候选口径的 referent 类数字不变，但 hand-off 覆盖率与
+attrition waterfall 的第一级数字显著改善。
