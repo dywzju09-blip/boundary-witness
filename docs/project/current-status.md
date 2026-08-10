@@ -47,6 +47,7 @@
 | `Implemented` | 外部侧 Q1/Q4′/降级 Q3（阶段 3） | 从真实构建 IR 推导，RoleMap 只做符号与参数角色绑定。Q3 降级为「同槽间接调用存在性」，Q4′ 在真实库上无结论（`clear_only_on_some_paths`） |
 | `Implemented` | owner-held 持有形状判据（PG-1 扩展） | `RegistrationGuard::OwnerHoldsCallback`：注册函数把回调存 receiver 字段（git2 形状），MIR 判据 + 变异验证；git2 重新判定义务从 EstablishLateInvoke 变为 guard 有效性缺证。见 [记录](../experiments/results/pg1-owner-held-2026-08-10.md) |
 | `Implemented` | PP 批量驱动器 | `tools/experiment/pp_scan.py`：Gate P-a Rust-only 盲化扫描（Tier A-R/A-A + 流失原因）；冒烟通过，正式运行待样本框 |
+| `Implemented` | trait object 回调识别扩展（portaudio 实测驱动） | `Box<dyn Fn*>` 参数 + type alias 展开 + impl 块 lifetime；三种回调形状全覆盖；git2 覆盖 32->44 hand-offs、装配 11->23；portaudio 3/3 装配（permits）；借用检查器实证 trait object 化回调无类型层保护。见 [记录](../experiments/results/stage7-portaudio-capability-2026-08-10.md) |
 | `Implemented` | 5.2 真实目标 source-to-verdict（rusqlite 0.26.1） | `Connection::update_hook → sqlite3_update_hook` 联结成功（1 joined / 0 rejected），判定 `InsufficientEvidence` 且缺证原因具体。见 [stage5-2 记录](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md)。**未产生任何 SupportedIncompatibility** |
 | `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |
 | `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现，属 future work，持有期一维闭环前不扩维 |

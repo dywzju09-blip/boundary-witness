@@ -26,6 +26,7 @@
 | PG-1 扩展：owner-held 判据 | ✅ 完成（2026-08-10，`RegistrationGuard::OwnerHoldsCallback`，见 [记录](../experiments/results/pg1-owner-held-2026-08-10.md)） |
 | Gate P 工具：PP 批量驱动器 | ✅ 完成（2026-08-10，`tools/experiment/pp_scan.py`，盲化 Tier A-R/A-A 统计） |
 | Gate P 正式运行 | ⬜ 等维护者定样本框与预注册判据 |
+| portaudio nday 实测 + 三轮编译器扩展 | ✅ 完成（2026-08-10：Box<dyn> 参数 / type alias 展开 / impl 块 lifetime，见 [记录](../experiments/results/stage7-portaudio-capability-2026-08-10.md)；git2 覆盖 32->44 hand-offs） |
 | PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
 
 Rust 侧契约事实、外部侧行为事实与精确联结现在都能从真实构建产物自动产出。5.2 在
