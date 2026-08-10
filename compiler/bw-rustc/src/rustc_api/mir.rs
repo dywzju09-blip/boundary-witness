@@ -21184,7 +21184,10 @@ fn registration_guards<'tcx>(
     };
 
     let declared_lifetimes = function_declared_lifetime_params(generics);
-    let callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    if let Some(fn_decl) = node.fn_decl() {
+        callback_params.extend(callback_params_from_signature(fn_decl, &declared_lifetimes));
+    }
     if callback_params.is_empty() {
         return Vec::new();
     }
@@ -21776,7 +21779,10 @@ fn allocation_ownerships(
     };
 
     let declared_lifetimes = function_declared_lifetime_params(generics);
-    let callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    if let Some(fn_decl) = node.fn_decl() {
+        callback_params.extend(callback_params_from_signature(fn_decl, &declared_lifetimes));
+    }
     if callback_params.is_empty() {
         return Vec::new();
     }
@@ -21906,6 +21912,111 @@ fn callback_param_bound_lifetimes(
             (param_name, lifetimes)
         })
         .collect()
+}
+
+/// 从函数签名参数里识别「含 callable trait object」的回调参数
+/// （`Box<dyn FnMut + 'a>` / `Option<Box<dyn Fn*>>` 等形状）。
+///
+/// 泛型 where 谓词（`F: FnMut(...)`）只覆盖一类回调形状；老牌 FFI 绑定
+/// （portaudio-rs 等）常用 trait object 参数，两者语义等价但类型树不同。
+/// 返回 `(参数名, 捕获约束所在的声明 lifetime 下标)`，与
+/// [`callback_param_bound_lifetimes`] 的输出合并。
+fn callback_params_from_signature(
+    fn_decl: &hir::FnDecl<'_>,
+    declared_lifetimes: &BTreeSet<usize>,
+) -> Vec<(String, BTreeSet<usize>)> {
+    let mut out = Vec::new();
+    for (index, param_ty) in fn_decl.inputs.iter().enumerate() {
+        let mut lifetimes = BTreeSet::new();
+        if collect_callable_trait_object_lifetimes(param_ty, &mut lifetimes) {
+            lifetimes.retain(|index| declared_lifetimes.contains(index));
+            // 与既有 trait object 路径（callback_lifetime_bound）共用
+            // `arg{index}` 命名（inputs 含隐式 self），保证按
+            // `(api_id, callback_param)` 装配时各组能对齐。
+            out.push((format!("arg{index}"), lifetimes));
+        }
+    }
+    out
+}
+
+/// 类型树里是否含 callable trait object；若有，收集其 lifetime bound。
+///
+/// 只收集 **trait object 自身的 lifetime**（`Box<dyn FnMut + 'a>` 的 `'a` 是捕获
+/// 约束）；`&'x mut dyn FnMut()` 的 `'x` 是借用自身的 lifetime，不是捕获约束，
+/// 不收集。裸 `fn` 指针没有捕获，返回 false。
+fn collect_callable_trait_object_lifetimes<A>(
+    ty: &hir::Ty<'_, A>,
+    lifetimes: &mut BTreeSet<usize>,
+) -> bool {
+    match &ty.kind {
+        hir::TyKind::TraitObject(bounds, lifetime) => {
+            // TraitObject 的 bounds 是 `&[PolyTraitRef]`（不是 GenericBound）；
+            // 用 trait 路径尾段的名字判断是否为 Fn 家族。
+            let callable = bounds.iter().any(|poly| {
+                poly.trait_ref
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| {
+                        matches!(
+                            segment.ident.name.as_str(),
+                            "Fn" | "FnMut" | "FnOnce" | "AsyncFn" | "AsyncFnMut" | "AsyncFnOnce"
+                        )
+                    })
+            });
+            if callable {
+                collect_hir_lifetime_param(lifetime, lifetimes);
+                true
+            } else {
+                false
+            }
+        }
+        hir::TyKind::Slice(inner) => collect_callable_trait_object_lifetimes(inner, lifetimes),
+        hir::TyKind::Array(inner, _) => collect_callable_trait_object_lifetimes(inner, lifetimes),
+        hir::TyKind::Ptr(mut_ty) => collect_callable_trait_object_lifetimes(mut_ty.ty, lifetimes),
+        hir::TyKind::Ref(_, mut_ty) => collect_callable_trait_object_lifetimes(mut_ty.ty, lifetimes),
+        hir::TyKind::Tup(types) => types
+            .iter()
+            .any(|inner| collect_callable_trait_object_lifetimes(inner, lifetimes)),
+        hir::TyKind::Path(qpath) => {
+            let mut found = false;
+            match qpath {
+                hir::QPath::Resolved(self_ty, path) => {
+                    if let Some(self_ty) = self_ty {
+                        found |= collect_callable_trait_object_lifetimes(self_ty, lifetimes);
+                    }
+                    for segment in path.segments {
+                        found |= collect_callable_trait_object_lifetimes_from_args(
+                            segment.args(),
+                            lifetimes,
+                        );
+                    }
+                }
+                hir::QPath::TypeRelative(self_ty, segment) => {
+                    found |= collect_callable_trait_object_lifetimes(self_ty, lifetimes);
+                    found |= collect_callable_trait_object_lifetimes_from_args(
+                        segment.args(),
+                        lifetimes,
+                    );
+                }
+            }
+            found
+        }
+        _ => false,
+    }
+}
+
+fn collect_callable_trait_object_lifetimes_from_args(
+    args: &hir::GenericArgs<'_>,
+    lifetimes: &mut BTreeSet<usize>,
+) -> bool {
+    let mut found = false;
+    for arg in args.args {
+        if let hir::GenericArg::Type(ty) = arg {
+            found |= collect_callable_trait_object_lifetimes(*ty, lifetimes);
+        }
+    }
+    found
 }
 
 /// 返回类型直接解析到的 ADT。

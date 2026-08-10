@@ -68,6 +68,16 @@ fn owner_held_capture_is_detected_as_guard() {
 }
 
 #[test]
+fn box_dyn_callback_parameter_is_recognized() {
+    let (_, _, guards) = analyze();
+    assert_eq!(
+        guards["BoxDynHolder::<'a>::set_boxed_callback::arg1"],
+        Some(RegistrationGuard::OwnerHoldsCallback),
+        "Box<dyn FnMut + 'a> 参数必须被识别为回调参数并判 owner-held"
+    );
+}
+
+#[test]
 fn zero_hop_safe_entry_wins_over_incomplete_call_graph() {
     let (_, lineages, _) = analyze();
 

@@ -97,6 +97,18 @@ pub fn dispatch(callback: unsafe extern "C" fn(*mut c_void), data: *mut c_void) 
     unsafe { callback(data) }
 }
 
+/// 直接 `Box<dyn FnMut + 'a>` 参数形状（portaudio 家族）：回调不是泛型 F，
+/// 而是 trait object。扩展后的回调识别必须把它判为回调参数。
+pub struct BoxDynHolder<'a> {
+    held: Option<Box<dyn FnMut() + 'a>>,
+}
+
+impl<'a> BoxDynHolder<'a> {
+    pub fn set_boxed_callback(&mut self, callback: Box<dyn FnMut() + 'a>) {
+        self.held = Some(callback);
+    }
+}
+
 /// owner-held 持有形状：注册函数把回调分配存进 receiver 字段（git2 的
 /// `set_progress_callback` 同款）。闭包随 owner drop 释放，referent 与 allocation
 /// 的分离都不可构造——guard 判据必须识别为 `OwnerHoldsCallback`。
