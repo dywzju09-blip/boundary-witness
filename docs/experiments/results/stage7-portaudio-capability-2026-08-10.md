@@ -110,3 +110,27 @@ unresolved / no foreign behavior fact for this hand-off。
 **案例闭环结论**：portaudio-rs 0.3.1（回调 UAF nday）从选型、准备、
 独立放入工具到判定全流程走通。工具最终输出为保守缺证——不误报
 （未把 panic 路径缺陷判成不相容，也不判安全），符合判定纪律。
+
+## 8. impl 块 lifetime 识别 + 借用检查器实证（最终修正）
+
+**impl 块 lifetime**：`declared_lifetime_params_with_impl`（tcx.parent ->
+ItemImpl generics 合并）接入三个判定路径。portaudio admission 从
+unresolved -> **permits_non_static_capture**（3/3 契约，与 rusqlite 0.26.1
+同族）。全量测试无回归。
+
+**借用检查器实证（修正 §6 的"guard none 缺口"认知）**：
+
+- 变体 A（注册 -> drop(referent)，stream 不再使用）：**编译通过**；
+- 变体 B（注册 -> drop(referent) -> stream.start()）：**编译通过**；
+- 对比 git2（set_progress_callback 形状）：drop(referent) 被 E0505 拒绝。
+
+**结论修正**：portaudio 的"返回值字段持有"**不是类型层保护**——闭包经
+trait object 化（Box<dyn FnMut + 'a>）后，借用检查器不把 trait object
+lifetime 与变量 drop 关联，分离可构造（两次变体实证）。git2 的具体
+持有形状被 Drop 保守检查保护。**两种形状的保护差异待深究**（可能与
+Drop impl 结构或 trait object lifetime 推断有关），但工具判定
+（permits + guard none -> 分离可构造）与借用检查器实测**一致**。
+
+**对工具的意义**：portaudio 的 referent 分离路径静态可构造；动态触发
+需要音频设备（服务器无，start 会失败），运行验证为 Inconclusive 方向。
+已知缺陷（panic 路径 UAF）仍超出判定维度。

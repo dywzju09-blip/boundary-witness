@@ -21057,7 +21057,7 @@ fn callback_lifetime_bounds<'tcx>(
         return Vec::new();
     };
 
-    let declared_lifetimes = function_declared_lifetime_params(generics);
+    let declared_lifetimes = declared_lifetime_params_with_impl(tcx, def_id, generics);
     // receiver 上出现的 lifetime。回调 bound 落在其中之一时，它的存活期就被绑在一次
     // 借用上，而外部持有方并不受那次借用约束。
     let mut receiver_lifetimes = BTreeSet::<usize>::new();
@@ -21183,7 +21183,7 @@ fn registration_guards<'tcx>(
         return Vec::new();
     };
 
-    let declared_lifetimes = function_declared_lifetime_params(generics);
+    let declared_lifetimes = declared_lifetime_params_with_impl(tcx, def_id, generics);
     let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
     if let Some(fn_decl) = node.fn_decl() {
         callback_params.extend(callback_params_from_signature(tcx, fn_decl, &declared_lifetimes));
@@ -21778,7 +21778,7 @@ fn allocation_ownerships(
         return Vec::new();
     };
 
-    let declared_lifetimes = function_declared_lifetime_params(generics);
+    let declared_lifetimes = declared_lifetime_params_with_impl(tcx, def_id, generics);
     let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
     if let Some(fn_decl) = node.fn_decl() {
         callback_params.extend(callback_params_from_signature(tcx, fn_decl, &declared_lifetimes));
@@ -22400,6 +22400,38 @@ fn function_declared_lifetime_params(generics: &hir::Generics<'_>) -> BTreeSet<u
         })
         .map(|param| param.def_id.index())
         .collect()
+}
+
+/// 函数声明 + 所属 impl 块的 lifetime 参数（portaudio 形状：`'a` 声明在
+/// `impl<'a> Stream<'a>`，方法体里引用时 `LifetimeKind::Param(def_id)` 的
+/// def_id 是 impl 参数）。DefIndex 在 crate 内唯一，可直接合并。
+fn declared_lifetime_params_with_impl(
+    tcx: TyCtxt<'_>,
+    def_id: LocalDefId,
+    generics: &hir::Generics<'_>,
+) -> BTreeSet<usize> {
+    let mut set = function_declared_lifetime_params(generics);
+    let parent = tcx.parent(def_id.to_def_id());
+    if let Some(parent_local) = parent.as_local()
+        && parent_local != def_id
+    {
+        match tcx.hir_node_by_def_id(parent_local) {
+            hir::Node::Item(hir::Item {
+                kind: hir::ItemKind::Impl(impl_),
+                ..
+            }) => {
+                for param in impl_.generics.params {
+                    if let hir::GenericParamKind::Lifetime { kind } = param.kind
+                        && !matches!(kind, hir::LifetimeParamKind::Elided(_))
+                    {
+                        set.insert(param.def_id.index());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    set
 }
 
 fn collect_hir_lifetime_params_from_ty(ty: &hir::Ty<'_>, lifetimes: &mut BTreeSet<usize>) {
