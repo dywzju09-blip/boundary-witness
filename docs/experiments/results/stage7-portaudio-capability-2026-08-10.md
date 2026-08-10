@@ -1,0 +1,74 @@
+# 工具能力实测：portaudio-rs 0.3.1（RUSTSEC-2019-0022，回调 UAF nday）
+
+- 日期：2026-08-10
+- 任务：把典型 crate nday 独立放入工具，实测工具当前能力
+- 结论先行：**工具对 `Box<dyn FnMut + 'a>` 回调参数形状存在识别盲区**；
+  该 nday 的缺陷机制（回调内 panic 导致 transmute Box 提前释放）也不在
+  本工具的判定维度内。两项都如实记录。
+
+## 1. 选型
+
+系统搜索 RUSTSEC advisory-db 后，**除 rusqlite（开发对象）外没有第二个
+L1 回调持有期类 nday**——这是 Gate P 信号的第二次确认（首次为 git2 扫描）。
+
+最接近「回调 nday」的 unseen 候选：**portaudio-rs 0.3.1**（CVE-2019-16881，
+CVSS 9.8，callback UAF）。服务器有 portaudio-2.0 系统库与 ALSA 头文件，
+可构建（注：系统库属 L2，本次为探索性运行，manifest 已标注）。
+
+## 2. 缺陷机制（源码确认）
+
+src/stream.rs（0.3.1）：
+
+- 回调 bound：`StreamCallback<'a> = FnMut(...) + 'a`（允许借用捕获，
+  与 rusqlite 0.26.1 同族）；
+- open 里 `Box::new(StreamUserData { callback, .. })` 存闭包，
+  `&mut *user_data as *mut c_void` 裸指针交给 `Pa_OpenStream`（userData）；
+- 回调侧 stream_callback 用 `mem::transmute(user_data)` 重建 Box，
+  正常路径 `mem::forget` 防止释放；**用户闭包 panic 时 Box 被 drop ->
+  PortAudio 仍持有指针 -> 下次回调 UAF（攻击者可控制回调指针）**；
+- `Stream<'a>` 持有 `user_data: Box<StreamUserData<'a>>`，`Drop` -> `close`
+  -> 外部调用（guard 形状）。
+
+**缺陷维度**：这是 panic 展开路径的分配提前释放（Rust 内部 unsound），
+**不是**「类型契约允许的比外部实现宽」的错配——本工具的三维判定
+（R 分离 / A 分离 / guard 有效性）不含 panic 路径建模。
+
+## 3. 工具实测结果
+
+| 步骤 | 结果 |
+| --- | --- |
+| extract-static-facts | 64 条事实（object_site 32、drop_site 26、callback_site 2、callback_user_data_reconstruction 2、drop_prevention 2） |
+| extract-rust-contracts | **assembled=0, gapped=0**——没有任何回调 hand-off 被识别 |
+
+**盲区根因**（mir.rs callback_param_bound_lifetimes）：只识别
+where 谓词泛型（`F: FnMut(...)`）；portaudio 的回调参数是
+`Option<Box<StreamCallback<'a>>>`（**trait object 类型参数**，非泛型），
+完全不在这条路径上。配套地：没有 callback_lifetime_bound / registration_site /
+foreign_symbol_binding 事实产出。
+
+## 4. 这次实测证明了什么，没证明什么
+
+**证明了**：
+
+- 工具对 rusqlite/git2 之外的第三类回调形状（`Box<dyn FnMut>` 参数）存在
+  **系统性识别盲区**——这类 API 在 Gate P 候选池里会完全不可见，需要扩展
+  编译器（trait object 参数识别）才能覆盖；
+- RUSTSEC 公开库中「L1 + 回调持有期类」nday 只有 rusqlite 一个——若保持
+  L1 约束，第二个 unseen 正例只能来自前瞻扫描而非公告库；
+- 治理机制正常：manifest 写入 vulnerable token 被 V3.2 校验拦截（正确拒绝）。
+
+**没证明**：
+
+- portaudio 的缺陷工具判不出（未走到判定——连 hand-off 都没识别）；
+- 即便扩展 Box<dyn> 识别，**panic 路径 UAF 仍超出判定维度**（预期判
+  guard 形状 + InsufficientEvidence，不会给 SupportedIncompatibility）——
+  这是判定模型的边界，不是 bug；
+- 本次构建用系统 portaudio（L2），不是 L1 片段内的正式结论。
+
+## 5. 下一步（若继续）
+
+1. 扩展 callback_param_bound_lifetimes：识别 `Box<dyn Fn* + 'a>` 参数
+   （HIR 类型遍历：Adt(Box) -> TraitObject -> callable principal -> lifetime）；
+2. fixture 测试 + 变异检查；
+3. portaudio 重跑 -> 预期：契约装配（permits + ties_slot_to_subject），
+   judge 缺证（无外部 IR），harness invalidate refused（guard）。
