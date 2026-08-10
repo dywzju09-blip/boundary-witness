@@ -33,7 +33,7 @@ struct Lineage {
 
 #[test]
 fn userdata_role_follows_callback_parameter() {
-    let (bindings, _, _) = analyze();
+    let (bindings, _, _, _) = analyze();
 
     // handle 在 callback 前：userdata 必须是 callback 后的第一个裸指针，不得把
     // handle（参数 0）误判成 userdata。
@@ -57,7 +57,7 @@ fn userdata_role_follows_callback_parameter() {
 
 #[test]
 fn owner_held_capture_is_detected_as_guard() {
-    let (_, _, guards) = analyze();
+    let (_, _, guards, _) = analyze();
     assert_eq!(
         guards["CallbackHolder::<'a>::set_callback::F"],
         Some(RegistrationGuard::OwnerHoldsCallback),
@@ -69,7 +69,7 @@ fn owner_held_capture_is_detected_as_guard() {
 
 #[test]
 fn box_dyn_callback_parameter_is_recognized() {
-    let (_, _, guards) = analyze();
+    let (_, _, guards, _) = analyze();
     assert_eq!(
         guards["BoxDynHolder::<'a>::set_boxed_callback::arg1"],
         Some(RegistrationGuard::OwnerHoldsCallback),
@@ -79,7 +79,7 @@ fn box_dyn_callback_parameter_is_recognized() {
 
 #[test]
 fn alias_wrapped_trait_object_callback_is_recognized() {
-    let (_, _, guards) = analyze();
+    let (_, _, guards, _) = analyze();
     assert_eq!(
         guards["AliasHolder::<'a>::set_alias_callback::arg1"],
         Some(RegistrationGuard::OwnerHoldsCallback),
@@ -88,8 +88,28 @@ fn alias_wrapped_trait_object_callback_is_recognized() {
 }
 
 #[test]
+fn impl_block_lifetime_is_recognized_for_trait_object_callbacks() {
+    let (_, _, _, bound_scopes) = analyze();
+    // 'a 声明在 impl 块：扩展后必须识别为声明 lifetime（非 unresolved_lifetime）。
+    for api in [
+        "AliasHolder::<'a>::set_alias_callback::arg1",
+        "BoxDynHolder::<'a>::set_boxed_callback::arg1",
+    ] {
+        let scope = bound_scopes.get(api).expect("bound fact should exist");
+        assert_ne!(
+            scope, "UnresolvedLifetime",
+            "{api} 的 impl 块 lifetime 必须被识别为声明 lifetime"
+        );
+        assert!(
+            scope.contains("Declared"),
+            "{api} scope 应为 declared 类，实际 {scope}"
+        );
+    }
+}
+
+#[test]
 fn zero_hop_safe_entry_wins_over_incomplete_call_graph() {
-    let (_, lineages, _) = analyze();
+    let (_, lineages, _, _) = analyze();
 
     // 调用图因 dispatch 的间接调用不完整，但 0 跳 public safe entry 不依赖调用图。
     for api in [
@@ -116,7 +136,13 @@ fn zero_hop_safe_entry_wins_over_incomplete_call_graph() {
     );
 }
 
-fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>, BTreeMap<String, Option<RegistrationGuard>>) {
+fn analyze(
+) -> (
+    BTreeMap<String, Binding>,
+    BTreeMap<String, Lineage>,
+    BTreeMap<String, Option<RegistrationGuard>>,
+    BTreeMap<String, String>,
+) {
     let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -165,8 +191,15 @@ fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>, BTreeMap<
     let mut bindings = BTreeMap::new();
     let mut lineages = BTreeMap::new();
     let mut guards = BTreeMap::new();
+    let mut bound_scopes = BTreeMap::new();
     for fact in &facts {
         match &fact.payload {
+            StaticFact::CallbackLifetimeBound(bound) => {
+                bound_scopes.insert(
+                    format!("{}::{}", bound.api_id, bound.callback_param),
+                    format!("{:?}", bound.bound_scope),
+                );
+            }
             StaticFact::RegistrationGuard(guard) => {
                 guards.insert(
                     format!("{}::{}", guard.api_id, guard.callback_param),
@@ -202,5 +235,5 @@ fn analyze() -> (BTreeMap<String, Binding>, BTreeMap<String, Lineage>, BTreeMap<
     }
     assert!(!bindings.is_empty(), "fixture 必须产出 foreign symbol binding 事实");
     assert!(!lineages.is_empty(), "fixture 必须产出 safe-entry lineage 事实");
-    (bindings, lineages, guards)
+    (bindings, lineages, guards, bound_scopes)
 }
