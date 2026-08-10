@@ -99,3 +99,14 @@ hand_off_sites 复用 callback_lifetime_bounds 产出，capture/lineage/symbol
 **工具能力最终结论**：对 portaudio 这类老牌 FFI 绑定（别名包装 trait object
 回调），工具现在能完整识别回调表面并保守判定（InsufficientEvidence 方向），
 不误报；该 nday 的 panic 类机制不在判定模型内。
+
+## 7. Rust-only 判定（案例闭环收尾）
+
+`bw judge-hand-offs --rust-only`（无外部 IR，系统库为 L2）：
+3 个 API × 2 类生命周期 = 6 条判定，**全部 InsufficientEvidence**，
+缺证原因具体可回查：capture admission unresolved / allocation ownership
+unresolved / no foreign behavior fact for this hand-off。
+
+**案例闭环结论**：portaudio-rs 0.3.1（回调 UAF nday）从选型、准备、
+独立放入工具到判定全流程走通。工具最终输出为保守缺证——不误报
+（未把 panic 路径缺陷判成不相容，也不判安全），符合判定纪律。
