@@ -97,6 +97,19 @@ pub fn dispatch(callback: unsafe extern "C" fn(*mut c_void), data: *mut c_void) 
     unsafe { callback(data) }
 }
 
+/// portaudio 形状：type alias 包装的 trait object 回调（别名在 HIR 层不展开）。
+pub type AliasCallback<'a> = dyn FnMut() + 'a;
+
+pub struct AliasHolder<'a> {
+    held: Option<Box<AliasCallback<'a>>>,
+}
+
+impl<'a> AliasHolder<'a> {
+    pub fn set_alias_callback(&mut self, callback: Box<AliasCallback<'a>>) {
+        self.held = Some(callback);
+    }
+}
+
 /// 直接 `Box<dyn FnMut + 'a>` 参数形状（portaudio 家族）：回调不是泛型 F，
 /// 而是 trait object。扩展后的回调识别必须把它判为回调参数。
 pub struct BoxDynHolder<'a> {

@@ -78,6 +78,16 @@ fn box_dyn_callback_parameter_is_recognized() {
 }
 
 #[test]
+fn alias_wrapped_trait_object_callback_is_recognized() {
+    let (_, _, guards) = analyze();
+    assert_eq!(
+        guards["AliasHolder::<'a>::set_alias_callback::arg1"],
+        Some(RegistrationGuard::OwnerHoldsCallback),
+        "type alias 包装的 trait object 回调必须被识别（portaudio 形状）"
+    );
+}
+
+#[test]
 fn zero_hop_safe_entry_wins_over_incomplete_call_graph() {
     let (_, lineages, _) = analyze();
 

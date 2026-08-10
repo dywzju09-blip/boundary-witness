@@ -72,3 +72,30 @@ foreign_symbol_binding 事实产出。
 2. fixture 测试 + 变异检查；
 3. portaudio 重跑 -> 预期：契约装配（permits + ties_slot_to_subject），
    judge 缺证（无外部 IR），harness invalidate refused（guard）。
+
+## 6. 扩展实施结果（2026-08-10 追加）
+
+两轮编译器扩展，portaudio 从 0 hand-off 到 3/3 装配成功：
+
+**第一轮：直接 `Box<dyn Fn*>` 参数识别**（callback_params_from_signature +
+collect_callable_trait_object_lifetimes，消费点 registration_guards /
+allocation_ownerships）。fixture BoxDynHolder 正例 + 变异检查。
+
+**第二轮：type alias 展开**（callback_trait_object_lifetime 加 tcx +
+TyAlias 展开：展开体是 callable trait object 时收集调用处 lifetime 实参）。
+hand_off_sites 复用 callback_lifetime_bounds 产出，capture/lineage/symbol
+三组事实同源对齐。fixture AliasHolder 正例 + 变异检查（TyAlias->Struct 转红）。
+
+**portaudio 重跑：3/3 装配成功**（open / open_default / set_finished_callback）。
+
+**剩余形状限制（如实记录，判定保守缺证不误报）**：
+
+- admission=unresolved：portaudio 的 'a 声明在 impl 块（impl<'a> Stream<'a>），
+  不在函数 generics——function_declared_lifetime_params 只收函数声明 lifetime；
+- guard=none：open 把 user_data Box 存进返回值 Stream 的字段（struct 构造，
+  非 receiver store）——owner-held 判据的第三种形状（返回值字段持有）未覆盖；
+- 缺陷机制（panic 路径 UAF）仍超出判定维度（不产生 SupportedIncompatibility）。
+
+**工具能力最终结论**：对 portaudio 这类老牌 FFI 绑定（别名包装 trait object
+回调），工具现在能完整识别回调表面并保守判定（InsufficientEvidence 方向），
+不误报；该 nday 的 panic 类机制不在判定模型内。

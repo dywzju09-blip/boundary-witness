@@ -21117,7 +21117,7 @@ fn callback_lifetime_bounds<'tcx>(
     // 交出点。
     for (index, input) in sig.decl.inputs.iter().enumerate() {
         let Some(resolved) =
-            callback_trait_object_lifetime(input, ObjectLifetimeContext::Unknown)
+            callback_trait_object_lifetime(tcx, input, ObjectLifetimeContext::Unknown)
         else {
             continue;
         };
@@ -21186,7 +21186,7 @@ fn registration_guards<'tcx>(
     let declared_lifetimes = function_declared_lifetime_params(generics);
     let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
     if let Some(fn_decl) = node.fn_decl() {
-        callback_params.extend(callback_params_from_signature(fn_decl, &declared_lifetimes));
+        callback_params.extend(callback_params_from_signature(tcx, fn_decl, &declared_lifetimes));
     }
     if callback_params.is_empty() {
         return Vec::new();
@@ -21781,7 +21781,7 @@ fn allocation_ownerships(
     let declared_lifetimes = function_declared_lifetime_params(generics);
     let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
     if let Some(fn_decl) = node.fn_decl() {
-        callback_params.extend(callback_params_from_signature(fn_decl, &declared_lifetimes));
+        callback_params.extend(callback_params_from_signature(tcx, fn_decl, &declared_lifetimes));
     }
     if callback_params.is_empty() {
         return Vec::new();
@@ -21922,13 +21922,14 @@ fn callback_param_bound_lifetimes(
 /// 返回 `(参数名, 捕获约束所在的声明 lifetime 下标)`，与
 /// [`callback_param_bound_lifetimes`] 的输出合并。
 fn callback_params_from_signature(
+    tcx: TyCtxt<'_>,
     fn_decl: &hir::FnDecl<'_>,
     declared_lifetimes: &BTreeSet<usize>,
 ) -> Vec<(String, BTreeSet<usize>)> {
     let mut out = Vec::new();
     for (index, param_ty) in fn_decl.inputs.iter().enumerate() {
         let mut lifetimes = BTreeSet::new();
-        if collect_callable_trait_object_lifetimes(param_ty, &mut lifetimes) {
+        if collect_callable_trait_object_lifetimes(tcx, param_ty, &mut lifetimes, 0) {
             lifetimes.retain(|index| declared_lifetimes.contains(index));
             // 与既有 trait object 路径（callback_lifetime_bound）共用
             // `arg{index}` 命名（inputs 含隐式 self），保证按
@@ -21945,8 +21946,10 @@ fn callback_params_from_signature(
 /// 约束）；`&'x mut dyn FnMut()` 的 `'x` 是借用自身的 lifetime，不是捕获约束，
 /// 不收集。裸 `fn` 指针没有捕获，返回 false。
 fn collect_callable_trait_object_lifetimes<A>(
+    tcx: TyCtxt<'_>,
     ty: &hir::Ty<'_, A>,
     lifetimes: &mut BTreeSet<usize>,
+    depth: usize,
 ) -> bool {
     match &ty.kind {
         hir::TyKind::TraitObject(bounds, lifetime) => {
@@ -21971,32 +21974,56 @@ fn collect_callable_trait_object_lifetimes<A>(
                 false
             }
         }
-        hir::TyKind::Slice(inner) => collect_callable_trait_object_lifetimes(inner, lifetimes),
-        hir::TyKind::Array(inner, _) => collect_callable_trait_object_lifetimes(inner, lifetimes),
-        hir::TyKind::Ptr(mut_ty) => collect_callable_trait_object_lifetimes(mut_ty.ty, lifetimes),
-        hir::TyKind::Ref(_, mut_ty) => collect_callable_trait_object_lifetimes(mut_ty.ty, lifetimes),
-        hir::TyKind::Tup(types) => types
-            .iter()
-            .any(|inner| collect_callable_trait_object_lifetimes(inner, lifetimes)),
+        hir::TyKind::Slice(inner) => {
+            collect_callable_trait_object_lifetimes(tcx, inner, lifetimes, depth)
+        }
+        hir::TyKind::Array(inner, _) => {
+            collect_callable_trait_object_lifetimes(tcx, inner, lifetimes, depth)
+        }
+        hir::TyKind::Ptr(mut_ty) => {
+            collect_callable_trait_object_lifetimes(tcx, mut_ty.ty, lifetimes, depth)
+        }
+        hir::TyKind::Ref(_, mut_ty) => {
+            collect_callable_trait_object_lifetimes(tcx, mut_ty.ty, lifetimes, depth)
+        }
+        hir::TyKind::Tup(types) => types.iter().any(|inner| {
+            collect_callable_trait_object_lifetimes(tcx, inner, lifetimes, depth)
+        }),
         hir::TyKind::Path(qpath) => {
+            // type alias 展开：`Box<StreamCallback<'a>>` 的 StreamCallback 是别名，
+            // HIR 层不展开。展开体若是 callable trait object，则调用处传给别名的
+            // lifetime 实参就是捕获约束（别名参数绑定），无需替换别名体内的参数。
+            if depth < 4
+                && let hir::QPath::Resolved(None, path) = qpath
+                && let hir::def::Res::Def(hir::def::DefKind::TyAlias, alias_def_id) = path.res
+                && let Some(alias_local) = alias_def_id.as_local()
+                && let hir::Node::Item(item) = tcx.hir_node_by_def_id(alias_local)
+                && let hir::ItemKind::TyAlias(_, _, alias_ty) = item.kind
+            {
+                let mut probe = BTreeSet::new();
+                if collect_callable_trait_object_lifetimes(tcx, alias_ty, &mut probe, depth + 1) {
+                    for segment in path.segments {
+                        collect_lifetime_args_from_generic_args(segment.args(), lifetimes);
+                    }
+                    return true;
+                }
+            }
             let mut found = false;
             match qpath {
                 hir::QPath::Resolved(self_ty, path) => {
                     if let Some(self_ty) = self_ty {
-                        found |= collect_callable_trait_object_lifetimes(self_ty, lifetimes);
+                        found |= collect_callable_trait_object_lifetimes(tcx, self_ty, lifetimes, depth);
                     }
                     for segment in path.segments {
                         found |= collect_callable_trait_object_lifetimes_from_args(
-                            segment.args(),
-                            lifetimes,
+                            tcx, segment.args(), lifetimes, depth,
                         );
                     }
                 }
                 hir::QPath::TypeRelative(self_ty, segment) => {
-                    found |= collect_callable_trait_object_lifetimes(self_ty, lifetimes);
+                    found |= collect_callable_trait_object_lifetimes(tcx, self_ty, lifetimes, depth);
                     found |= collect_callable_trait_object_lifetimes_from_args(
-                        segment.args(),
-                        lifetimes,
+                        tcx, segment.args(), lifetimes, depth,
                     );
                 }
             }
@@ -22006,14 +22033,27 @@ fn collect_callable_trait_object_lifetimes<A>(
     }
 }
 
-fn collect_callable_trait_object_lifetimes_from_args(
+fn collect_lifetime_args_from_generic_args(
     args: &hir::GenericArgs<'_>,
     lifetimes: &mut BTreeSet<usize>,
+) {
+    for arg in args.args {
+        if let hir::GenericArg::Lifetime(lifetime) = arg {
+            collect_hir_lifetime_param(lifetime, lifetimes);
+        }
+    }
+}
+
+fn collect_callable_trait_object_lifetimes_from_args(
+    tcx: TyCtxt<'_>,
+    args: &hir::GenericArgs<'_>,
+    lifetimes: &mut BTreeSet<usize>,
+    depth: usize,
 ) -> bool {
     let mut found = false;
     for arg in args.args {
         if let hir::GenericArg::Type(ty) = arg {
-            found |= collect_callable_trait_object_lifetimes(*ty, lifetimes);
+            found |= collect_callable_trait_object_lifetimes(tcx, *ty, lifetimes, depth);
         }
     }
     found
@@ -22127,7 +22167,8 @@ fn is_static_defaulting_container(name: &str) -> bool {
 }
 
 /// 在参数类型里找 `dyn Fn` 家族的 trait object，并解析它的 object lifetime。
-fn callback_trait_object_lifetime<'hir>(
+fn callback_trait_object_lifetime<'tcx, 'hir>(
+    tcx: TyCtxt<'tcx>,
     ty: &'hir hir::Ty<'hir>,
     context: ObjectLifetimeContext<'hir>,
 ) -> Option<TraitObjectCallbackLifetime<'hir>> {
@@ -22154,18 +22195,39 @@ fn callback_trait_object_lifetime<'hir>(
             })
         }
         hir::TyKind::Ref(lifetime, mut_ty) => {
-            callback_trait_object_lifetime(mut_ty.ty, ObjectLifetimeContext::Reference(lifetime))
+            callback_trait_object_lifetime(tcx, mut_ty.ty, ObjectLifetimeContext::Reference(lifetime))
         }
         hir::TyKind::Ptr(mut_ty) => {
-            callback_trait_object_lifetime(mut_ty.ty, ObjectLifetimeContext::Unknown)
+            callback_trait_object_lifetime(tcx, mut_ty.ty, ObjectLifetimeContext::Unknown)
         }
         hir::TyKind::Slice(inner) | hir::TyKind::Array(inner, _) => {
-            callback_trait_object_lifetime(inner, ObjectLifetimeContext::Unknown)
+            callback_trait_object_lifetime(tcx, inner, ObjectLifetimeContext::Unknown)
         }
         hir::TyKind::Tup(types) => types
             .iter()
-            .find_map(|inner| callback_trait_object_lifetime(inner, ObjectLifetimeContext::Unknown)),
-        hir::TyKind::Path(hir::QPath::Resolved(_, path)) => {
+            .find_map(|inner| callback_trait_object_lifetime(tcx, inner, ObjectLifetimeContext::Unknown)),
+        hir::TyKind::Path(hir::QPath::Resolved(None, path)) => {
+            // type alias 展开（portaudio 的 `StreamCallback<'a>` 形状）：展开体若是
+            // callable trait object，则调用处传给别名的第一个 lifetime 实参就是捕获约束。
+            if let hir::def::Res::Def(hir::def::DefKind::TyAlias, alias_def_id) = path.res
+                && let Some(alias_local) = alias_def_id.as_local()
+                && let hir::Node::Item(item) = tcx.hir_node_by_def_id(alias_local)
+                && let hir::ItemKind::TyAlias(_, _, alias_ty) = item.kind
+                && callback_trait_object_lifetime(tcx, alias_ty, ObjectLifetimeContext::Unknown)
+                    .is_some()
+            {
+                let lifetime = path.segments.last().and_then(|segment| segment.args).and_then(
+                    |args| {
+                        args.args.iter().find_map(|arg| match arg {
+                            hir::GenericArg::Lifetime(lifetime) => Some(lifetime),
+                            _ => None,
+                        })
+                    },
+                );
+                if let Some(lifetime) = lifetime {
+                    return Some(TraitObjectCallbackLifetime::Lifetime(lifetime));
+                }
+            }
             let inner_context = path
                 .segments
                 .last()
@@ -22179,7 +22241,11 @@ fn callback_trait_object_lifetime<'hir>(
                 .flat_map(|args| args.args.iter())
                 .find_map(|arg| match arg {
                     hir::GenericArg::Type(inner) => {
-                        callback_trait_object_lifetime(inner.as_unambig_ty(), inner_context)
+                        callback_trait_object_lifetime(
+                            tcx,
+                            inner.as_unambig_ty(),
+                            inner_context,
+                        )
                     }
                     _ => None,
                 })
