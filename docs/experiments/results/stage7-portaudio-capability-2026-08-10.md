@@ -124,13 +124,21 @@ unresolved -> **permits_non_static_capture**（3/3 契约，与 rusqlite 0.26.1
 - 变体 B（注册 -> drop(referent) -> stream.start()）：**编译通过**；
 - 对比 git2（set_progress_callback 形状）：drop(referent) 被 E0505 拒绝。
 
-**结论修正**：portaudio 的"返回值字段持有"**不是类型层保护**——闭包经
-trait object 化（Box<dyn FnMut + 'a>）后，借用检查器不把 trait object
-lifetime 与变量 drop 关联，分离可构造（两次变体实证）。git2 的具体
-持有形状被 Drop 保守检查保护。**两种形状的保护差异待深究**（可能与
-Drop impl 结构或 trait object lifetime 推断有关），但工具判定
-（permits + guard none -> 分离可构造）与借用检查器实测**一致**。
+**结论修正（2026-08-10 二修）**：上一版的"编过"结论来自构建缓存假象。
+**干净复现（rm -rf target 后完整编译）**：portaudio 形状（关联函数返回
+持有 Box<dyn FnMut> + 后续使用）报 **E0505**——**被借用检查器保护**，
+与 git2 一致。最小复现实验确认：&mut self 方法存字段与关联函数返回持有
+两种形状、edition 2015/2021、捕获 String/Box<String>，在「drop(referent)
+后持有者被使用」时全部 E0505。
 
-**对工具的意义**：portaudio 的 referent 分离路径静态可构造；动态触发
-需要音频设备（服务器无，start 会失败），运行验证为 Inconclusive 方向。
-已知缺陷（panic 路径 UAF）仍超出判定维度。
+**修正后的结论**：返回值字段持有（trait object 化）在持有者被后续使用
+时同样构成类型层保护。工具静态判定（permits + guard none -> 分离可构造）
+**不含调用处使用模式**（NLL 语义）——这回到 git2 的模式：**harness 编译
+验证暴露静态模型缺少的调用处约束**（第三种形状：返回值字段持有 + 后续
+使用）。生成器对 portaudio 会 expected_compile=true 但实际编不过（与
+git2 同款信号）。
+
+**对工具的意义**：portaudio 的 referent 分离在「持有者不再使用」的平凡
+路径可构造，但任何真实触发（start 等）都被借用检查器阻止——静态判定
+需要建模「返回值字段持有」形状（与 owner-held 同类）才能避免误判
+expected_compile。已知缺陷（panic 路径 UAF）仍超出判定维度。
