@@ -268,3 +268,25 @@ sqlite3），因此反证能编过并 UAF。其余绑定要么 `'static`（类�
 - 若维护者希望在本阶段就拿到 unseen 正例，需要授权：① 扩大样本框（指定 crate
   清单或授权默认选择），或 ② 补历史版本扫描（对 callback 家族 crate 的旧版本
   做 pp_scan，找与 rusqlite 0.26.1 同形状的旧版本——成本低，命中率不确定）。
+
+### 9.4 追加：历史版本源码级普查（2026-08-12 同日，免构建）
+
+按目标语义「在组件历史版本检测」，对 2021 年前后（rusqlite 修复同期）的 callback
+家族 crate 做源码级普查——直接下载旧版源码，grep 本类漏洞形状
+（非 static 回调 bound + 闭包经 into_raw/裸指针逃逸 + `&self` receiver）：
+
+| crate/版本 | 回调形状 | 结论 |
+| --- | --- | --- |
+| git2 0.13.25 | `&mut self` + F: 'repo/'cb，Box 存 Rust 字段（`set_progress_callback`、`apply` 回调族）；`Odb::foreach` 同步遍历；`Odb::packwriter` 的 into_raw 是自持空 payload | 无本类形状（与 0.18.1 同设计） |
+| curl 0.4.38 | `Easy` 'static；`Transfer` `'data` + Box 存 Rust 字段 | 无本类形状（与 0.4.50 同设计） |
+| openssl 0.10.38 | 密码回调同步调用（PEM 解析期间） | 无晚调 |
+| ssh2 0.9.4 | 源码无 FnMut/Fn 回调 API | 无候选 |
+| duckdb 0.8.1 | 仅同步查询迭代回调（query_map/pragma） | 无晚调 |
+| sqlite crate 0.25.3 | `iterate` 同步；`set_busy_handler` 'static + &mut self | 无本类形状 |
+| libxml 0.3.6 | 仅文件读写 C 回调（无用户生命周期回调） | 无候选 |
+
+**净结论**：当前版本 + 历史版本的全样本中，本类形状（`&self` + 非 static bound +
+闭包逃逸出 Rust 视野）的公开实例**只有 rusqlite 0.25.x/0.26.x 一个**（即开发对象，
+RUSTSEC-2021-0128）。Gate B 的 unseen 正例在本可达样本中不存在；找到它需要
+规模化扫描（执行计划阶段 7/8，数百 crate 的 pp_scan + 定向 IR），或维护者提供
+新样本口径。
