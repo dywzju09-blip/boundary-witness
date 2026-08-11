@@ -1,0 +1,43 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:rusqlite:rollback_hook"
+
+# 冻结记录。时点说明同 commit_hook.toml：冻结于该家族 joint 判定之后，内容仅含
+# 合法调用描述，不含 drop 时机、触发顺序或预期结果。
+[freeze]
+frozen_at = "2026-08-12T08:00:00Z"
+frozen_at_commit = "5d7e189b1c3b7a2e8b19f9e57cf54a28d21b8f35"
+p3_verdict_available_at_freeze = true
+authored_from = "rusqlite 公开 API 文档与 sqlite3 rollback hook 的公开文档"
+
+[target]
+crate = "rusqlite"
+# vulnerable/fixed 复用同一份 adapter。
+versions = ["0.26.1", "0.26.2"]
+features = ["bundled", "hooks"]
+api_path = "rusqlite::Connection::rollback_hook"
+
+[[setup]]
+step = "open_connection"
+rust = "let conn = rusqlite::Connection::open_in_memory()?;"
+
+[[setup]]
+step = "create_table"
+rust = "conn.execute_batch(\"CREATE TABLE t (v INTEGER)\")?;"
+
+# 目标 API 本身怎么调。rollback_hook 的公开签名（0.26.1）：
+# pub fn rollback_hook<'c, F>(&'c self, hook: Option<F>) where F: FnMut() + Send + 'c
+[registration]
+receiver = "conn"
+method = "rollback_hook"
+callback_signature = "FnMut()"
+callback_arg_index = 0
+accepts_none_to_clear = true
+
+# 正常使用：任何 ROLLBACK 发生时 SQLite 都会调用 rollback hook。
+[trigger]
+step = "rollback_transaction"
+rust = "conn.execute_batch(\"BEGIN; INSERT INTO t (v) VALUES (1); ROLLBACK\")?;"
+
+[teardown]
+step = "drop_connection"
+rust = "drop(conn);"
