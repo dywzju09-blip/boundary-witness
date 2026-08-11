@@ -194,6 +194,33 @@ impl<'a> FunctionFlow<'a> {
                             changed |= self.set_origin(result, self.origin(src));
                         }
                     }
+                    InstKind::Phi { operands } => {
+                        // phi 操作数 = 各入边的值（块标签已在解析时剔除）。
+                        // 与 select 同规则：优先传播「来自本函数形参」的分支；
+                        // 其次取第一个非 Unknown 的值分支。
+                        let param_branch = operands.iter().find(|src| {
+                            matches!(self.origin(src), ValueOrigin::Param(_))
+                        });
+                        let src = param_branch.or_else(|| {
+                            operands
+                                .iter()
+                                .find(|src| !matches!(self.origin(src), ValueOrigin::Unknown))
+                        });
+                        if let Some(src) = src {
+                            if let Some(slot) = self.pointer_slot(module, src)
+                                && self.slots.get(result) != Some(&slot)
+                            {
+                                self.slots.insert(result.clone(), slot);
+                                changed = true;
+                            }
+                            if self.base_is_caller_owned(src)
+                                && self.caller_owned.insert(result.clone())
+                            {
+                                changed = true;
+                            }
+                            changed |= self.set_origin(result, self.origin(src));
+                        }
+                    }
                     InstKind::Alloca => {}
                     _ => {
                         changed |= self.set_origin(result, ValueOrigin::Unknown);
@@ -372,6 +399,7 @@ fn operands_of(inst: &Inst) -> Vec<Operand> {
         InstKind::Load { src } => vec![src.clone()],
         InstKind::Cast { src } => vec![src.clone()],
         InstKind::Select { operands } => operands.clone(),
+        InstKind::Phi { operands } => operands.clone(),
         InstKind::Gep { base, .. } => vec![base.clone()],
         InstKind::Compare { operands } => operands.clone(),
         InstKind::Call { callee, args } => {

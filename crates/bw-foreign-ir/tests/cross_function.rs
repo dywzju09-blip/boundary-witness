@@ -134,3 +134,78 @@ define i32 @store_wrapper(i32 (i8*)* noundef %0, %struct.holder* noundef %1) {
     println!("retention: {:?}", analysis.retention);
     assert_eq!(analysis.retention, ForeignRetention::Unresolved);
 }
+
+/// sqlite3CreateFunc 形状：回调值流经 **phi 节点**（判空后二选一）再 store 到全局
+/// 槽位——phi 的结果必须继承入边来源，Q1 才能看到这次 store。
+#[test]
+fn phi_then_store_to_global_is_may_retain() {
+    let register_ir = r#"
+@slot = global i32 (i8*)* null
+define i32 @fixture_register(i32 (i8*)* noundef %0) {
+entry:
+  %cond = icmp eq i32 (i8*)* %0, null
+  br i1 %cond, label %if.null, label %if.set
+if.null:
+  br label %merge
+if.set:
+  br label %merge
+merge:
+  %1 = phi i32 (i8*)* [ %0, %if.set ], [ null, %if.null ]
+  store i32 (i8*)* %1, i32 (i8*)** @slot
+  ret i32 0
+}
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 0,
+        userdata_arg_index: None,
+        clear_symbol: None,
+    };
+    let analysis = analyze_with_modules(&main_module, &roles, &[]);
+    println!("retention: {:?}", analysis.retention);
+    assert_eq!(
+        analysis.retention,
+        ForeignRetention::MayRetain,
+        "phi 透传后 store 到全局槽位必须被识别为保留"
+    );
+}
+
+/// sqlite3CreateFunc 形状（堆对象字段）：回调经 phi 透传后 store 进「非调用方持有
+/// 基址」的结构体字段——不得判 NoRetain（SQLite 确实保留），只能缺证 Unresolved。
+#[test]
+fn phi_then_store_to_unproven_field_is_not_no_retain() {
+    let register_ir = r#"
+define i32 @fixture_register(i32 (i8*)* noundef %0) {
+entry:
+  %cond = icmp eq i32 (i8*)* %0, null
+  br i1 %cond, label %if.null, label %if.set
+if.null:
+  br label %merge
+if.set:
+  br label %merge
+merge:
+  %1 = phi i32 (i8*)* [ %0, %if.set ], [ null, %if.null ]
+  %2 = call %struct.funcdef* @malloc_like()
+  %3 = getelementptr inbounds %struct.funcdef, %struct.funcdef* %2, i32 0, i32 3
+  store i32 (i8*)* %1, i32 (i8*)** %3
+  ret i32 0
+}
+declare %struct.funcdef* @malloc_like()
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 0,
+        userdata_arg_index: None,
+        clear_symbol: None,
+    };
+    let analysis = analyze_with_modules(&main_module, &roles, &[]);
+    println!("retention: {:?}", analysis.retention);
+    println!("boundaries: {:#?}", analysis.boundaries);
+    assert_eq!(
+        analysis.retention,
+        ForeignRetention::Unresolved,
+        "store 进非调用方持有的堆对象字段：缺证，不得判 NoRetain"
+    );
+}

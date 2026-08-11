@@ -109,6 +109,11 @@ pub enum InstKind {
     Select {
         operands: Vec<Operand>,
     },
+    /// `phi`。结果从各前驱块的入边值中选一，来源沿值分支传播
+    /// （与 `select` 同类：都是「多值取一」的透传）。块标签不是操作数。
+    Phi {
+        operands: Vec<Operand>,
+    },
     /// `icmp` / `fcmp`。**比较一个指针不构成对它的保留**，因此必须与
     /// [`InstKind::Other`] 区分——否则 `if (callback)` 这种再普通不过的判空会被算成
     /// 逃逸，负对照永远得不出「没保留」。
@@ -472,6 +477,11 @@ fn parse_inst_kind(body: &str) -> InstKind {
                 .map(Operand::parse)
                 .collect(),
         },
+        // `%193 = phi <ty> [ %189, %188 ], [ %191, %190 ]`：段是「[ 值, 标签 ]」，
+        // 值在方括号内第一个逗号之前。块标签不是值操作数，必须剔除。
+        "phi" => InstKind::Phi {
+            operands: parse_phi_operands(body),
+        },
         "icmp" | "fcmp" => InstKind::Compare {
             operands: split_top_level(body, ',')
                 .into_iter()
@@ -488,6 +498,18 @@ fn parse_inst_kind(body: &str) -> InstKind {
         | "cleanupret" => InstKind::UnsupportedTerminator,
         _ => InstKind::Other,
     }
+}
+
+/// 从 `phi` 指令文本里取出各入边的值操作数，丢弃块标签。
+fn parse_phi_operands(body: &str) -> Vec<Operand> {
+    split_top_level(body, ',')
+        .into_iter()
+        .filter_map(|segment| {
+            let inner = segment.split('[').nth(1)?;
+            let value = inner.split(',').next()?.trim();
+            (!value.is_empty()).then(|| Operand::parse(value))
+        })
+        .collect()
 }
 
 /// `store <ty> <value>, <ty>* <dest>[, align N][, !dbg !N]`

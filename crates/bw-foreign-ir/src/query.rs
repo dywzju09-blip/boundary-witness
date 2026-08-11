@@ -427,7 +427,8 @@ fn trace_param(
                 | InstKind::Load { .. }
                 | InstKind::Cast { .. }
                 | InstKind::Compare { .. }
-                | InstKind::Select { .. } => {}
+                | InstKind::Select { .. }
+                | InstKind::Phi { .. } => {}
                 // 指针算术的结果**不继承来源**，因此不会作为别名被重新检查；把它当成
                 // 已跟踪会让「偏移之后再存起来」这条保留路径整条隐形。首期记缺证。
                 InstKind::Gep { .. } => {
