@@ -159,3 +159,64 @@ owned / unregister / no-trigger + 编译期拒绝）。剩余未完成：
 下一步建议（按价值排序）：① 若要把 create_scalar_function 走到 ASan，先做外部
 侧堆逃逸追踪（对 git2/curl 家族也有价值）；② Gate A1 判据与验收；③ Gate B 的
 unseen 目标扩展（需要用户提供或授权挑选样本口径）。
+
+## 8. 追加：git2 0.18.1 PackBuilder::set_progress_callback（unseen 目标负对照）
+
+（2026-08-12 同日追加）按用户同意的顺序补 git2 11 个 permits 候选的外部 IR
+判定，先走注册保留形状的 `PackBuilder::set_progress_callback`。
+
+### 8.1 全链结果
+
+| 级 | 结果 |
+| --- | --- |
+| Rust 契约（0.18.1） | `permits_non_static_capture` + guard=none（生成器据此给 invalidate） |
+| 外部 IR（libgit2 1.7.1 pack.c，217 bitcode） | **MayRetain**（1 槽位）+ may_invoke_after_return + retain_on_some_paths |
+| 联结（stage6-git2-joint-2026-08-12） | **joined 1**，both subjects insufficient_evidence + same_slot_invoke_candidate |
+| witness 生成 | invalidate=generated，expected_compile=true（生成器预测） |
+| **witness 构建** | **编译期被借用检查拒绝（E0505 + E0597）** |
+
+### 8.2 为什么编不过（这是负对照行为，不是 bug）
+
+git2 的签名是 `set_progress_callback<'cb, F>(&'cb mut self, cb: F) where
+F: FnMut(...) + 'cb`——闭包捕获 `&witness_referent`（'a），F: 'cb 要求 'a ⊇ 'cb，
+而 'cb（对 packbuilder 的**可变借用**）延续到 packbuilder 的最后一次使用
+（write_buf）与 Drop。因此 `drop(witness_referent)` 在注册之后、write_buf 之前
+被借用检查拒绝（E0505「move out of borrowed」+ E0597「does not live long
+enough」）。分离在类型层面不可构造 → **安全方向**。
+
+对比 rusqlite 0.26.1 的 `update_hook<'c, F>(&'c self, hook: Option<F>) where
+F: ... + 'c`——'c 是对 conn 的**共享借用**，NLL 允许它在调用处结束，闭包捕获的
+借用也随之结束，`drop(witness_referent)` 合法 → harness 编译通过 → ASan 出证。
+
+**`&mut self`（git2）把捕获生命周期钉到 receiver 的最后使用 → 健全；
+`&self` + 直接交出（rusqlite 0.26.1）让借用提前结束 → 漏洞。** 这是
+witness 构建层把安全 API 与不安全 API 分开的实证：负对照在 unseen 目标上成立。
+
+### 8.3 暴露的生成器缺口（如实记录）
+
+生成器对 git2 输出了 `expected_compile=true`，实际构建失败。生成器只依据
+契约级事实（permits + guard none）预测，不知道 `&mut self` + Drop 的借用检查
+交互。修复方向：把 harness 构建的借用检查拒绝（E0505/E0597 出现在
+drop(referent) 处）归类为「类型层分离不可构造」失败类（与 invalidate refused
+同一负对照族），而不是 harness bug——本次未修，记入已知缺口。
+
+### 8.4 这一步证明了什么，没证明什么
+
+**证明了**：
+
+- git2（unseen）的注册保留形状全链穿透：契约 → 真实 libgit2 IR（MayRetain +
+  晚调）→ 联结 → 判定 → witness 生成，**在 unseen 目标上完整走通静态链**；
+- witness 构建层能区分健全/不健全 API：git2 `&mut self` 形状被借用检查拒绝
+  （安全），rusqlite 0.26.1 `&self` 形状通过并 UAF——负对照行为在 unseen
+  目标上成立；
+- libgit2 的 `git_packbuilder_set_callbacks` 确实保留回调并晚调（IR 证据），
+  git2 的安全来自 Rust 侧类型设计而非外部实现。
+
+**没证明**：
+
+- **git2 是 nday**——恰好相反：witness 编不过，方向性支持 Compatible
+  （借用检查拒绝分离）；ASan 未运行（无二进制）；
+- **生成器对 git2 形状的 expected_compile 预测**——实际失败，缺口已记录；
+- **该目标上的 ASan 证据**——被工具链 proc-macro + ASan 冲突（icu4x 链的
+  zerofrom_derive 在 nightly-2026-07-08/-03-31 下均编不过）阻塞，未取得；
+- **Gate B 通过**——git2 是负对照方向，不是正例。
