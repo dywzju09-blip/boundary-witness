@@ -24,7 +24,8 @@
 | 5.5 rusqlite 0.26.2 负对照 | ✅ **完成**（2026-08-10：fixed 编不过 + owned/unregister/no-trigger 三变体 ASan 干净，见 [结果记录](../experiments/results/stage5-5-fixed-negative-control-2026-08-10.md)） |
 | 阶段 6 多 nday 检出（RUSTSEC-2021-0128 家族） | ✅ **3 个已知 nday ASan 出证**（2026-08-12：update/commit/rollback hook 各 3/3 heap-use-after-free；0.26.2 fixed 全 E0425；owned/unregister/no-trigger 对照全干净，见 [结果记录](../experiments/results/stage6-multi-nday-rusqlite-2026-08-12.md)） |
 | 阶段 6 纪律 bug 修复（缺证当否定） | ✅ **2 个修复 + 变异验证**（2026-08-12：phi 无模型、is_caller_owned 漏 origins，均把错误 NoRetain 纠正为 Unresolved） |
-| 阶段 6 Core Complete 验收 | ⬜ 进行中（剩 **Gate A1 正式判据预注册**（判据提案已起草，待用户签核）与 **Gate B unseen 正例**；git2 packbuilder unseen 已走通静态链但 witness 编不过 = 负对照，见 §8） |
+| Gate A1（Full vs Rust-only） | ✅ **通过**（2026-08-12：判据预注册 → 正式运行 → 真实 universe 3 个 hand-off 差异 + guard 分支差异，见 [记录](../experiments/results/gate-a1-formal-2026-08-12.md)） |
+| Gate B（unseen 正例） | ⬜ **未达成**（2026-08-12 普查：S1 样本 + 定向补充无 unseen 正例；git2/curl Transfer 均被借用检查拒绝分离 = 健全负对照；本类形状「&self + 非 static + into_raw 逃逸」在生态近绝迹，见 [stage6 §9](../experiments/results/stage6-multi-nday-rusqlite-2026-08-12.md)） |
 | PG-1 扩展：owner-held 判据 | ✅ 完成（2026-08-10，`RegistrationGuard::OwnerHoldsCallback`，见 [记录](../experiments/results/pg1-owner-held-2026-08-10.md)） |
 | Gate P 工具：PP 批量驱动器 | ✅ 完成（2026-08-10，`tools/experiment/pp_scan.py`，盲化 Tier A-R/A-A 统计） |
 | Gate P 正式运行 | ⬜ 等维护者定样本框与预注册判据 |

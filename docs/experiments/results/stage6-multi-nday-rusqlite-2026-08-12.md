@@ -220,3 +220,51 @@ drop(referent) 处）归类为「类型层分离不可构造」失败类（与 i
 - **该目标上的 ASan 证据**——被工具链 proc-macro + ASan 冲突（icu4x 链的
   zerofrom_derive 在 nightly-2026-07-08/-03-31 下均编不过）阻塞，未取得；
 - **Gate B 通过**——git2 是负对照方向，不是正例。
+
+## 9. 追加：unseen 候选普查（Gate B 现状，2026-08-12 同日）
+
+Gate B 最小线要求「真正 unseen 候选走通全程并有独立 oracle 证据」。为评估该
+验收项的可达性，对 S1 样本与定向补充做了系统普查：
+
+### 9.1 普查结果
+
+| 候选族 | 形状 | 结果 |
+| --- | --- | --- |
+| git2 0.18.1 `PackBuilder::set_progress_callback` | `&mut self` + F: 'cb，Box 存 Rust 字段 | **借用检查拒绝分离**（E0505/E0597）→ 健全 |
+| git2 foreach 族（tag/stash/odb/packbuilder foreach 等 9 个） | 同步遍历（回调在调用期间存活） | 同步方向；分析器对「栈上 struct 中转」缺证（已知覆盖缺口），不判 Compatible 也不给义务 |
+| curl 0.4.50 `Easy`（owned 变体） | `&mut self` + **'static** | 类型层排除借用捕获（安全族） |
+| curl 0.4.50 `Transfer`（借用变体，write/read/progress/header/debug/seek/ssl_ctx） | `&mut self` + F: 'data，Box 存 Rust 字段，两段式 setopt | **借用检查拒绝分离**（最小编译测试 E0505/E0597）→ 健全 |
+| openssl 0.10.81 密码回调（5 个） | 同步调用（PEM 解析时回调） | 同步方向；自动化对「透传不保存」缺证 |
+| portaudio-rs 0.3.1 Stream 回调 | panic 路径分配提前释放 | 缺陷机制（panic 展开）不在本工具判定维度 |
+| sqlite crate 0.30.0 / 0.25.3 | `iterate` 同步回调；`set_busy_handler` 'static + &mut self | 无本类候选（无 hook/function 注册 API） |
+| libpulse-binding 2.30.1（117 装配） | 全部 `requires_static_capture` | 类型层排除（安全族），判别力验证 ✓ |
+| ssh2 0.9.6 | 仅 1 hand-off | 回调稀疏，无候选 |
+
+### 9.2 本类漏洞的判别特征（普查的净结论）
+
+可被反证构造（分离可编译）的形状是：
+
+```text
+&self（共享借用）+ 非 static 回调 bound + 闭包经 into_raw 逃逸出 Rust 视野
+（存进 C 侧存储，Rust 不再持有）
+```
+
+rusqlite 0.26.1 正是这个形状（`&'c self` + `Option<F>` + `Box::into_raw` 交给
+sqlite3），因此反证能编过并 UAF。其余绑定要么 `'static`（类型层排除）、要么
+`&mut self`/`'data` 把闭包留在 Rust 字段（借用检查可见 → 拒绝分离）、要么同步
+调用（无晚调）。**2021 年 rusqlite 修复后，生态里该形状的公开实例接近绝迹**
+（RustSec incorrect-lifetime 类仅 RUSTSEC-2021-0128 一条）。
+
+### 9.3 对 Gate B 的意义
+
+- **Gate B 最小线未达成**：当前可达样本（S1 10 个 + 定向补充）没有 unseen 正例；
+  git2/curl 的编译期拒绝是**健全方向的负对照**（与 fixed 负对照同族），不是正例；
+- **不是工具失效**：工具对每个候选都给出了可回查的判定（缺证/负对照/义务），
+  没有假阳性；
+- **下一步是规模化**：本类实例稀缺，只有 Gate P/C0 通过后的规模化扫描
+  （执行计划阶段 7/8，数百 crate 的 pp_scan + 定向 IR）才能提高找到第二个实例的
+  概率——这正是 0day 检测的最终形态，也符合执行计划「Gate P/C0 再决定是否扩大」
+  的顺序；
+- 若维护者希望在本阶段就拿到 unseen 正例，需要授权：① 扩大样本框（指定 crate
+  清单或授权默认选择），或 ② 补历史版本扫描（对 callback 家族 crate 的旧版本
+  做 pp_scan，找与 rusqlite 0.26.1 同形状的旧版本——成本低，命中率不确定）。
