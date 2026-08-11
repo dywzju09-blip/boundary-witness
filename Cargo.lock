@@ -277,19 +277,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bw-rusqlite-v3-adapter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bw-blind-model",
- "bw-model",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
-
-[[package]]
 name = "bw-v3-nday-adapter"
 version = "0.1.0"
 dependencies = [
