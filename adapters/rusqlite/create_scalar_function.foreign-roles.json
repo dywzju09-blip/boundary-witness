@@ -1,0 +1,19 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "外部符号与参数角色，供 bw extract-foreign-facts 绑定用。",
+    "只声明符号与参数位置。是否保留、是否晚调、是否清槽一律由 IR 回答——执行计划阶段 3 的完成条件要求 RoleMap 不参与行为结论。",
+    "依据：sqlite3_create_function_v2 的公开 C 签名 int sqlite3_create_function_v2(sqlite3*, const char*, int, int, void* pApp, void(*xFunc)(sqlite3_context*,int,sqlite3_value**), void(*xStep)(...), void(*xFinal)(...), void(*xDestroy)(void*))。",
+    "本 role map 针对 rusqlite 的标量函数路径：callback = xFunc（参数 5）、userdata = pApp（参数 4，0-based）。",
+    "聚合/窗口路径使用 xStep/xFinal 等其他参数位置，不在本 role map 范围内。",
+    "clear_symbol 就是注册符号本身：解除注册的方式是再调一次并传 NULL 回调。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "sqlite3_create_function_v2",
+      "callback_arg_index": 5,
+      "userdata_arg_index": 4,
+      "clear_symbol": "sqlite3_create_function_v2"
+    }
+  ]
+}
