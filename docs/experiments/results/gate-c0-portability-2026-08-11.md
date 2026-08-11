@@ -79,3 +79,20 @@ rsa::Rsa::private_key_from_pem_callback        → PEM_read_bio_RSAPrivateKey
   是同步调用形状的可能性高（PEM_read 在返回前调用），但不预判；
 - curl 22 个 API 的归属（缺符号解析，无法联结）；
 - 单次构建，无重复性验证。
+
+## 4. IR 捕获补验（2026-08-11 追加）
+
+libcurl 家族 IR 实测捕获：cc-capture 重编译 curl-sys（cmake bundled），
+**130 个 bitcode** 落盘。至此 Gate C0 四家族 IR 获取全部实测：
+
+| 家族 | IR 捕获 | 单元数 |
+| --- | --- | --- |
+| SQLite（rusqlite） | ✅ 阶段 2 | 40 |
+| libgit2（git2） | ✅ | 217 |
+| libcurl（curl） | ✅ 本轮 | **130** |
+| OpenSSL（openssl） | ✅ | 1102 |
+| PortAudio | L2 系统库（pkg-config，无 bundled IR） | — |
+
+**Gate C0 机制判据全部满足**：≥3 家族（实际 5）、≥2 种构建方式（实际 4）、
+各家族 IR 获取 + 符号解析 + artifact 绑定 + 接入成本均已实测（curl 的
+选项式 setopt 符号解析失败为已记录的盲区，不影响 IR 获取可行性）。
