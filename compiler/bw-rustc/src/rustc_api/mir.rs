@@ -21604,7 +21604,13 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
         for (index, arg) in args.iter().enumerate() {
             let ty = arg.node.ty(&body.local_decls, tcx);
             let index = index as u32;
-            if callback_arg_index.is_none() && ty_carries_fn_pointer(ty) {
+            // 直接函数指针 / 含 fn 指针的枚举（Option<fn>）：现有判据。
+            // 或**函数指针被 cast 成裸指针**（curl 的 `cb as *const _` 传
+            // setopt_ptr——选项式 API 的常态）：实参类型是裸指针但来源是
+            // 函数指针的 cast。
+            if callback_arg_index.is_none()
+                && (ty_carries_fn_pointer(ty) || is_fn_pointer_cast(tcx, body, &arg.node))
+            {
                 callback_arg_index = Some(index);
             }
         }
@@ -21642,6 +21648,40 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
         });
     }
     calls
+}
+
+/// 实参是否是「函数指针 cast 成裸指针」（curl 选项式 setopt 形状）。
+///
+/// `cb as *const _` 在 MIR 里是 `Rvalue::Cast(_, operand, _)`，cast 源类型含
+/// 函数指针。这类实参的静态类型是裸指针，`ty_carries_fn_pointer` 看不到，
+/// 但它在语义上就是回调——选项式 API（curl_easy_setopt 的 CURLOPT_*FUNCTION）
+/// 依赖这个形状才能被识别。
+fn is_fn_pointer_cast<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, arg: &Operand<'tcx>) -> bool {
+    let (Operand::Copy(place) | Operand::Move(place)) = arg else {
+        return false;
+    };
+    let Some(local) = place.as_local() else {
+        return false;
+    };
+    // 找给该 local 赋值的语句：`%x = cast ...`
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                continue;
+            };
+            if assignment.0.as_local() != Some(local) {
+                continue;
+            }
+            let Rvalue::Cast(_, operand, _) = &assignment.1 else {
+                continue;
+            };
+            let src_ty = operand.ty(&body.local_decls, tcx);
+            if ty_carries_fn_pointer(src_ty) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn ty_carries_fn_pointer(ty: Ty<'_>) -> bool {
