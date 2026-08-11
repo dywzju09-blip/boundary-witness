@@ -303,12 +303,23 @@ impl<'a> FunctionFlow<'a> {
         }
     }
 
-    /// 这个槽位指针的基址是否可证明由调用方持有。
+    /// 这个指针是否可证明由调用方持有：模块级全局；本函数的指针形参（或其来源
+    /// 可证明是形参的值，如 -O0 形参落栈后 load 出来的值）；已证明是调用方持有
+    /// 的槽位上再取字段。
+    ///
+    /// **来源检查不能省**：跨函数追踪把「实参由调用方持有」注入被调方形参时，实参
+    /// 常常是形参落栈后的 load 结果（LLVM -O0 形状，sqlite3 的
+    /// `sqlite3_create_function_v2` → `createFunctionApi` 即如此）——它的 origin 是
+    /// `Param(_)`，但不在 `caller_owned` 集合里。只查集合会把注入漏掉，被调方所有
+    /// 形参 origin 变 Unknown，别名链为空，Q1 空洞地得出 `NoRetain`。
     #[must_use]
     pub fn is_caller_owned(&self, pointer: &Operand) -> bool {
         match pointer {
             Operand::Global(_) => true,
-            Operand::Local(name) => self.caller_owned.contains(name),
+            Operand::Local(name) => {
+                matches!(self.origins.get(name), Some(ValueOrigin::Param(_)))
+                    || self.caller_owned.contains(name)
+            }
             _ => false,
         }
     }

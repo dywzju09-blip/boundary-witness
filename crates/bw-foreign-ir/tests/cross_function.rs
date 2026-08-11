@@ -209,3 +209,42 @@ declare %struct.funcdef* @malloc_like()
         "store 进非调用方持有的堆对象字段：缺证，不得判 NoRetain"
     );
 }
+
+/// sqlite3_create_function_v2 形状：注册函数把形参落栈（store 到 alloca）再 load
+/// 出来，把 **load 结果** 传给被调方，被调方 store 到全局槽位。load 结果的来源是
+/// 形参（origin=Param），必须算 caller-owned，跨函数注入才能生效 → MayRetain。
+/// 只查 `caller_owned` 集合（漏 origins）会把注入漏掉，Q1 空洞地判 NoRetain。
+#[test]
+fn spilled_load_arg_cross_function_store_to_global_is_may_retain() {
+    let register_ir = r#"
+define i32 @fixture_register(i32 (i8*)* noundef %0) {
+  %2 = alloca i32 (i8*)*
+  store i32 (i8*)* %0, i32 (i8*)** %2
+  %3 = load i32 (i8*)*, i32 (i8*)** %2
+  %4 = call i32 @store_wrapper(i32 (i8*)* %3)
+  ret i32 %4
+}
+"#;
+    let wrapper_ir = r#"
+@slot = global i32 (i8*)* null
+define i32 @store_wrapper(i32 (i8*)* noundef %0) {
+  store i32 (i8*)* %0, i32 (i8*)** @slot
+  ret i32 0
+}
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let other = IrModule::parse(wrapper_ir).expect("wrapper parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 0,
+        userdata_arg_index: None,
+        clear_symbol: None,
+    };
+    let analysis = analyze_with_modules(&main_module, &roles, &[other]);
+    println!("retention: {:?}", analysis.retention);
+    assert_eq!(
+        analysis.retention,
+        ForeignRetention::MayRetain,
+        "load 出的形参值传给被调方 store 到全局槽位：必须识别为保留"
+    );
+}
