@@ -29,6 +29,9 @@ pub struct ExtractForeignFactsArgs {
     /// `llvm-dis` 产出的文本 IR。
     #[arg(long)]
     ir: PathBuf,
+    /// 同构建的其他编译单元目录（`llvm-dis` 产出的文本 IR），供跨函数透传追踪解析被调方。
+    #[arg(long = "ir-dir")]
+    ir_dir: Option<PathBuf>,
     /// RoleMap：只声明符号与参数角色，**不声明行为**。
     #[arg(long)]
     roles: PathBuf,
@@ -112,6 +115,24 @@ pub fn run(args: ExtractForeignFactsArgs) -> Result<CommandStatus, CliError> {
 
     let ir_text = std::fs::read_to_string(&args.ir)
         .map_err(|error| CliError::input("BW-IO", format!("{}: {}", args.ir.display(), error)))?;
+    // 跨函数透传：加载同构建其他编译单元。按需解析，最多 200 个——超过即缺证。
+    let mut other_modules: Vec<bw_foreign_ir::IrModule> = Vec::new();
+    if let Some(dir) = &args.ir_dir {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|error| CliError::input("BW-IO", format!("{}: {}", dir.display(), error)))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ll"))
+            .collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries.into_iter().take(600) {
+            let path = entry.path();
+            let text = std::fs::read_to_string(&path)
+                .map_err(|error| CliError::input("BW-IO", format!("{}: {}", path.display(), error)))?;
+            if let Ok(module) = bw_foreign_ir::IrModule::parse(&text) {
+                other_modules.push(module);
+            }
+        }
+    }
 
     let mut summary = ForeignFactSummary {
         schema_version: SCHEMA_VERSION,
@@ -124,9 +145,16 @@ pub fn run(args: ExtractForeignFactsArgs) -> Result<CommandStatus, CliError> {
 
     let mut records = Vec::new();
     for roles in &role_map.roles {
-        let analysis = analyze_text(&ir_text, roles).map_err(|error| {
-            CliError::input("BW-SCHEMA", format!("{}: {error}", args.ir.display()))
-        })?;
+        let analysis = if other_modules.is_empty() {
+            analyze_text(&ir_text, roles).map_err(|error| {
+                CliError::input("BW-SCHEMA", format!("{}: {error}", args.ir.display()))
+            })?
+        } else {
+            let module = bw_foreign_ir::IrModule::parse(&ir_text).map_err(|error| {
+                CliError::input("BW-SCHEMA", format!("{}: {error}", args.ir.display()))
+            })?;
+            bw_foreign_ir::analyze_with_modules(&module, roles, &other_modules)
+        };
 
         if !analysis.slots.is_empty() {
             summary.with_slots += 1;

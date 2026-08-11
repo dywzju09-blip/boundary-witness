@@ -66,6 +66,22 @@ pub struct FunctionFlow<'a> {
 impl<'a> FunctionFlow<'a> {
     #[must_use]
     pub fn new(module: &IrModule, function: &'a Function) -> Self {
+        // 顶层入口（register 函数）的形参全部来自调用方，视为 caller-owned。
+        let all: Vec<usize> = (0..function.params.len()).collect();
+        Self::new_with_caller_owned(module, function, &all)
+    }
+
+    /// 与 [`Self::new`] 相同，但把**已证明由调用方持有**的形参注入 caller-owned 集合。
+    ///
+    /// 跨函数透传追踪用：被调方形参只有在实参是 caller-owned（模块全局、或本函数
+    /// 持有者）时才视为跨调用存活。实参是调用方 alloca（本函数新建）时，被调方
+    /// 存进其字段**不构成外部组件保留**。
+    #[must_use]
+    pub fn new_with_caller_owned(
+        module: &IrModule,
+        function: &'a Function,
+        caller_owned_params: &[usize],
+    ) -> Self {
         let insts: Vec<&Inst> = function.insts().collect();
         let uses = build_use_index(&insts);
         let spills = find_spill_allocas(&insts, &uses);
@@ -80,8 +96,18 @@ impl<'a> FunctionFlow<'a> {
         };
         for (index, param) in function.params.iter().enumerate() {
             if !param.is_empty() {
-                flow.origins
-                    .insert(param.clone(), ValueOrigin::Param(index));
+                if caller_owned_params.contains(&index) {
+                    // 实参由调用方持有：形参保持 Param origin（caller-owned）。
+                    flow.origins
+                        .insert(param.clone(), ValueOrigin::Param(index));
+                    flow.caller_owned.insert(param.clone());
+                } else {
+                    // 实参非 caller-owned（如调用方 alloca）：形参 origin 置
+                    // Unknown——`base_is_caller_owned` 对非 Param 返回 false，
+                    // 被调方存进其字段不构成外部组件保留。
+                    flow.origins
+                        .insert(param.clone(), ValueOrigin::Unknown);
+                }
             }
         }
         flow.solve(module);
@@ -136,6 +162,37 @@ impl<'a> FunctionFlow<'a> {
                     InstKind::Load { src } => {
                         let origin = self.load_origin(module, src);
                         changed |= self.set_origin(result, origin);
+                    }
+                    InstKind::Select { operands } => {
+                        // select 操作数 = [cond, true_val, false_val]。
+                        // 两个值分支都可能透传来源：优先传播「来自本函数形参」
+                        // 的分支（回调经 `select cond, @default_cb, %cb` 时
+                        // `%cb` 才是要追的）；其次取第一个非 Unknown 的值分支。
+                        // cond（布尔比较）不构成保留。
+                        let value_branches = operands.get(1..).unwrap_or(&[]);
+                        let param_branch = value_branches.iter().find(|src| {
+                            matches!(self.origin(src), ValueOrigin::Param(_))
+                        });
+                        let src = param_branch
+                            .or_else(|| {
+                                value_branches
+                                    .iter()
+                                    .find(|src| !matches!(self.origin(src), ValueOrigin::Unknown))
+                            });
+                        if let Some(src) = src {
+                            if let Some(slot) = self.pointer_slot(module, src)
+                                && self.slots.get(result) != Some(&slot)
+                            {
+                                self.slots.insert(result.clone(), slot);
+                                changed = true;
+                            }
+                            if self.base_is_caller_owned(src)
+                                && self.caller_owned.insert(result.clone())
+                            {
+                                changed = true;
+                            }
+                            changed |= self.set_origin(result, self.origin(src));
+                        }
                     }
                     InstKind::Alloca => {}
                     _ => {
@@ -312,7 +369,9 @@ fn build_use_index(insts: &[&Inst]) -> HashMap<String, Vec<usize>> {
 fn operands_of(inst: &Inst) -> Vec<Operand> {
     match &inst.kind {
         InstKind::Store { value, dest } => vec![value.clone(), dest.clone()],
-        InstKind::Load { src } | InstKind::Cast { src } => vec![src.clone()],
+        InstKind::Load { src } => vec![src.clone()],
+        InstKind::Cast { src } => vec![src.clone()],
+        InstKind::Select { operands } => operands.clone(),
         InstKind::Gep { base, .. } => vec![base.clone()],
         InstKind::Compare { operands } => operands.clone(),
         InstKind::Call { callee, args } => {

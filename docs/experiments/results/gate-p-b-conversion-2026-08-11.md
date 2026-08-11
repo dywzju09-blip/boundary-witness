@@ -65,3 +65,44 @@ P-b 第一级揭示了**转换率的主要瓶颈是分析器覆盖缺口**（透
 候选里，能走到判定的比例取决于这些缺口修多少。下一轮扩展点（按价值排序）：
 ① 跨文件"被调函数内是否 store callback"的证明（解决透传形状）；
 ② curl 选项式 setopt 符号解析；③ openssl 密码回调的同步性证明。
+
+## 6. 跨文件透传追踪实施（2026-08-11 追加）
+
+为解开 openssl 候选的「透传形状」缺口，实现了跨函数/跨编译单元追踪：
+
+**新增能力**：
+- `analyze_with_modules`：额外模块集（同构建其他编译单元）供被调方解析；
+- `trace_param` 跨函数递归（depth≤3）：callback 实参透传给可解析被调方时，进入
+  被调方继续追（参数索引映射 + caller-owned 注入）；
+- `InstKind::Select` 识别（`select cond, @default_cb, %cb` 的 null 默认回调形状，
+  **优先传播 Param 分支**）；
+- `Operand::parse` 修复：取最后一个 `%`/`@` token（修复 bitcast 源解析）；
+- caller-owned 语义修正：跨函数被调方形参只有在**实参由调用方持有**（全局/形参）
+  时才视为跨调用存活；实参是调用方 alloca 时存进其字段**不构成保留**。
+
+**测试**（crates/bw-foreign-ir/tests/cross_function.rs，4 个）：
+- select+跨函数透传到不可解析被调方 → Unresolved（缺证不误判 NoRetain）；
+- 跨函数 store 到全局槽位 → MayRetain；
+- 跨函数 store 到全局结构体字段（GEP+bitcast）→ MayRetain；
+- 跨函数 store 到调用方 alloca 字段 → Unresolved（不误报，openssl 形状）。
+全量回归：bw-foreign-ir（11+4+16）、bw-model、bw-cli 全绿。
+
+**openssl 重验（5 个密码回调候选）**：
+- 之前：retention unresolved（透传形状无法追踪，escapes_to_unknown_callee）；
+- 现在：**全链路穿透**（PEM_read_bio_PrivateKey → pem_read_bio_key →
+  ossl_pw_set_pem_password_cb），callback 存进**栈上 passphrase alloca 字段**
+  → `slot_not_proven_caller_owned` → **正确判定为不构成跨调用保留**。
+
+**转换率更新（第一级→第二级）**：
+
+```
+openssl 候选 5 → 外部 IR 追踪 5 → 自动判定：
+   2 个（PrivateKey/PUBKEY）确认「存栈上结构体，非跨调用保留」方向
+   （retention 缺证，但缺证原因从「无法追踪」变为「追踪到底但非 caller-owned」）
+   3 个（RSAPrivateKey/ECPrivateKey/d2i_PKCS8）停在符号定义缺失
+   → judge 仍无判定（缺槽位证据）→ 反证 0
+```
+
+**意义**：密码回调（password_cb）是**同步调用**形状的证据链更完整了——手动 IR
+分析（§2）与自动追踪（存栈上 alloca）一致指向「不跨调用保留」。这 5 个候选
+**很可能全部 Compatible**（非缺陷），但自动判定仍需「证明 NoRetain」的槽位证据。

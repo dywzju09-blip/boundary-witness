@@ -26,7 +26,7 @@ pub use dataflow::{PathInfo, ValueOrigin, path_info};
 pub use ir::{Block, Function, Global, Inst, InstKind, IrModule, Operand, ParseError};
 pub use query::{
     AnalysisBoundary, BoundaryReason, ClearSite, ForeignAnalysis, ForeignRoleMap, InvokeSite,
-    RetainedSubject, RetentionSite, SlotClearEvidence, analyze,
+    RetainedSubject, RetentionSite, SlotClearEvidence, analyze, analyze_with_modules,
 };
 // 槽位身份是**事实模型**的一部分，定义在 `bw-model`。这里只转出，不另立一份——
 // 同一个概念在两个 crate 各定义一次，早晚会漂移。

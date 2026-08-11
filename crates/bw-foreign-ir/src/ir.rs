@@ -37,7 +37,14 @@ impl Operand {
     /// 值总是最后一个空白分隔的 token：类型可能含空格（`void (i8*)*`），参数属性也可能
     /// 出现在中间（`i8* noundef %5`），但值永远在末尾。
     fn parse(segment: &str) -> Self {
-        let token = segment.split_whitespace().next_back().unwrap_or("");
+        // 优先取最后一个 `%`/`@` token（形如 `i32 (i8*)** %3` 时取 %3）；
+        // 退化到取最后一个 token（`null`、常量等）。
+        let token = segment
+            .split_whitespace()
+            .rev()
+            .find(|t| t.starts_with('%') || t.starts_with('@'))
+            .or_else(|| segment.split_whitespace().next_back())
+            .unwrap_or("");
         Self::from_token(token)
     }
 
@@ -97,6 +104,10 @@ pub enum InstKind {
     /// 指针透传：`bitcast`、`addrspacecast`、`inttoptr`、`ptrtoint`。
     Cast {
         src: Operand,
+    },
+    /// `select`。任一值分支是回调参数时按透传处理（保守）。
+    Select {
+        operands: Vec<Operand>,
     },
     /// `icmp` / `fcmp`。**比较一个指针不构成对它的保留**，因此必须与
     /// [`InstKind::Other`] 区分——否则 `if (callback)` 这种再普通不过的判空会被算成
@@ -453,6 +464,13 @@ fn parse_inst_kind(body: &str) -> InstKind {
         "call" | "tail" | "musttail" | "notail" => parse_call(body),
         "bitcast" | "addrspacecast" | "inttoptr" | "ptrtoint" => InstKind::Cast {
             src: Operand::parse(split_top_level(body, ',').first().copied().unwrap_or("")),
+        },
+        "select" => InstKind::Select {
+            operands: split_top_level(body, ',')
+                .into_iter()
+                .filter(|segment| is_operand_segment(segment))
+                .map(Operand::parse)
+                .collect(),
         },
         "icmp" | "fcmp" => InstKind::Compare {
             operands: split_top_level(body, ',')

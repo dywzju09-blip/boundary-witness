@@ -233,6 +233,16 @@ impl ForeignAnalysis {
 /// 在一个模块上按 RoleMap 跑完 Q1 → Q4′ → 降级 Q3。
 #[must_use]
 pub fn analyze(module: &IrModule, roles: &ForeignRoleMap) -> ForeignAnalysis {
+    analyze_with_modules(module, roles, &[])
+}
+
+/// 与 [`analyze`] 相同，但额外接受一组模块（同一外部构建的其他编译单元），
+/// 供跨函数透传追踪解析被调方。
+pub fn analyze_with_modules(
+    module: &IrModule,
+    roles: &ForeignRoleMap,
+    other_modules: &[IrModule],
+) -> ForeignAnalysis {
     let mut boundaries = Vec::new();
 
     let Some(register) = module.function(&roles.register_symbol) else {
@@ -272,6 +282,7 @@ pub fn analyze(module: &IrModule, roles: &ForeignRoleMap) -> ForeignAnalysis {
         }
         let found = trace_param(
             module,
+            other_modules,
             register,
             &flow,
             &paths,
@@ -279,6 +290,7 @@ pub fn analyze(module: &IrModule, roles: &ForeignRoleMap) -> ForeignAnalysis {
             roles.callback_arg_index,
             subject,
             &mut boundaries,
+            0,
         );
         escaped |= found.escaped;
         retention_sites.extend(found.sites);
@@ -354,6 +366,7 @@ struct ParamTrace {
 #[allow(clippy::too_many_arguments)]
 fn trace_param(
     module: &IrModule,
+    other_modules: &[IrModule],
     register: &Function,
     flow: &FunctionFlow<'_>,
     paths: &PathInfo,
@@ -361,6 +374,7 @@ fn trace_param(
     callback_arg_index: usize,
     subject: RetainedSubject,
     boundaries: &mut Vec<AnalysisBoundary>,
+    depth: usize,
 ) -> ParamTrace {
     let mut trace = ParamTrace {
         sites: Vec::new(),
@@ -407,12 +421,13 @@ fn trace_param(
                     }
                 }
                 // 指针被当成写入目标：改的是它指向的对象，不构成对指针本身的保留。
-                // `Cast` 的结果继承来源，会作为别名被重新检查。
+                // `Cast`/`Select` 的结果继承来源，会作为别名被重新检查。
                 // `Compare` 只是判空，不保留。
                 InstKind::Store { .. }
                 | InstKind::Load { .. }
                 | InstKind::Cast { .. }
-                | InstKind::Compare { .. } => {}
+                | InstKind::Compare { .. }
+                | InstKind::Select { .. } => {}
                 // 指针算术的结果**不继承来源**，因此不会作为别名被重新检查；把它当成
                 // 已跟踪会让「偏移之后再存起来」这条保留路径整条隐形。首期记缺证。
                 InstKind::Gep { .. } => {
@@ -442,6 +457,68 @@ fn trace_param(
                             .any(|arg| arg.as_local() == Some(alias.as_str()));
                     if handed_to_callback {
                         continue;
+                    }
+                    // 其余被调方可能把它存起来。若能在本构建的其他编译单元里
+                    // 解析到被调方定义，就跨函数追踪该实参（透传链是否最终 store
+                    // 到跨调用槽位）；解析不到才记缺证。深度上限 3：包装层越深，
+                    // 「这个符号确实把回调交给外部」的结论越弱。
+                    if depth < 3 {
+                        if let Some(callee_name) = callee.as_global() {
+                            // 定位被调方**所属的模块**：主模块或附加模块。跨模块函数
+                            // 的 FunctionFlow 必须用其所属模块构造（全局/槽位解析
+                            // 依赖模块上下文）。
+                            let found = module
+                                .function(callee_name)
+                                .map(|f| (module, f))
+                                .or_else(|| {
+                                    other_modules
+                                        .iter()
+                                        .find_map(|m| m.function(callee_name).map(|f| (m, f)))
+                                });
+                            if let Some((callee_module, callee_fn)) = found {
+                                let arg_pos = args
+                                    .iter()
+                                    .position(|arg| arg.as_local() == Some(alias.as_str()));
+                                if let Some(arg_pos) = arg_pos {
+                                    // 注入「实参由调用方持有」的形参：实参是
+                                    // caller-owned 的，被调方才能把它当跨调用槽位。
+                                    let caller_owned_args: Vec<usize> = args
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, arg)| flow.is_caller_owned(arg))
+                                        .map(|(i, _)| i)
+                                        .collect();
+                                    let callee_flow = FunctionFlow::new_with_caller_owned(
+                                        callee_module,
+                                        callee_fn,
+                                        &caller_owned_args,
+                                    );
+                                    let callee_paths = path_info(callee_fn);
+                                    if callee_paths.cfg_incomplete {
+                                        boundaries.push(AnalysisBoundary {
+                                            function: callee_fn.name.clone(),
+                                            reason: BoundaryReason::ControlFlowIncomplete,
+                                            instruction: None,
+                                        });
+                                    }
+                                    let inner = trace_param(
+                                        callee_module,
+                                        other_modules,
+                                        callee_fn,
+                                        &callee_flow,
+                                        &callee_paths,
+                                        arg_pos,
+                                        callback_arg_index,
+                                        subject,
+                                        boundaries,
+                                        depth + 1,
+                                    );
+                                    trace.sites.extend(inner.sites);
+                                    trace.escaped |= inner.escaped;
+                                    continue;
+                                }
+                            }
+                        }
                     }
                     // 其余被调方可能把它存起来，首期不做过程间传播。
                     trace.escaped = true;
