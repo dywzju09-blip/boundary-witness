@@ -6,7 +6,7 @@
 
 **执行顺序的权威是 [execution plan](execution-plan.md)**；本文只说现在在哪一步。
 
-**阶段 0–4 完成，5.0 完成，5.2 完成。** 研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系。当前进度：
+**阶段 0–4 完成，5.0–5.5 完成，阶段 6 核心验收大部分完成。** 研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系。当前进度：
 
 | 阶段 | 状态 |
 | --- | --- |
@@ -22,7 +22,9 @@
 | 5.3 反证生成器重写（D3） | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-3-witness-generator-rewrite-2026-08-10.md)） |
 | 5.4 ASan 执行 + 独立 oracle | ✅ **完成**（2026-08-10，vulnerable 0.26.1 ASan 出证 heap-use-after-free，见 [结果记录](../experiments/results/stage5-4-asan-oracle-2026-08-10.md)） |
 | 5.5 rusqlite 0.26.2 负对照 | ✅ **完成**（2026-08-10：fixed 编不过 + owned/unregister/no-trigger 三变体 ASan 干净，见 [结果记录](../experiments/results/stage5-5-fixed-negative-control-2026-08-10.md)） |
-| 阶段 6 Core Complete 验收 | ⬜ 进行中（fixture 全量重跑 ✓、负向测试 ✓、重复运行 5/5 ✓、waterfall ✓；剩 Gate A1 正式判据与 receipt） |
+| 阶段 6 多 nday 检出（RUSTSEC-2021-0128 家族） | ✅ **3 个已知 nday ASan 出证**（2026-08-12：update/commit/rollback hook 各 3/3 heap-use-after-free；0.26.2 fixed 全 E0425；owned/unregister/no-trigger 对照全干净，见 [结果记录](../experiments/results/stage6-multi-nday-rusqlite-2026-08-12.md)） |
+| 阶段 6 纪律 bug 修复（缺证当否定） | ✅ **2 个修复 + 变异验证**（2026-08-12：phi 无模型、is_caller_owned 漏 origins，均把错误 NoRetain 纠正为 Unresolved） |
+| 阶段 6 Core Complete 验收 | ⬜ 进行中（剩 **Gate A1 正式判据预注册**（判据提案已起草，待用户签核）与 **Gate B unseen 正例**；git2 packbuilder unseen 已走通静态链但 witness 编不过 = 负对照，见 §8） |
 | PG-1 扩展：owner-held 判据 | ✅ 完成（2026-08-10，`RegistrationGuard::OwnerHoldsCallback`，见 [记录](../experiments/results/pg1-owner-held-2026-08-10.md)） |
 | Gate P 工具：PP 批量驱动器 | ✅ 完成（2026-08-10，`tools/experiment/pp_scan.py`，盲化 Tier A-R/A-A 统计） |
 | Gate P 正式运行 | ⬜ 等维护者定样本框与预注册判据 |
