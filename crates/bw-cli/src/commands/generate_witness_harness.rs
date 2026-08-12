@@ -105,6 +105,15 @@ struct AdapterRegistration {
     callback_arg_index: u32,
     #[allow(dead_code)]
     accepts_none_to_clear: bool,
+    /// 注册方法里回调参数之前的**固定参数**（如 `create_scalar_function` 的
+    /// `fn_name, n_arg, flags`）。生成器按序拼在回调参数之前。
+    #[serde(default)]
+    prefix_args: Vec<String>,
+    /// 回调返回值的尾表达式（如 `Ok(5)`）。缺省时按现有逻辑（`()` 空、
+    /// `bool` → `true`）；其余返回类型必须由 adapter 显式给出，否则闭包体
+    /// 没有返回值、与签名不匹配，产物必然编不过（缺证路径，不算 harness bug）。
+    #[serde(default)]
+    callback_ret_tail: Option<String>,
 }
 
 /// `extract-rust-contracts` 的一行。只取生成需要的那部分。
@@ -233,12 +242,18 @@ fn render_main(
         .map(|ty| format!("_: {ty}"))
         .collect::<Vec<_>>()
         .join(", ");
-    // 回调返回类型：`bool` 需要尾表达式 `true`；`()`/缺省不需要；其余由调用方拒绝。
-    let ret_tail = match callback_ret {
-        "" | "()" => "",
-        "bool" => "\n        true",
-        _ => "",
-    };
+    // 回调返回类型：adapter 显式给出的尾表达式优先；`bool` 需要 `true`；
+    // `()`/缺省不需要；其余由调用方拒绝（缺证路径，产物编不过）。
+    let ret_tail = adapter
+        .registration
+        .callback_ret_tail
+        .as_deref()
+        .map(|tail| format!("\n        {tail}"))
+        .unwrap_or_else(|| match callback_ret {
+            "" | "()" => "".to_owned(),
+            "bool" => "\n        true".to_owned(),
+            _ => "".to_owned(),
+        });
     // 注册调用不写死 `?`：真实 API 的注册方法常返回 `()`（rusqlite 0.26.1 的
     // update_hook 即如此）。`let _ =` 对 `()` 与 `Result` 两种返回都成立。
     // 参数形状由 adapter 的 accepts_none_to_clear 决定：true → 传 `Some(callback)`
@@ -249,12 +264,28 @@ fn render_main(
     } else {
         "callback"
     };
-    let register = format!(
-        "let _ = {}.{}({register_arg});",
-        adapter.registration.receiver,
-        adapter.registration.method,
-        register_arg = register_arg,
-    );
+    let prefix = adapter
+        .registration
+        .prefix_args
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let register = if prefix.is_empty() {
+        format!(
+            "let _ = {}.{}({register_arg});",
+            adapter.registration.receiver,
+            adapter.registration.method,
+            register_arg = register_arg,
+        )
+    } else {
+        format!(
+            "let _ = {}.{}({}, {register_arg});",
+            adapter.registration.receiver,
+            adapter.registration.method,
+            prefix.join(", "),
+            register_arg = register_arg,
+        )
+    };
     let (invalidate_block, expected_compile) = match decision {
         InvalidateDecision::Generated => (
             format!(
@@ -449,11 +480,13 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
                 ),
             )
         })?;
-    if !matches!(callback_ret.as_str(), "" | "()" | "bool") {
+    if !matches!(callback_ret.as_str(), "" | "()" | "bool")
+        && adapter.registration.callback_ret_tail.is_none()
+    {
         return Err(CliError::input(
             "BW-ADAPTER",
             format!(
-                "回调返回类型 {callback_ret} 无法自动构造返回值（只支持 () 与 bool）"
+                "回调返回类型 {callback_ret} 无法自动构造返回值（只支持 () 与 bool；其余类型必须由 adapter 的 callback_ret_tail 显式给出）"
             ),
         ));
     }
@@ -644,6 +677,36 @@ rust = "drop(conn);"
         assert_eq!(params, Vec::<String>::new());
         assert_eq!(ret, "");
         assert!(parse_callback_signature("FnMut((").is_none());
+    }
+
+    #[test]
+    fn prefix_args_and_ret_tail_render_into_register_and_callback() {
+        // create_scalar_function 形状：固定参数在回调之前，回调返回 Result<T>。
+        let mut adapter = adapter();
+        adapter.registration.method = "create_scalar_function".to_owned();
+        adapter.registration.accepts_none_to_clear = false;
+        adapter.registration.prefix_args = vec![
+            "\"bw_witness_fn\"".to_owned(),
+            "0".to_owned(),
+            "rusqlite::functions::FunctionFlags::SQLITE_UTF8".to_owned(),
+        ];
+        adapter.registration.callback_ret_tail = Some("Ok(5)".to_owned());
+        let decision = InvalidateDecision::Generated;
+        let main_rs = render_main(
+            &adapter,
+            &decision,
+            &["&rusqlite::functions::Context<'_>".to_owned()],
+            "Result<i32>",
+            "witness_referent",
+        );
+        assert!(
+            main_rs.contains(
+                "conn.create_scalar_function(\"bw_witness_fn\", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, callback)"
+            ),
+            "prefix_args 必须拼在回调参数之前"
+        );
+        assert!(main_rs.contains("\n        Ok(5)"), "callback_ret_tail 必须作为闭包尾表达式");
+        assert!(main_rs.contains("drop(witness_referent);"));
     }
 
     #[test]

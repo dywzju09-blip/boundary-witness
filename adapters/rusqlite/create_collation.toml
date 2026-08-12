@@ -1,0 +1,37 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:rusqlite:create_collation"
+
+# 冻结记录。判定产出之后编写（开发对象，不构成 Gate B unseen 证据）。
+[freeze]
+frozen_at = "2026-08-13T10:30:00Z"
+frozen_at_commit = "dcc76e7"
+p3_verdict_available_at_freeze = true
+authored_from = "rusqlite 公开 API 文档与 sqlite3_create_collation_v2 公开 C 签名"
+
+[target]
+crate = "rusqlite"
+versions = ["0.26.1", "0.26.2"]
+features = ["bundled", "collation"]
+api_path = "rusqlite::Connection::create_collation"
+
+[[setup]]
+step = "open_connection"
+rust = "let conn = rusqlite::Connection::open_in_memory()?;"
+
+[registration]
+receiver = "conn"
+method = "create_collation"
+callback_signature = "Fn(&str, &str) -> std::cmp::Ordering"
+callback_arg_index = 1
+accepts_none_to_clear = false
+prefix_args = ["\"bw_witness_collation\""]
+callback_ret_tail = "std::cmp::Ordering::Equal"
+
+# 正常使用：带 COLLATE 的比较会调用 collation 回调。
+[trigger]
+step = "sort_with_collation"
+rust = "conn.execute_batch(\"CREATE TABLE t (a TEXT); INSERT INTO t VALUES (\\'x\\'), (\\'y\\');\")?;\nlet _ = conn.query_row(\"SELECT a COLLATE bw_witness_collation FROM t ORDER BY a COLLATE bw_witness_collation LIMIT 1\", [], |row| row.get::<_, String>(0))?;"
+
+[teardown]
+step = "drop_connection"
+rust = "drop(conn);"

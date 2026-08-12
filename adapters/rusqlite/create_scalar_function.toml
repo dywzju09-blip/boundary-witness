@@ -1,0 +1,45 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:rusqlite:create_scalar_function"
+
+# 冻结记录。本 adapter 在判定产出**之后**编写（时点如实记录）：create_scalar_function
+# 是开发对象（rusqlite），其验证结果不构成 Gate B 的 unseen 证据（stage6 §5 同类时点
+# 纪律）。adapter 只描述「如何合法调用公开 API」，不包含任何缺陷动作序列。
+[freeze]
+frozen_at = "2026-08-13T10:00:00Z"
+frozen_at_commit = "dcc76e7"
+p3_verdict_available_at_freeze = true
+authored_from = "rusqlite 公开 API 文档与 sqlite3_create_function_v2 公开 C 签名"
+
+[target]
+crate = "rusqlite"
+versions = ["0.26.1", "0.26.2"]
+features = ["bundled", "functions"]
+api_path = "rusqlite::Connection::create_scalar_function"
+
+# ---------------------------------------------------------------------------
+# 只描述「如何合法调用这个公开 API」。禁止：drop 时机、缺陷动作顺序、预期结果。
+# 危险动作序列由判定结果自动推导。
+# ---------------------------------------------------------------------------
+
+[[setup]]
+step = "open_connection"
+rust = "let conn = rusqlite::Connection::open_in_memory()?;"
+
+# 目标 API 本身怎么调。回调是最后一个参数；前面三个是固定参数。
+[registration]
+receiver = "conn"
+method = "create_scalar_function"
+callback_signature = "FnMut(&rusqlite::functions::Context<'_>) -> Result<i32>"
+callback_arg_index = 3
+accepts_none_to_clear = false
+prefix_args = ["\"bw_witness_fn\"", "0", "rusqlite::functions::FunctionFlags::SQLITE_UTF8"]
+callback_ret_tail = "Ok(5)"
+
+# 正常使用：SELECT 调用注册的 SQL 函数，SQLite 执行 xFunc 并回调。
+[trigger]
+step = "invoke_function"
+rust = "let _ = conn.query_row(\"SELECT bw_witness_fn()\", [], |row| row.get::<_, i32>(0))?;"
+
+[teardown]
+step = "drop_connection"
+rust = "drop(conn);"
