@@ -377,6 +377,27 @@ impl<'a> FunctionFlow<'a> {
     }
 
     /// 该 alloca 是否是被识别出的单赋值落栈位置。
+    /// SSA 名 → 定义它的指令（`result == name`）。
+    #[must_use]
+    pub fn def_of(&self, name: &str) -> Option<&'a Inst> {
+        self.insts
+            .iter()
+            .copied()
+            .find(|inst| inst.result.as_deref() == Some(name))
+    }
+
+    /// 存进该 alloca 的全部值（-O0 下形参/局部落栈的还原，多条路径可能多个值）。
+    #[must_use]
+    pub fn stored_values(&self, name: &str) -> Vec<&'a Operand> {
+        self.uses_of(name)
+            .into_iter()
+            .filter_map(|inst| match &inst.kind {
+                InstKind::Store { value, dest } if dest.as_local() == Some(name) => Some(value),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn is_spill(&self, name: &str) -> bool {
         self.spills.contains_key(name)
@@ -536,7 +557,7 @@ pub fn path_info(function: &Function) -> PathInfo {
                     }
                 }
             }
-            Some(InstKind::Return) => exits.push(index),
+            Some(InstKind::Return { .. }) => exits.push(index),
             Some(InstKind::Unreachable) => {}
             // 没有终结指令，或终结指令读不懂。
             _ => info.cfg_incomplete = true,

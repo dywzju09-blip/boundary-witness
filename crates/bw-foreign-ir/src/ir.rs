@@ -39,6 +39,9 @@ impl Operand {
     fn parse(segment: &str) -> Self {
         // 优先取最后一个 `%`/`@` token（形如 `i32 (i8*)** %3` 时取 %3）；
         // 退化到取最后一个 token（`null`、常量等）。
+        // **不适用于 `<类型> <值>` 且类型名以 `%` 开头、值不是 `%` token 的段**
+        // （如 `store %struct.FuncDef* null` 的值是 `null`，最后一个 `%` token 是
+        // 类型名）——那类段用 [`parse_trailing_value`]。
         let token = segment
             .split_whitespace()
             .rev()
@@ -123,8 +126,10 @@ pub enum InstKind {
     Branch {
         targets: Vec<String>,
     },
-    /// `ret`。CFG 的正常出口。
-    Return,
+    /// `ret`。CFG 的正常出口。携带返回值（`ret void` 为 `None`）。
+    Return {
+        value: Option<Operand>,
+    },
     /// `unreachable`。**不是正常出口**：经由它的路径不返回，因此不参与「所有路径」。
     Unreachable,
     /// 读取器不解释的非终结指令。结果寄存器来源未知。
@@ -164,7 +169,7 @@ impl Block {
             matches!(
                 inst.kind,
                 InstKind::Branch { .. }
-                    | InstKind::Return
+                    | InstKind::Return { .. }
                     | InstKind::Unreachable
                     | InstKind::UnsupportedTerminator
             )
@@ -468,7 +473,7 @@ fn parse_inst_kind(body: &str) -> InstKind {
         "getelementptr" => parse_gep(body),
         "call" | "tail" | "musttail" | "notail" => parse_call(body),
         "bitcast" | "addrspacecast" | "inttoptr" | "ptrtoint" => InstKind::Cast {
-            src: Operand::parse(split_top_level(body, ',').first().copied().unwrap_or("")),
+            src: Operand::parse(cast_src_segment(body)),
         },
         "select" => InstKind::Select {
             operands: split_top_level(body, ',')
@@ -492,7 +497,9 @@ fn parse_inst_kind(body: &str) -> InstKind {
         "br" | "switch" => InstKind::Branch {
             targets: parse_labels(body),
         },
-        "ret" => InstKind::Return,
+        "ret" => InstKind::Return {
+            value: parse_return_value(body),
+        },
         "unreachable" => InstKind::Unreachable,
         "indirectbr" | "invoke" | "callbr" | "resume" | "catchswitch" | "catchret"
         | "cleanupret" => InstKind::UnsupportedTerminator,
@@ -526,9 +533,17 @@ fn parse_store(body: &str) -> InstKind {
     };
     // 第一段还带着 `store` 这个 opcode，取值时无所谓——值仍是最后一个 token。
     InstKind::Store {
-        value: Operand::parse(first),
+        value: parse_trailing_value(first),
         dest: Operand::parse(second),
     }
+}
+
+/// 取段末尾的值 token（`store <type> <value>` / `ret <type> <value>` 形状：值恒在
+/// 最后）。不能复用 [`Operand::parse`]：`store %struct.FuncDef* null` 的最后一个
+/// `%` token 是类型名，而值 `null` 不是 `%` token。
+fn parse_trailing_value(segment: &str) -> Operand {
+    let token = segment.split_whitespace().next_back().unwrap_or("");
+    Operand::from_token(token)
 }
 
 /// `load <ty>, <ty>* <src>[, align N]`
@@ -644,6 +659,28 @@ fn parse_call(body: &str) -> InstKind {
 }
 
 /// 从 `br` / `switch` 里取全部 `label %X` 目标。
+/// `ret <type> <value>` 的返回值。`ret void` / 空体为 `None`。
+///
+/// IR 行可能带尾随元数据（`ret i8* %x, !dbg !1`）：只取第一个逗号之前的值段，
+/// 否则 `%x,` 会被解析成带逗号的伪名字。
+/// `cast <ty> <value> to <ty2>`：值在第一个 `to` 之前。不能把整段交给
+/// [`Operand::parse`]——目标类型可能含 `%`（`bitcast i8* %13 to %struct.CollSeq*`），
+/// 而 `parse` 优先取最后一个 `%` token，会把目标类型名当来源。
+fn cast_src_segment(body: &str) -> &str {
+    match body.find(" to ") {
+        Some(index) => &body[..index],
+        None => body,
+    }
+}
+
+fn parse_return_value(body: &str) -> Option<Operand> {
+    let head = body.split(',').next().unwrap_or("").trim();
+    if head.is_empty() || head == "void" {
+        return None;
+    }
+    Some(parse_trailing_value(head))
+}
+
 fn parse_labels(body: &str) -> Vec<String> {
     let mut targets = Vec::new();
     let mut tokens = body.split_whitespace();

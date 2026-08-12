@@ -248,3 +248,161 @@ define i32 @store_wrapper(i32 (i8*)* noundef %0) {
         "load 出的形参值传给被调方 store 到全局槽位：必须识别为保留"
     );
 }
+
+
+/// SQLite 形状：register 把 userdata / 回调存进「查找函数返回的堆对象」字段，
+/// 查找函数内部把该对象经容器插入（HashInsert）挂进 caller-owned 可达容器
+/// （db->aFunc 哈希表）→ 字段跨调用存活，MayRetain。
+#[test]
+fn store_to_heap_object_inserted_into_caller_container_is_may_retain() {
+    let register_ir = r#"
+%struct.sqlite3 = type { [80 x i8] }
+%struct.FuncDef = type { i32, i32 (i8*)*, i8* }
+define i32 @fixture_register(%struct.sqlite3* noundef %0, i32 (i8*)* noundef %1, i8* noundef %2) {
+  %4 = call %struct.FuncDef* @fixture_find(%struct.sqlite3* noundef %0)
+  %5 = getelementptr inbounds %struct.FuncDef, %struct.FuncDef* %4, i32 0, i32 2
+  store i8* %2, i8** %5, align 8
+  %6 = getelementptr inbounds %struct.FuncDef, %struct.FuncDef* %4, i32 0, i32 1
+  store i32 (i8*)* %1, i32 (i8*)** %6, align 8
+  ret i32 0
+}
+"#;
+    let find_ir = r#"
+%struct.sqlite3 = type { [80 x i8] }
+%struct.FuncDef = type { i32, i32 (i8*)*, i8* }
+%struct.Hash = type { i8* }
+declare i8* @fixture_malloc(i64)
+declare i8* @fixtureHashInsert(%struct.Hash*, i8*, i8*)
+define %struct.FuncDef* @fixture_find(%struct.sqlite3* noundef %0) {
+  %2 = alloca %struct.FuncDef*, align 8
+  %3 = call i8* @fixture_malloc(i64 24)
+  %4 = bitcast i8* %3 to %struct.FuncDef*
+  store %struct.FuncDef* %4, %struct.FuncDef** %2, align 8
+  %5 = load %struct.FuncDef*, %struct.FuncDef** %2, align 8
+  %6 = getelementptr inbounds %struct.sqlite3, %struct.sqlite3* %0, i32 0, i32 75
+  %7 = bitcast %struct.FuncDef* %5 to i8*
+  %8 = call i8* @fixtureHashInsert(%struct.Hash* %6, i8* null, i8* %7)
+  %9 = load %struct.FuncDef*, %struct.FuncDef** %2, align 8
+  ret %struct.FuncDef* %9
+}
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let other = IrModule::parse(find_ir).expect("find parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 1,
+        userdata_arg_index: Some(2),
+        clear_symbol: None,
+    };
+    let analysis = analyze_with_modules(&main_module, &roles, &[other]);
+    println!("retention: {:?}", analysis.retention);
+    println!("slots: {:?}", analysis.slots);
+    assert_eq!(
+        analysis.retention,
+        ForeignRetention::MayRetain,
+        "插入 caller-owned 可达容器的堆对象字段必须被判为保留"
+    );
+    assert!(
+        !analysis.slots.is_empty(),
+        "该形状必须产出槽位证据（消除 missing_slot_evidence 的基础）"
+    );
+}
+
+/// 负例：查找函数返回堆对象但**没有**容器插入（对象未挂进 caller-owned 可达容器）。
+/// 不能证明跨调用存活 → 不得判 MayRetain；同时不得判 NoRetain（缺证不是否定）。
+#[test]
+fn heap_object_without_container_insert_is_not_may_retain() {
+    let register_ir = r#"
+%struct.sqlite3 = type { [80 x i8] }
+%struct.FuncDef = type { i32, i32 (i8*)*, i8* }
+define i32 @fixture_register(%struct.sqlite3* noundef %0, i32 (i8*)* noundef %1, i8* noundef %2) {
+  %4 = call %struct.FuncDef* @fixture_new(%struct.sqlite3* noundef %0)
+  %5 = getelementptr inbounds %struct.FuncDef, %struct.FuncDef* %4, i32 0, i32 2
+  store i8* %2, i8** %5, align 8
+  ret i32 0
+}
+"#;
+    let find_ir = r#"
+%struct.sqlite3 = type { [80 x i8] }
+%struct.FuncDef = type { i32, i32 (i8*)*, i8* }
+declare i8* @fixture_malloc(i64)
+define %struct.FuncDef* @fixture_new(%struct.sqlite3* noundef %0) {
+  %2 = alloca %struct.FuncDef*, align 8
+  %3 = call i8* @fixture_malloc(i64 24)
+  %4 = bitcast i8* %3 to %struct.FuncDef*
+  store %struct.FuncDef* %4, %struct.FuncDef** %2, align 8
+  %5 = load %struct.FuncDef*, %struct.FuncDef** %2, align 8
+  ret %struct.FuncDef* %5
+}
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let other = IrModule::parse(find_ir).expect("find parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 1,
+        userdata_arg_index: Some(2),
+        clear_symbol: None,
+    };
+    let analysis = analyze_with_modules(&main_module, &roles, &[other]);
+    println!("retention: {:?}", analysis.retention);
+    assert_ne!(
+        analysis.retention,
+        ForeignRetention::MayRetain,
+        "没有容器插入证明时不得判保留"
+    );
+    assert_ne!(
+        analysis.retention,
+        ForeignRetention::NoRetain,
+        "缺证不是否定：不得判 NoRetain"
+    );
+}
+
+
+/// collation 形状：查找函数内部用 HashFind 从 caller-owned 可达容器**读取**已有
+/// 对象并返回（替换已有注册的路径）；register 把 userdata 存进返回对象的字段
+/// → 字段跨调用存活，MayRetain。
+#[test]
+fn store_to_heap_object_read_from_caller_container_is_may_retain() {
+    let register_ir = r#"
+%struct.sqlite3 = type { [80 x i8] }
+%struct.CollSeq = type { i32, i32 (i8*, i32, i8*, i32, i8*)*, i8* }
+define i32 @fixture_register(%struct.sqlite3* noundef %0, i32 (i8*, i32, i8*, i32, i8*)* noundef %1, i8* noundef %2) {
+  %4 = call %struct.CollSeq* @fixture_find(%struct.sqlite3* noundef %0)
+  %5 = getelementptr inbounds %struct.CollSeq, %struct.CollSeq* %4, i32 0, i32 2
+  store i8* %2, i8** %5, align 8
+  %6 = getelementptr inbounds %struct.CollSeq, %struct.CollSeq* %4, i32 0, i32 1
+  store i32 (i8*, i32, i8*, i32, i8*)* %1, i32 (i8*, i32, i8*, i32, i8*)** %6, align 8
+  ret i32 0
+}
+"#;
+    let find_ir = r#"
+%struct.sqlite3 = type { [80 x i8] }
+%struct.CollSeq = type { i32, i32 (i8*, i32, i8*, i32, i8*)*, i8* }
+%struct.Hash = type { i8* }
+declare i8* @fixtureHashFind(%struct.Hash*, i8*)
+define %struct.CollSeq* @fixture_find(%struct.sqlite3* noundef %0) {
+  %2 = alloca %struct.CollSeq*, align 8
+  %3 = getelementptr inbounds %struct.sqlite3, %struct.sqlite3* %0, i32 0, i32 76
+  %4 = call i8* @fixtureHashFind(%struct.Hash* %3, i8* null)
+  %5 = bitcast i8* %4 to %struct.CollSeq*
+  store %struct.CollSeq* %5, %struct.CollSeq** %2, align 8
+  %6 = load %struct.CollSeq*, %struct.CollSeq** %2, align 8
+  ret %struct.CollSeq* %6
+}
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let other = IrModule::parse(find_ir).expect("find parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_register".to_owned(),
+        callback_arg_index: 1,
+        userdata_arg_index: Some(2),
+        clear_symbol: None,
+    };
+    let analysis = analyze_with_modules(&main_module, &roles, &[other]);
+    println!("retention: {:?}", analysis.retention);
+    assert_eq!(
+        analysis.retention,
+        ForeignRetention::MayRetain,
+        "从 caller-owned 可达容器读取的堆对象字段必须被判为保留"
+    );
+}

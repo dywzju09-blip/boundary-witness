@@ -403,6 +403,25 @@ fn trace_param(
                                     .on_every_returning_path
                                     .contains(&inst.block),
                             });
+                        } else if store_target_reaches_caller_container(
+                            module,
+                            other_modules,
+                            flow,
+                            dest,
+                            depth,
+                        ) {
+                            // 槽位的基址是「从查找/创建函数返回、且被容器插入挂进
+                            // caller-owned 可达容器」的堆对象（SQLite 的 FuncDef →
+                            // db->aFunc 哈希表形状）。这类字段跨调用存活，构成保留。
+                            trace.sites.push(RetentionSite {
+                                subject,
+                                slot,
+                                function: register.name.clone(),
+                                instruction: inst.text.clone(),
+                                on_every_returning_path: paths
+                                    .on_every_returning_path
+                                    .contains(&inst.block),
+                            });
                         } else {
                             trace.escaped = true;
                             boundaries.push(boundary(
@@ -539,6 +558,321 @@ fn trace_param(
         }
     }
     trace
+}
+
+/// store 目标是否「堆对象上被容器插入挂进 caller-owned 可达容器」的字段。
+///
+/// SQLite 形状：`sqlite3CreateFunc` 把 pApp / xFunc 存进 `FuncDef` 字段，而
+/// `FuncDef` 由 `sqlite3FindFunction` 返回——该函数内部把返回对象经
+/// `sqlite3HashInsert` 挂进 `db->aFunc`（db 是 caller-owned 参数）。store 目标
+/// 基址链上最近的外部定义是那个查找函数的返回值，且该函数内部满足「返回值被
+/// 插入 caller-owned 可达容器」，即判定字段跨调用存活。证不出来按缺证处理
+/// （SlotNotProvenCallerOwned），不推断成「没保留」。
+fn store_target_reaches_caller_container<'a>(
+    module: &IrModule,
+    other_modules: &[IrModule],
+    flow: &FunctionFlow<'a>,
+    dest: &Operand,
+    depth: usize,
+) -> bool {
+    if depth >= 3 {
+        return false;
+    }
+    let Some((callee_name, caller_owned_args)) = source_call_of(flow, dest) else {
+        return false;
+    };
+    let Some((callee_module, callee_fn)) = module
+        .function(&callee_name)
+        .map(|f| (module, f))
+        .or_else(|| {
+            other_modules
+                .iter()
+                .find_map(|m| m.function(&callee_name).map(|f| (m, f)))
+        })
+    else {
+        return false;
+    };
+    let callee_flow =
+        FunctionFlow::new_with_caller_owned(callee_module, callee_fn, &caller_owned_args);
+    // 容器检查的嵌套深度独立计数（与「交出点包装深度」无关）：最多再穿 3 层
+    // 容器包装（sqlite3FindCollSeq → findCollSeqEntry → HashFind 就是 2 层）。
+    callee_returns_inserted_into_caller_container(
+        module,
+        other_modules,
+        callee_module,
+        callee_fn,
+        &callee_flow,
+        0,
+    )
+}
+
+/// 从指针沿 GEP base / load / cast / alloca 落栈链回溯，找「定义是外部调用返回值」
+/// 的那一跳。返回被调函数名与该调用的 caller-owned 实参下标。
+fn source_call_of<'a>(
+    flow: &FunctionFlow<'a>,
+    op: &Operand,
+) -> Option<(String, Vec<usize>)> {
+    let mut seen = BTreeSet::new();
+    let mut current = op;
+    loop {
+        let Operand::Local(name) = current else {
+            return None;
+        };
+        if !seen.insert(name.clone()) {
+            return None;
+        }
+        let def = flow.def_of(name)?;
+        match &def.kind {
+            InstKind::Call { callee, args } => {
+                let callee_name = callee.as_global()?.to_owned();
+                let owned: Vec<usize> = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, arg)| flow.is_caller_owned(arg))
+                    .map(|(i, _)| i)
+                    .collect();
+                return Some((callee_name, owned));
+            }
+            InstKind::Gep { base, .. } => current = base,
+            InstKind::Load { src } => current = src,
+            InstKind::Cast { src } => current = src,
+            InstKind::Alloca => {
+                // -O0 落栈：alloca 的 store 值可能是查找函数的返回值。
+                if let Some(stored) = first_object_stored(flow, name) {
+                    current = stored;
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// 被调函数是否「把返回值插入 caller-owned 可达容器」：函数内存在容器插入调用
+/// （符号名含 `hash` + `insert`），容器地址可达自 caller-owned 形参或全局，且
+/// 插入对象与函数返回值共享同一条 alloca trail（同一存储位置）。
+fn callee_returns_inserted_into_caller_container<'a>(
+    module: &IrModule,
+    other_modules: &[IrModule],
+    callee_module: &IrModule,
+    callee_fn: &Function,
+    callee_flow: &FunctionFlow<'a>,
+    depth: usize,
+) -> bool {
+    if depth >= 3 {
+        return false;
+    }
+    let mut obj_trail: Option<BTreeSet<String>> = None;
+    for inst in callee_flow.insts() {
+        let InstKind::Call { callee, args } = &inst.kind else {
+            continue;
+        };
+        let Some(callee_name) = callee.as_global() else {
+            continue;
+        };
+        let Some(container) = args.first() else {
+            continue;
+        };
+        if !container_reachable_from_caller_owned(callee_flow, container) {
+            continue;
+        }
+        if is_container_insert(callee_name) {
+            // 容器插入（sqlite3HashInsert）：对象参数 = 被挂进容器的对象。
+            let Some(obj) = args.get(2) else {
+                continue;
+            };
+            obj_trail = Some(operand_alloca_trail(callee_flow, obj));
+            break;
+        }
+        if is_container_find(callee_name) {
+            // 容器查找（sqlite3HashFind）：返回值 = 容器中已有的对象（替换路径）。
+            let Some(result) = inst.result.as_deref() else {
+                continue;
+            };
+            obj_trail = Some(operand_alloca_trail(
+                callee_flow,
+                &Operand::Local(result.to_owned()),
+            ));
+            break;
+        }
+    }
+    let Some(obj_trail) = obj_trail else {
+        // 本函数没有直接容器调用：返回值可能来自另一层包装（SQLite 的
+        // `sqlite3FindCollSeq` → `findCollSeqEntry` → `sqlite3HashFind`）。
+        // 沿 ret 值 trail 里的 call 标记对来源函数递归做容器检查。
+        return callee_flow
+            .insts()
+            .iter()
+            .filter_map(|inst| match &inst.kind {
+                InstKind::Return { value } => value.as_ref(),
+                _ => None,
+            })
+            .any(|ret_value| {
+                let ret_trail = operand_alloca_trail(callee_flow, ret_value);
+                ret_trail
+                    .iter()
+                    .filter_map(|mark| mark.strip_prefix("call:"))
+                    .any(|callee_name| {
+                        let Some((inner_module, inner_fn)) = callee_module
+                            .function(callee_name)
+                            .map(|f| (callee_module, f))
+                            .or_else(|| {
+                                other_modules
+                                    .iter()
+                                    .find_map(|m| m.function(callee_name).map(|f| (m, f)))
+                            })
+                        else {
+                            return false;
+                        };
+                        // 注入该调用点的 caller-owned 实参（-O0 落栈后仍可判）。
+                        let owned: Vec<usize> = callee_flow
+                            .insts()
+                            .iter()
+                            .filter_map(|inst| match &inst.kind {
+                                InstKind::Call { callee: c, args } if c.as_global().map(str::to_owned).as_deref() == Some(callee_name) => Some(args),
+                                _ => None,
+                            })
+                            .flat_map(|args| {
+                                args.iter()
+                                    .enumerate()
+                                    .filter(|(_, arg)| callee_flow.is_caller_owned(arg))
+                                    .map(|(i, _)| i)
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect();
+                        let inner_flow = FunctionFlow::new_with_caller_owned(
+                            inner_module,
+                            inner_fn,
+                            &owned,
+                        );
+                        callee_returns_inserted_into_caller_container(
+                            module,
+                            other_modules,
+                            inner_module,
+                            inner_fn,
+                            &inner_flow,
+                            depth + 1,
+                        )
+                    })
+            });
+    };
+    callee_flow
+        .insts()
+        .iter()
+        .filter_map(|inst| match &inst.kind {
+            InstKind::Return { value } => value.as_ref(),
+            _ => None,
+        })
+        .any(|ret_value| {
+            let ret_trail = operand_alloca_trail(callee_flow, ret_value);
+            !ret_trail.is_disjoint(&obj_trail)
+        })
+}
+
+/// 容器插入识别：符号名同时含 `hash` 与 `insert`（sqlite3HashInsert 形状）。
+/// 语义只在 IR 验证过才成立——容器可达性与同源检查是硬条件，符号名只是候选入口。
+fn is_container_insert(callee_name: &str) -> bool {
+    let lower = callee_name.to_ascii_lowercase();
+    lower.contains("hash") && lower.contains("insert")
+}
+
+/// 容器查找识别：符号名同时含 `hash` 与 `find`（sqlite3HashFind 形状）。
+/// 查找返回的是容器中已有对象——对「替换已有注册」路径是跨调用存活证据。
+fn is_container_find(callee_name: &str) -> bool {
+    let lower = callee_name.to_ascii_lowercase();
+    lower.contains("hash") && lower.contains("find")
+}
+
+/// 容器指针是否可达自 caller-owned 形参或模块全局。
+fn container_reachable_from_caller_owned<'a>(
+    flow: &FunctionFlow<'a>,
+    container: &Operand,
+) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut current = container;
+    loop {
+        if flow.is_caller_owned(current) {
+            return true;
+        }
+        let Operand::Local(name) = current else {
+            return false;
+        };
+        if !seen.insert(name.clone()) {
+            return false;
+        }
+        let Some(def) = flow.def_of(name) else {
+            return false;
+        };
+        match &def.kind {
+            InstKind::Gep { base, .. } | InstKind::Cast { src: base } | InstKind::Load { src: base } => {
+                current = base;
+            }
+            InstKind::Alloca => {
+                if let Some(stored) = first_object_stored(flow, name) {
+                    current = stored;
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// alloca 的全部 store 值里，跳过字面量（`null` 初始化、常量）后取第一个指向
+/// 对象的值。`-O0` 下返回槽常被先初始化为 `null` 再在成功路径写入真实值。
+fn first_object_stored<'a>(flow: &FunctionFlow<'a>, name: &str) -> Option<&'a Operand> {
+    flow.stored_values(name)
+        .into_iter()
+        .find(|value| matches!(value, Operand::Local(_) | Operand::Global(_)))
+}
+
+/// 操作数沿 load / cast / gep / alloca 落栈链经过的全部 alloca 名。
+/// 同一条链上的值共享存储位置；两条链交集非空即「可能指向同一对象」。
+fn operand_alloca_trail<'a>(flow: &FunctionFlow<'a>, op: &Operand) -> BTreeSet<String> {
+    let mut trail = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut current = op;
+    loop {
+        let Operand::Local(name) = current else {
+            return trail;
+        };
+        if !seen.insert(name.clone()) {
+            return trail;
+        }
+        let Some(def) = flow.def_of(name) else {
+            return trail;
+        };
+        match &def.kind {
+            InstKind::Load { src } | InstKind::Cast { src } => current = src,
+            InstKind::Gep { base, .. } => current = base,
+            InstKind::Alloca => {
+                trail.insert(name.clone());
+                let all = flow.stored_values(name);
+                let stored = first_object_stored(flow, name);
+                if let Some(stored) = stored {
+                    current = stored;
+                } else {
+                    return trail;
+                }
+            }
+            InstKind::Call { callee, .. } => {
+                // 函数返回值是对象链的终点：以被调函数名为标记加入 trail。
+                // 容器查找（HashFind）的返回值与 ret 值都经过同一个调用时，
+                // 两条链靠这个标记相交。
+                trail.insert(format!(
+                    "call:{}",
+                    callee
+                        .as_global()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| name.clone())
+                ));
+                return trail;
+            }
+            _ => return trail,
+        }
+    }
 }
 
 /// Q4′：清槽入口对 Q1 找到的每一个槽位做了什么。
