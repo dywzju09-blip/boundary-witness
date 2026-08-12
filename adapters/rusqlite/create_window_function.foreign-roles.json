@@ -1,0 +1,16 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "窗口函数路径：无 xFunc，xStep 是参数 5（0-based），xFinal 6、xValue 7、xInverse 8。",
+    "本 role map 以 xStep 为代表回调；xFinal/xValue/xInverse 同族。",
+    "clear_symbol 就是注册符号本身。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "sqlite3_create_window_function",
+      "callback_arg_index": 5,
+      "userdata_arg_index": 4,
+      "clear_symbol": "sqlite3_create_window_function"
+    }
+  ]
+}

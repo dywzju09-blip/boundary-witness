@@ -1,0 +1,16 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "聚合函数路径：xFunc 传 None，真正的回调是 xStep（参数 6，0-based）与 xFinal（参数 7）。",
+    "本 role map 以 xStep 为代表回调（SQLite 每行调用）；xFinal 同族。",
+    "clear_symbol 就是注册符号本身：再调一次并传 NULL 即解除注册。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "sqlite3_create_function_v2",
+      "callback_arg_index": 6,
+      "userdata_arg_index": 4,
+      "clear_symbol": "sqlite3_create_function_v2"
+    }
+  ]
+}

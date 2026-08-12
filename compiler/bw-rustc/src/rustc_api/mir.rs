@@ -21610,6 +21610,10 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
             // 函数指针的 cast。
             if callback_arg_index.is_none()
                 && (ty_carries_fn_pointer(ty) || is_fn_pointer_cast(tcx, body, &arg.node))
+                // `None` 不是回调：create_aggregate_function 的 xFunc 传 `None`，
+                // 真正的回调在 xStep/xFinal。空聚合（`Option::None` 无字段 variant）
+                // 不构成回调身份——按它 join 会把 xFunc 的空槽当成回调。
+                && !arg_is_none_option(body, &arg.node)
             {
                 callback_arg_index = Some(index);
             }
@@ -21833,6 +21837,24 @@ fn assign_rvalue_of<'tcx>(body: &'tcx Body<'tcx>, local: Local) -> Option<&'tcx 
         }
     }
     None
+}
+
+/// 实参是否为 `Option::None` 构造（空聚合，无字段 variant）。
+///
+/// 注册 C API 常把「无回调」表达成 `None`（create_aggregate_function 的
+/// xFunc 就是 `None`）。空聚合不是回调：跳过它，callback 身份才能落到
+/// 真正的回调参数（xStep/xFinal）上。
+fn arg_is_none_option<'tcx>(body: &'tcx Body<'tcx>, arg: &Operand<'tcx>) -> bool {
+    let (Operand::Copy(place) | Operand::Move(place)) = arg else {
+        return false;
+    };
+    let Some(local) = place.as_local() else {
+        return false;
+    };
+    matches!(
+        assign_rvalue_of(body, local),
+        Some(Rvalue::Aggregate(_, operands)) if operands.is_empty()
+    )
 }
 
 /// 实参是否是「函数指针 cast 成裸指针」（curl 选项式 setopt 形状）。
@@ -22609,6 +22631,12 @@ fn hir_bound_is_callable_trait(bound: &hir::GenericBound<'_>) -> bool {
                 segment.ident.name.as_str(),
                 "Fn" | "FnMut" | "FnOnce" | "AsyncFn" | "AsyncFnMut" | "AsyncFnOnce"
             )
+                // rusqlite 的 aggregate 回调 trait：`D: Aggregate<A, T>` /
+                // `W: WindowAggregate<A, T>`。外部经 xStep/xFinal/xValue/xInverse
+                // trampoline 调用其方法——语义上是回调，只是不是 Fn 家族。
+                // （rusqlite 特定形状，Gate C0 会暴露其他库的同类回调 trait。）
+                || segment.ident.name.as_str() == "Aggregate"
+                || segment.ident.name.as_str() == "WindowAggregate"
         })
 }
 
