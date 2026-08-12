@@ -37,6 +37,10 @@ unsafe extern "C" {
         callback: Option<unsafe extern "C" fn(*mut c_void)>,
         user_data: *mut c_void,
     );
+    fn fixture_register_ud_ptr_before(
+        user_data: *mut c_void,
+        callback: Option<unsafe extern "C" fn(*mut c_void)>,
+    );
 }
 
 /// handle 在 callback 前：userdata 必须是 callback 后的第一个裸指针（ud=2），
@@ -55,7 +59,9 @@ where
     };
 }
 
-/// userdata 在 callback 前：缺证不猜，ud=None。
+/// userdata 在 callback 前，且是**回调闭包的分配**（`Box::into_raw(Box::new(cb))`）：
+/// 判 ud=0。这是 `sqlite3_create_function_v2(db, name, n, flags, pApp, xFunc, ..)`
+/// 的形状——pApp 就是回调闭包本身。
 pub fn register_ud_first<F>(callback: F)
 where
     F: FnMut(*mut c_void),
@@ -63,6 +69,17 @@ where
     let boxed = Box::into_raw(Box::new(callback));
     unsafe {
         fixture_register_ud_first(boxed.cast::<c_void>(), Some(trampoline::<F>));
+    }
+}
+
+/// userdata 在 callback 前，但是**任意裸指针**（不是闭包分配）：来源链没有
+/// `Box::into_raw`，不得猜成 userdata，ud=None（缺证，不猜）。
+pub fn register_ud_ptr_before<F>(callback: F, context: *mut c_void)
+where
+    F: FnMut(*mut c_void),
+{
+    unsafe {
+        fixture_register_ud_ptr_before(context, Some(trampoline::<F>));
     }
 }
 

@@ -14,7 +14,7 @@ use super::rustc_middle::mir::{
     Rvalue, StatementKind, Terminator, TerminatorKind, visit::Visitor,
 };
 use super::rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor};
-use super::rustc_span::{FileName, RemapPathScopeComponents, Span};
+use super::rustc_span::{FileName, RemapPathScopeComponents, Span, Spanned};
 use bw_model::{
     AllocationOwnership, AtomicOperationKind, AtomicOrderingKind, CallbackLifetimeBoundScope,
     ForeignSymbolResolution, SafeEntryLineage, UnresolvedReason,
@@ -21626,7 +21626,14 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
             .enumerate()
             .skip(callback_arg_index as usize + 1)
             .find(|(_, arg)| arg.node.ty(&body.local_decls, tcx).is_raw_ptr())
-            .map(|(index, _)| index as u32);
+            .map(|(index, _)| index as u32)
+            // userdata 在 callback **之前**的 C API（sqlite3_create_function_v2 的
+            // pApp、sqlite3_create_collation_v2 的 pArg）：回调闭包的分配被
+            // `Box::into_raw(Box::new(closure)) as *mut c_void` 作为 userdata 交出，
+            // 位置在 callback 前，落不进上面那条规则。不能改用「第一个裸指针」——
+            // 那会把 handle（sqlite3* 之类）误认成 userdata。只认来源链是闭包
+            // box + into_raw 的参数；识别不出来保持 None（缺证，不猜）。
+            .or_else(|| userdata_from_closure_allocation(tcx, body, args, callback_arg_index));
         // `symbol_name` 是链接符号的权威来源，`#[link_name]` 由它自己处理。直接读属性
         // 会随 rustc 内部结构变动而失效，而且属性形式不止一种。
         let symbol = tcx
@@ -21648,6 +21655,184 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
         });
     }
     calls
+}
+
+/// userdata 参数在 callback **之前**的 C API：userdata 实参的来源链是
+/// `Box::into_raw(Box::new(closure_param)) as *mut c_void`——回调闭包的分配本身。
+///
+/// 逐参数检查 callback 之前的裸指针实参，沿 MIR 定义链回溯：`Use`/`Cast` 透传；
+/// `Box::into_raw`/`Arc::into_raw` 调用时进一步回溯被 box 的实参，若最终落到当前
+/// 函数的形参（被 `Box::new` 的闭包），认定该参数携带回调分配、就是 userdata。
+/// 找不到返回 `None`（缺证，不猜）。
+fn userdata_from_closure_allocation<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &'tcx Body<'tcx>,
+    args: &[Spanned<Operand<'tcx>>],
+    callback_arg_index: u32,
+) -> Option<u32> {
+    for (index, arg) in args.iter().enumerate().take(callback_arg_index as usize) {
+        if !arg.node.ty(&body.local_decls, tcx).is_raw_ptr() {
+            continue;
+        }
+        let (Operand::Copy(place) | Operand::Move(place)) = &arg.node else {
+            continue;
+        };
+        let Some(local) = place.as_local() else {
+            continue;
+        };
+        if closure_box_into_raw_origin(tcx, body, local).is_some() {
+            return Some(index as u32);
+        }
+    }
+    None
+}
+
+/// 沿 MIR 定义链回溯 `local`：`Use`/`Cast` 透传；`Box::into_raw` 调用时继续回溯其
+/// 被 box 实参，最终落到当前函数形参则返回该形参（被 `Box::new` 的闭包）。
+fn closure_box_into_raw_origin<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &'tcx Body<'tcx>,
+    mut local: Local,
+) -> Option<Local> {
+    let mut seen: HashSet<Local> = HashSet::new();
+    loop {
+        if !seen.insert(local) {
+            return None;
+        }
+        // Terminator 的 Call 也产生值（`Box::new` / `Box::into_raw` / `ptr::cast`）。
+        if let Some((func, args)) = terminator_call_of(body, local) {
+            let (callee_def_id, _) = func.const_fn_def()?;
+            let def_path = tcx.def_path_str(callee_def_id);
+            if raw_pointer_transfer_kind(&def_path) == Some(RawPointerTransferKind::IntoRaw) {
+                let (Operand::Copy(boxed_place) | Operand::Move(boxed_place)) = &args[0].node
+                else {
+                    return None;
+                };
+                return box_new_origin(tcx, body, boxed_place.as_local()?);
+            }
+            if is_ptr_cast_method(&def_path) {
+                // `ptr::cast` / `cast_mut` / `cast_const`（`.cast::<T>()` 方法调用）：
+                // 透传被 cast 的指针，继续回溯。
+                let (Operand::Copy(place) | Operand::Move(place)) = &args[0].node else {
+                    return None;
+                };
+                local = place.as_local()?;
+                continue;
+            }
+            return None;
+        }
+        let Some(rvalue) = assign_rvalue_of(body, local) else {
+            eprintln!("[ud-debug] closure_origin: no assign for local={local:?}");
+            return None;
+        };
+        match rvalue {
+            Rvalue::Use(operand, _) | Rvalue::Cast(_, operand, _) => {
+                let (Operand::Copy(place) | Operand::Move(place)) = operand else {
+                return None;
+            };
+            local = place.as_local()?;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// 回溯 `Box::new(x)` / `box x` 的实参，返回被 box 的当前函数形参。
+fn box_new_origin<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &'tcx Body<'tcx>,
+    mut local: Local,
+) -> Option<Local> {
+    let mut seen: HashSet<Local> = HashSet::new();
+    loop {
+        if !seen.insert(local) {
+            return None;
+        }
+        if let Some((func, args)) = terminator_call_of(body, local) {
+            let (callee_def_id, _) = func.const_fn_def()?;
+            let def_path = tcx.def_path_str(callee_def_id);
+            if !(def_path.contains("boxed::Box") && def_path.ends_with("::new")) {
+                return None;
+            }
+            let (Operand::Copy(place) | Operand::Move(place)) = &args[0].node else {
+                return None;
+            };
+            local = place.as_local()?;
+            // `_0` 是返回槽，形参从 `_1` 开始：`1 <= index <= arg_count`。
+            if is_arg_local(local, body.arg_count) {
+                return Some(local);
+            }
+            continue;
+        }
+        let Some(rvalue) = assign_rvalue_of(body, local) else {
+            return None;
+        };
+        match rvalue {
+            Rvalue::Use(operand, _) | Rvalue::Cast(_, operand, _) => {
+                let (Operand::Copy(place) | Operand::Move(place)) = operand else {
+                    return None;
+                };
+                local = place.as_local()?;
+            }
+            Rvalue::Aggregate(_, operands) => {
+                // `box x` 语法 desugar 成 Aggregate(Box, [x])。
+                let (Operand::Copy(place) | Operand::Move(place)) = operands.raw.first()? else {
+                    return None;
+                };
+                let origin = place.as_local()?;
+                return is_arg_local(origin, body.arg_count).then_some(origin);
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// `local` 的 terminator Call 定义（`destination == local`）。
+fn terminator_call_of<'tcx>(
+    body: &'tcx Body<'tcx>,
+    local: Local,
+) -> Option<(&'tcx Operand<'tcx>, &'tcx [Spanned<Operand<'tcx>>])> {
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind else {
+            continue;
+        };
+        if destination.as_local() == Some(local) {
+            return Some((func, args));
+        }
+    }
+    None
+}
+
+/// `local` 是否当前函数的形参：`_0` 是返回槽，形参从 `_1` 开始。
+fn is_arg_local(local: Local, arg_count: usize) -> bool {
+    local.index() > 0 && local.index() <= arg_count
+}
+
+/// `ptr::cast` / `ptr::cast_mut` / `ptr::cast_const`（`.cast::<T>()` 方法调用）。
+fn is_ptr_cast_method(def_path: &str) -> bool {
+    def_path.contains("::ptr::")
+        && (def_path.ends_with("::cast")
+            || def_path.ends_with("::cast_mut")
+            || def_path.ends_with("::cast_const"))
+}
+
+/// 找 `local` 的赋值语句（`Assign(place, rvalue)` 且 `place.local == local`）。
+fn assign_rvalue_of<'tcx>(body: &'tcx Body<'tcx>, local: Local) -> Option<&'tcx Rvalue<'tcx>> {
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                continue;
+            };
+            let (place, rvalue) = &**assignment;
+            if place.local == local {
+                return Some(rvalue);
+            }
+        }
+    }
+    None
 }
 
 /// 实参是否是「函数指针 cast 成裸指针」（curl 选项式 setopt 形状）。

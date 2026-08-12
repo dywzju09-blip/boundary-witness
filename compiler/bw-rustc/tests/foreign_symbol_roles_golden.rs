@@ -42,11 +42,21 @@ fn userdata_role_follows_callback_parameter() {
     assert_eq!(with_handle.callback_arg_index, Some(1));
     assert_eq!(with_handle.userdata_arg_index, Some(2));
 
-    // userdata 在 callback 前：缺证不猜，ud=None。
+    // userdata 在 callback 前且是回调闭包分配（`Box::into_raw(Box::new(cb))`）：
+    // 判 ud=0（sqlite3_create_function_v2 的 pApp 形状）。
     let ud_first = &bindings["register_ud_first::F"];
     assert_eq!(ud_first.symbol.as_deref(), Some("fixture_register_ud_first"));
     assert_eq!(ud_first.callback_arg_index, Some(1));
-    assert_eq!(ud_first.userdata_arg_index, None);
+    assert_eq!(ud_first.userdata_arg_index, Some(0));
+
+    // userdata 在 callback 前但是**任意裸指针**（非闭包分配）：缺证不猜，ud=None。
+    let ud_ptr_before = &bindings["register_ud_ptr_before::F"];
+    assert_eq!(
+        ud_ptr_before.symbol.as_deref(),
+        Some("fixture_register_ud_ptr_before")
+    );
+    assert_eq!(ud_ptr_before.callback_arg_index, Some(1));
+    assert_eq!(ud_ptr_before.userdata_arg_index, None);
 
     // 原始形状：cb=0、ud=1，不得因新规则回归。
     let plain = &bindings["register_plain::F"];
