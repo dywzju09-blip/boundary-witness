@@ -127,6 +127,18 @@ struct AdapterRegistration {
     /// trait 回调：输出类型名（`Aggregate<A, T>` 的 `T`）。
     #[serde(default)]
     output_type: String,
+    /// 回调参数以**可变借用**传递（`with_hide_callback(&'cb mut C)` 形状）：
+    /// 生成器构造 `let mut callback = ...` 并传 `&mut callback`。
+    #[serde(default)]
+    callback_by_ref: bool,
+    /// 注册方法**消费 receiver 并返回 guard 类型**（`self` 方法，返回
+    /// `RevwalkWithHideCb<'cb>`）：生成器持有返回值，且——
+    /// - `guard_removal_method` 存在时，在 invalidate 里调用它（`into_inner` 形状：
+    ///   返回不含 guard lifetime 的类型，解除类型层借用绑定）后 drop referent；
+    /// - 无拆除方法时，guard 的类型层绑定使 drop(referent) 被借用检查拒绝
+    ///   （负对照行为）。
+    #[serde(default)]
+    guard_removal_method: Option<String>,
 }
 
 /// `extract-rust-contracts` 的一行。只取生成需要的那部分。
@@ -187,6 +199,12 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
     match contract.capture_admission {
         EffectiveCaptureAdmission::PermitsNonStaticCapture => match contract.guard {
             RegistrationGuard::None => InvalidateDecision::Generated,
+            // guard=Unresolved 是**缺证**，不是「guard 绑定」：guard 有效性由外部侧
+            // Q4′ 回答（thesis §2.6）。生成 invalidate 并让编译裁决——guard 真绑定
+            // 时 drop(referent) 被借用检查拒绝（负对照行为），guard 是假的（如
+            // git2 into_inner 拆除 + Drop 不注销）时编过 → 候选。不因缺证假设分离
+            // 不可构造。
+            RegistrationGuard::Unresolved => InvalidateDecision::Generated,
             // owner-held：闭包存 receiver 字段随 owner drop，referent 分离不可构造。
             RegistrationGuard::OwnerHoldsCallback => InvalidateDecision::Refused {
                 reason: "owner_holds_callback: 回调分配由 receiver 字段持有到 owner drop，                分离不可构造".to_owned(),
@@ -269,13 +287,14 @@ fn render_main(
         });
     // 注册调用不写死 `?`：真实 API 的注册方法常返回 `()`（rusqlite 0.26.1 的
     // update_hook 即如此）。`let _ =` 对 `()` 与 `Result` 两种返回都成立。
-    // 参数形状由 adapter 的 accepts_none_to_clear 决定：true → 传 `Some(callback)`
-    // （rusqlite 形状），false → 直接传 `callback`（git2 的
-    // set_progress_callback 形状）。
+    // 参数形状：accepts_none_to_clear → `Some(callback)`；callback_by_ref →
+    // `&mut callback`（with_hide_callback 形状）；否则直接传 `callback`。
     let register_arg = if adapter.registration.accepts_none_to_clear {
-        "Some(callback)"
+        "Some(callback)".to_owned()
+    } else if adapter.registration.callback_by_ref {
+        "&mut callback".to_owned()
     } else {
-        "callback"
+        "callback".to_owned()
     };
     let prefix = adapter
         .registration
@@ -283,21 +302,30 @@ fn render_main(
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    let register = if prefix.is_empty() {
+    let call = if prefix.is_empty() {
         format!(
-            "let _ = {}.{}({register_arg});",
+            "{}.{}({register_arg})",
             adapter.registration.receiver,
             adapter.registration.method,
             register_arg = register_arg,
         )
     } else {
         format!(
-            "let _ = {}.{}({}, {register_arg});",
+            "{}.{}({}, {register_arg})",
             adapter.registration.receiver,
             adapter.registration.method,
             prefix.join(", "),
             register_arg = register_arg,
         )
+    };
+    // guard 形状（guard_removal_method 存在）：注册消费 receiver 并返回 guard
+    // （`with_hide_callback(&mut cb) -> Result<RevwalkWithHideCb>`），生成器持有
+    // 返回值，invalidate 里先拆除 guard 再 drop referent。`?` 要求返回 Result。
+    let register = if let Some(removal) = &adapter.registration.guard_removal_method {
+        let _ = removal;
+        format!("let mut bw_guard = {call}?;")
+    } else {
+        format!("let _ = {call};")
     };
     let (invalidate_block, expected_compile) = match decision {
         InvalidateDecision::Generated => (
@@ -482,20 +510,34 @@ fn render_callback_block(
         } else {
             String::new()
         };
+        // guard 拆除：invalidate 先拆 guard（解除类型层借用绑定，如 into_inner）
+        // 再 drop referent；Refused 时只保留注册行（回调引用未声明的 referent →
+        // 编不过，负对照行为）。
+        let guard_removal_line = if declare_referent {
+            adapter
+                .registration
+                .guard_removal_method
+                .as_ref()
+                .map(|removal| format!("    let mut bw_guard = bw_guard.{removal}()?;\n"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         format!(
             r#"    // {header}
     // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的
     // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。
-{referent_decl}    let callback = |{params}| {{
+{referent_decl}    let mut callback = |{params}| {{
         let _ = {referent}.len();{ret_tail}
     }};
     {register}
-{drop_line}"#,
+{guard_removal_line}{drop_line}"#,
             header = header,
             referent = referent,
             params = params,
             ret_tail = ret_tail,
             register = register,
+            guard_removal_line = guard_removal_line,
             referent_decl = referent_decl,
             drop_line = drop_line,
         )
@@ -932,6 +974,55 @@ rust = "drop(conn);"
         assert!(!main_rs.contains("let witness_referent ="));
         assert!(!main_rs.contains("drop(witness_referent);"));
         assert!(main_rs.contains("self.referent.len()"));
+    }
+
+    #[test]
+    fn guard_removal_renders_register_and_into_inner() {
+        // git2 with_hide_callback 形状：回调 &mut 引用 + guard 拆除（into_inner）。
+        let mut adapter = adapter();
+        adapter.registration.receiver = "revwalk".to_owned();
+        adapter.registration.method = "with_hide_callback".to_owned();
+        adapter.registration.accepts_none_to_clear = false;
+        adapter.registration.callback_by_ref = true;
+        adapter.registration.guard_removal_method = Some("into_inner".to_owned());
+        let decision = InvalidateDecision::Generated;
+        let main_rs = render_main(
+            &adapter,
+            &decision,
+            &["git2::Oid".to_owned()],
+            "bool",
+            "witness_referent",
+        );
+        assert!(main_rs.contains("let mut callback = |_: git2::Oid|"));
+        assert!(main_rs.contains("revwalk.with_hide_callback(&mut callback)"));
+        assert!(main_rs.contains("let mut bw_guard = revwalk.with_hide_callback(&mut callback)?;"));
+        assert!(main_rs.contains("let mut bw_guard = bw_guard.into_inner()?;"));
+        // drop 必须在拆除之后（guard 的借用链先解除）。
+        let drop_pos = main_rs.find("drop(witness_referent);").expect("drop");
+        let removal_pos = main_rs
+            .find("bw_guard.into_inner()?")
+            .expect("into_inner");
+        assert!(drop_pos > removal_pos, "guard 拆除必须先于 referent 失效");
+    }
+
+    #[test]
+    fn guard_removal_refused_keeps_negative_control() {
+        // fixed 版（requires_static_capture）：invalidate refused，不生成 referent
+        // 声明 → 回调引用未定义标识符 → 编不过（负对照行为）。
+        let mut adapter = adapter();
+        adapter.registration.receiver = "revwalk".to_owned();
+        adapter.registration.method = "with_hide_callback".to_owned();
+        adapter.registration.accepts_none_to_clear = false;
+        adapter.registration.callback_by_ref = true;
+        adapter.registration.guard_removal_method = Some("into_inner".to_owned());
+        let decision = InvalidateDecision::Refused {
+            reason: "requires_static_capture".to_owned(),
+        };
+        let main_rs = render_main(&adapter, &decision, &[], "bool", "witness_referent");
+        assert!(!main_rs.contains("let witness_referent ="));
+        assert!(!main_rs.contains("drop(witness_referent);"));
+        // 回调仍引用未声明的 referent，编不过（负对照行为）。
+        assert!(main_rs.contains("witness_referent.len()"));
     }
 
     #[test]

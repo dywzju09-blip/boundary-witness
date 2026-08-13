@@ -21208,7 +21208,20 @@ fn registration_guards<'tcx>(
 
     callback_params
         .into_iter()
-        .map(|(callback_param, bound_lifetimes)| {
+        .map(|(callback_param, mut bound_lifetimes)| {
+            // 回调的 lifetime 约束不只在 where 谓词里（`F: ... + 'c`），也可能在**参数
+            // 类型**上（git2 `with_hide_callback(&'cb mut C)`——'cb 是 `&'cb mut C`
+            // 的引用 lifetime，不在 C 的 bound 里）。guard 判据必须看到它，否则
+            // `Result<RevwalkWithHideCb<'cb>>` 与 `&'cb mut C` 的绑定关系被漏判成
+            // `guard_bound_lifetime_absent`（Unresolved），把真实的 guard 形状当缺证。
+            if let Some(fn_decl) = node.fn_decl() {
+                for param_ty in fn_decl.inputs.iter() {
+                    if ty_references_type_param(tcx, param_ty, &callback_param) {
+                        collect_hir_lifetime_params_from_ty(param_ty, &mut bound_lifetimes);
+                    }
+                }
+                bound_lifetimes.retain(|index| declared_lifetimes.contains(index));
+            }
             let ties_to_callback_bound = bound_lifetimes
                 .iter()
                 .any(|index| return_lifetimes.contains(index));
@@ -22685,6 +22698,106 @@ fn declared_lifetime_params_with_impl(
         }
     }
     set
+}
+
+/// HIR 类型树里是否引用指定**泛型参数名**（`C`、`F` 等）。用于把「参数类型上
+/// 携带的 lifetime」归到对应回调参数上（`&'cb mut C` 的 `'cb`）。
+fn ty_references_type_param<A>(
+    tcx: TyCtxt<'_>,
+    ty: &hir::Ty<'_, A>,
+    param_name: &str,
+) -> bool {
+    match &ty.kind {
+        hir::TyKind::Slice(inner) | hir::TyKind::Array(inner, _) => {
+            ty_references_type_param(tcx, inner, param_name)
+        }
+        hir::TyKind::Ptr(mut_ty) => ty_references_type_param(tcx, mut_ty.ty, param_name),
+        hir::TyKind::Ref(_, mut_ty) => ty_references_type_param(tcx, mut_ty.ty, param_name),
+        hir::TyKind::FnPtr(fn_ptr) => fn_ptr
+            .decl
+            .inputs
+            .iter()
+            .any(|input| ty_references_type_param(tcx, input, param_name))
+            || matches!(&fn_ptr.decl.output, hir::FnRetTy::Return(output)
+                if ty_references_type_param(tcx, output, param_name)),
+        hir::TyKind::UnsafeBinder(unsafe_binder) => {
+            ty_references_type_param(tcx, unsafe_binder.inner_ty, param_name)
+        }
+        hir::TyKind::Tup(types) => types
+            .iter()
+            .any(|inner| ty_references_type_param(tcx, inner, param_name)),
+        hir::TyKind::Path(qpath) => {
+            // 路径尾段与泛型参数同名（`C`、`Box<C>`、`&C` 都含该段）。
+            let last_ident = match qpath {
+                hir::QPath::Resolved(_, path) => path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident.name.as_str() == param_name),
+                hir::QPath::TypeRelative(_, segment) => {
+                    segment.ident.name.as_str() == param_name
+                }
+            };
+            last_ident || path_type_arguments_reference(tcx, qpath, param_name)
+        }
+        hir::TyKind::OpaqueDef(opaque) => opaque
+            .bounds
+            .iter()
+            .any(|bound| ty_references_type_param_from_bound(tcx, bound, param_name)),
+        hir::TyKind::TraitObject(bounds, _) => bounds.iter().any(|poly| {
+            poly.trait_ref.path.segments.iter().any(|segment| {
+                segment.ident.name.as_str() == param_name
+                    || segment.args.as_ref().is_some_and(|args| {
+                        args.args.iter().any(|arg| match arg {
+                            hir::GenericArg::Type(ty) => ty_references_type_param(tcx, ty, param_name),
+                            _ => false,
+                        })
+                    })
+            })
+        }),
+        _ => false,
+    }
+}
+
+/// 路径类型实参（`Box<C>` / `Option<C>` 的 `C`）里的泛型引用。
+fn path_type_arguments_reference(
+    tcx: TyCtxt<'_>,
+    qpath: &hir::QPath<'_>,
+    param_name: &str,
+) -> bool {
+    let segments: &[hir::PathSegment<'_>] = match qpath {
+        hir::QPath::Resolved(_, path) => &path.segments,
+        hir::QPath::TypeRelative(_, _) => return false,
+    };
+    segments.iter().any(|segment| {
+        segment.args.as_ref().is_some_and(|args| {
+            args.args.iter().any(|arg| match arg {
+                hir::GenericArg::Type(ty) => ty_references_type_param(tcx, *ty, param_name),
+                hir::GenericArg::Lifetime(_)
+                | hir::GenericArg::Const(_)
+                | hir::GenericArg::Infer(_) => false,
+            })
+        })
+    })
+}
+
+/// trait bound（`FnMut(...)` / `Aggregate<A, T>`）里的泛型引用。
+fn ty_references_type_param_from_bound(
+    tcx: TyCtxt<'_>,
+    bound: &hir::GenericBound<'_>,
+    param_name: &str,
+) -> bool {
+    let hir::GenericBound::Trait(poly_trait_ref) = bound else {
+        return false;
+    };
+    poly_trait_ref.trait_ref.path.segments.iter().any(|segment| {
+        segment.ident.name.as_str() == param_name
+            || segment.args.as_ref().is_some_and(|args| {
+                args.args.iter().any(|arg| match arg {
+                    hir::GenericArg::Type(ty) => ty_references_type_param(tcx, *ty, param_name),
+                    _ => false,
+                })
+            })
+    })
 }
 
 fn collect_hir_lifetime_params_from_ty(ty: &hir::Ty<'_>, lifetimes: &mut BTreeSet<usize>) {

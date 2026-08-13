@@ -1,0 +1,47 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:git2:with_hide_callback"
+
+[freeze]
+frozen_at = "2026-08-13T12:00:00Z"
+frozen_at_commit = "4eeb227"
+p3_verdict_available_at_freeze = true
+authored_from = "git2 公开 API 文档与 libgit2 git_revwalk_add_hide_cb 公开 C 签名"
+
+[target]
+crate = "git2"
+versions = ["0.21.0"]
+features = ["vendored-libgit2"]
+api_path = "git2::Revwalk::with_hide_callback"
+
+[[setup]]
+step = "open_repo"
+rust = "let dir = std::env::temp_dir().join(format!(\"bw-git2-{}\", std::process::id()));\nlet _ = std::fs::remove_dir_all(&dir);\nlet repo = git2::Repository::init(&dir)?;\nlet sig = git2::Signature::now(\"a\", \"a@b.c\")?;"
+
+[[setup]]
+step = "two_commits"
+rust = "{\n    let mut idx = repo.index()?;\n    let tree_id = idx.write_tree()?;\n    let tree = repo.find_tree(tree_id)?;\n    let oid1 = repo.commit(Some(\"HEAD\"), &sig, &sig, \"c1\", &tree, &[])?;\n    let parent = repo.find_commit(oid1)?;\n    let mut idx2 = repo.index()?;\n    let tree_id2 = idx2.write_tree()?;\n    let tree2 = repo.find_tree(tree_id2)?;\n    repo.commit(Some(\"HEAD\"), &sig, &sig, \"c2\", &tree2, &[&parent])?;\n}"
+
+[[setup]]
+step = "make_revwalk"
+rust = "let mut revwalk = repo.revwalk()?;"
+
+# with_hide_callback(self, callback: &'cb mut C) -> Result<RevwalkWithHideCb<'repo,'cb,C>>
+# 回调是 &mut 引用；方法消费 revwalk 并返回 guard（RevwalkWithHideCb）。
+# guard 拆除：into_inner() 返回不含 'cb 的 Revwalk（解除类型层借用绑定）。
+[registration]
+receiver = "revwalk"
+method = "with_hide_callback"
+callback_signature = "FnMut(git2::Oid) -> bool"
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_by_ref = true
+guard_removal_method = "into_inner"
+
+# 拆除后对象名固定为 bw_guard（生成器约定）。
+[trigger]
+step = "iterate"
+rust = "let _ = bw_guard.push_head()?;\nlet mut count = 0;\nfor oid in bw_guard { let _ = oid?; count += 1; }"
+
+[teardown]
+step = "drop"
+rust = "drop(repo);"
