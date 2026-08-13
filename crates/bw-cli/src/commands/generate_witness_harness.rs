@@ -114,6 +114,19 @@ struct AdapterRegistration {
     /// 没有返回值、与签名不匹配，产物必然编不过（缺证路径，不算 harness bug）。
     #[serde(default)]
     callback_ret_tail: Option<String>,
+    /// 回调形状：`closure`（缺省，Fn 闭包模板）或 `trait`（自定义回调 trait，
+    /// 生成 struct + impl——rusqlite 的 `Aggregate`/`WindowAggregate` 形状）。
+    #[serde(default)]
+    callback_kind: String,
+    /// trait 回调：trait 完整路径（如 `rusqlite::functions::Aggregate`）。
+    #[serde(default)]
+    trait_path: String,
+    /// trait 回调：聚合上下文类型名（`Aggregate<A, T>` 的 `A`）。
+    #[serde(default)]
+    acc_type: String,
+    /// trait 回调：输出类型名（`Aggregate<A, T>` 的 `T`）。
+    #[serde(default)]
+    output_type: String,
 }
 
 /// `extract-rust-contracts` 的一行。只取生成需要的那部分。
@@ -288,14 +301,26 @@ fn render_main(
     };
     let (invalidate_block, expected_compile) = match decision {
         InvalidateDecision::Generated => (
-            format!(
-                "    // invalidate：让 referent 在注册仍然有效时失效（由判定推出）。\n    // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的\n    // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。\n    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n    let callback = |{params}| {{\n        let _ = {referent}.len();{ret_tail}\n    }};\n    {register}\n    drop({referent});"
+            render_callback_block(
+                adapter,
+                referent,
+                &params,
+                &ret_tail,
+                &register,
+                "让 referent 在注册仍然有效时失效（由判定推出）",
+                true,
             ),
             true,
         ),
         InvalidateDecision::Refused { reason } => (
-            format!(
-                "    // invalidate 未生成：{reason}\n    // referent 未声明，本程序必然编不过——负对照行为。\n    let callback = |{params}| {{\n        let _ = {referent}.len();{ret_tail}\n    }};\n    {register}"
+            render_callback_block(
+                adapter,
+                referent,
+                &params,
+                &ret_tail,
+                &register,
+                &format!("invalidate 未生成：{reason}；referent 未声明，本程序必然编不过——负对照行为"),
+                false,
             ),
             false,
         ),
@@ -330,6 +355,151 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         trigger = adapter.trigger.rust,
         teardown = adapter.teardown.rust,
     )
+}
+
+/// 渲染 invalidate 块：referent 声明 + 回调构造 + 注册 + 显式失效。
+///
+/// 回调有两种形状：
+/// - `closure`（缺省）：Fn 闭包捕获 `&referent`；
+/// - `trait`：自定义回调 trait（rusqlite `Aggregate`/`WindowAggregate`），生成
+///   struct 持有 `&'a Box<String>` 字段并 impl trait——方法与闭包同款访问 referent。
+///   危险动作（drop 时机、触发顺序）仍然只由判定推出；本块只构造合法回调对象。
+fn render_callback_block(
+    adapter: &AdapterConfig,
+    referent: &str,
+    params: &str,
+    ret_tail: &str,
+    register: &str,
+    header: &str,
+    declare_referent: bool,
+) -> String {
+    let is_trait = adapter.registration.callback_kind == "trait";
+    let trait_path = &adapter.registration.trait_path;
+    let acc_type = &adapter.registration.acc_type;
+    let output_type = &adapter.registration.output_type;
+    if is_trait {
+        let is_window = trait_path.ends_with("WindowAggregate");
+        // WindowAggregate 继承 Aggregate：super trait 的方法必须由 Aggregate impl
+        // 提供，所以 window 形状需要两个 impl 块；Aggregate 单独用时一个 impl。
+        let (aggregate_impl, main_impl, window_impl) = if is_window {
+            (
+                format!(
+                    r#"    impl<'a> rusqlite::functions::Aggregate<{acc_type}, {output_type}> for BwWitnessAgg<'a> {{
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> rusqlite::Result<{acc_type}> {{
+            Ok({acc_type})
+        }}
+        fn step(&self, _: &mut rusqlite::functions::Context<'_>, _: &mut {acc_type}) -> rusqlite::Result<()> {{
+            let _ = self.referent.len();
+            Ok(())
+        }}
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, _: Option<{acc_type}>) -> rusqlite::Result<{output_type}> {{
+            {ret_tail}
+        }}
+    }}
+"#,
+                    acc_type = acc_type,
+                    output_type = output_type,
+                    ret_tail = if ret_tail.is_empty() { "Ok(5)" } else { ret_tail },
+                ),
+                String::new(),
+                format!(
+                    r#"    impl<'a> rusqlite::functions::WindowAggregate<{acc_type}, {output_type}> for BwWitnessAgg<'a> {{
+        fn value(&self, _: Option<&{acc_type}>) -> rusqlite::Result<i32> {{
+            Ok(5)
+        }}
+        fn inverse(&self, _: &mut rusqlite::functions::Context<'_>, _: &mut {acc_type}) -> rusqlite::Result<()> {{
+            let _ = self.referent.len();
+            Ok(())
+        }}
+    }}
+"#,
+                    acc_type = acc_type,
+                    output_type = output_type,
+                ),
+            )
+        } else {
+            (
+                String::new(),
+                format!(
+                    r#"    impl<'a> {trait_path}<{acc_type}, {output_type}> for BwWitnessAgg<'a> {{
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> rusqlite::Result<{acc_type}> {{
+            Ok({acc_type})
+        }}
+        fn step(&self, _: &mut rusqlite::functions::Context<'_>, _: &mut {acc_type}) -> rusqlite::Result<()> {{
+            let _ = self.referent.len();
+            Ok(())
+        }}
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, _: Option<{acc_type}>) -> rusqlite::Result<{output_type}> {{
+            {ret_tail}
+        }}
+    }}
+"#,
+                    trait_path = trait_path,
+                    acc_type = acc_type,
+                    output_type = output_type,
+                    ret_tail = if ret_tail.is_empty() { "Ok(5)" } else { ret_tail },
+                ),
+                String::new(),
+            )
+        };
+        let referent_decl = if declare_referent {
+            format!("    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n")
+        } else {
+            String::new()
+        };
+        format!(
+            r#"    // {header}
+    // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的
+    // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。
+{referent_decl}    struct {acc_type};
+    struct BwWitnessAgg<'a> {{
+        referent: &'a Box<String>,
+    }}
+{aggregate_impl}{main_impl}{window_impl}    let callback = BwWitnessAgg {{ referent: &{referent} }};
+    {register}
+{drop_line}"#,
+            header = header,
+            referent = referent,
+            aggregate_impl = aggregate_impl,
+            main_impl = main_impl,
+            window_impl = window_impl,
+            register = register,
+            acc_type = acc_type,
+            drop_line = if declare_referent {
+                format!("    drop({referent});")
+            } else {
+                String::new()
+            },
+        )
+    } else {
+        let referent_decl = if declare_referent {
+            format!("    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n")
+        } else {
+            String::new()
+        };
+        let drop_line = if declare_referent {
+            format!("    drop({referent});")
+        } else {
+            String::new()
+        };
+        format!(
+            r#"    // {header}
+    // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的
+    // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。
+{referent_decl}    let callback = |{params}| {{
+        let _ = {referent}.len();{ret_tail}
+    }};
+    {register}
+{drop_line}"#,
+            header = header,
+            referent = referent,
+            params = params,
+            ret_tail = ret_tail,
+            register = register,
+            referent_decl = referent_decl,
+            drop_line = drop_line,
+        )
+    }
 }
 
 /// 渲染 `Cargo.toml`：pinned `=version` + vendored patch，与静态分析绑定的
@@ -470,7 +640,10 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
 
     let decision = decide_invalidate(contract_row.contract.as_ref());
     let expected_compile = matches!(decision, InvalidateDecision::Generated);
-    let (callback_params, callback_ret) =
+    let (callback_params, callback_ret) = if adapter.registration.callback_kind == "trait" {
+        // trait 回调：方法签名由生成器模板给出，不走 Fn 签名解析。
+        (Vec::<String>::new(), String::new())
+    } else {
         parse_callback_signature(&adapter.registration.callback_signature).ok_or_else(|| {
             CliError::input(
                 "BW-ADAPTER",
@@ -479,7 +652,8 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
                     adapter.registration.callback_signature
                 ),
             )
-        })?;
+        })?
+    };
     if !matches!(callback_ret.as_str(), "" | "()" | "bool")
         && adapter.registration.callback_ret_tail.is_none()
     {
@@ -707,6 +881,57 @@ rust = "drop(conn);"
         );
         assert!(main_rs.contains("\n        Ok(5)"), "callback_ret_tail 必须作为闭包尾表达式");
         assert!(main_rs.contains("drop(witness_referent);"));
+    }
+
+    #[test]
+    fn trait_callback_renders_struct_and_impl() {
+        // create_aggregate_function 形状：回调是 rusqlite Aggregate trait。
+        let mut adapter = adapter();
+        adapter.registration.method = "create_aggregate_function".to_owned();
+        adapter.registration.accepts_none_to_clear = false;
+        adapter.registration.callback_kind = "trait".to_owned();
+        adapter.registration.trait_path = "rusqlite::functions::Aggregate".to_owned();
+        adapter.registration.acc_type = "BwWitnessAcc".to_owned();
+        adapter.registration.output_type = "i32".to_owned();
+        adapter.registration.prefix_args =
+            vec!["\"bw_witness_agg\"".to_owned(), "0".to_owned()];
+        let decision = InvalidateDecision::Generated;
+        let main_rs = render_main(
+            &adapter,
+            &decision,
+            &[],
+            "Result<i32>",
+            "witness_referent",
+        );
+        assert!(main_rs.contains("struct BwWitnessAgg<'a>"));
+        assert!(main_rs.contains(
+            "impl<'a> rusqlite::functions::Aggregate<BwWitnessAcc, i32> for BwWitnessAgg<'a>"
+        ));
+        assert!(main_rs.contains("let _ = self.referent.len();"));
+        assert!(main_rs.contains("drop(witness_referent);"));
+        assert!(main_rs.contains("let callback = BwWitnessAgg { referent: &witness_referent };"));
+    }
+
+    #[test]
+    fn trait_callback_refused_does_not_declare_referent() {
+        // fixed 版（requires_static_capture）：invalidate refused，referent 未声明
+        // → struct 引用未定义标识符，必然编不过（负对照行为）。
+        let mut adapter = adapter();
+        adapter.registration.method = "create_aggregate_function".to_owned();
+        adapter.registration.accepts_none_to_clear = false;
+        adapter.registration.callback_kind = "trait".to_owned();
+        adapter.registration.trait_path = "rusqlite::functions::Aggregate".to_owned();
+        adapter.registration.acc_type = "BwWitnessAcc".to_owned();
+        adapter.registration.output_type = "i32".to_owned();
+        adapter.registration.prefix_args =
+            vec!["\"bw_witness_agg\"".to_owned(), "0".to_owned()];
+        let decision = InvalidateDecision::Refused {
+            reason: "requires_static_capture".to_owned(),
+        };
+        let main_rs = render_main(&adapter, &decision, &[], "Result<i32>", "witness_referent");
+        assert!(!main_rs.contains("let witness_referent ="));
+        assert!(!main_rs.contains("drop(witness_referent);"));
+        assert!(main_rs.contains("self.referent.len()"));
     }
 
     #[test]

@@ -1,0 +1,46 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:rusqlite:create_aggregate_function"
+
+# 冻结记录。判定产出之后编写（开发对象，不构成 Gate B unseen 证据）。
+[freeze]
+frozen_at = "2026-08-13T11:00:00Z"
+frozen_at_commit = "f2434f0"
+p3_verdict_available_at_freeze = true
+authored_from = "rusqlite 公开 API 文档与 sqlite3_create_function_v2 公开 C 签名"
+
+[target]
+crate = "rusqlite"
+versions = ["0.26.1", "0.26.2"]
+features = ["bundled", "functions"]
+api_path = "rusqlite::Connection::create_aggregate_function"
+
+[[setup]]
+step = "open_connection"
+rust = "let conn = rusqlite::Connection::open_in_memory()?;"
+
+[[setup]]
+step = "create_table"
+rust = "conn.execute_batch(\"CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1), (2);\")?;"
+
+# 回调是 Aggregate trait：生成器按 callback_kind=trait 渲染 struct + impl。
+[registration]
+receiver = "conn"
+method = "create_aggregate_function"
+callback_signature = "Aggregate"
+callback_arg_index = 3
+accepts_none_to_clear = false
+prefix_args = ["\"bw_witness_agg\"", "0", "rusqlite::functions::FunctionFlags::SQLITE_UTF8"]
+callback_ret_tail = "Ok(5)"
+callback_kind = "trait"
+trait_path = "rusqlite::functions::Aggregate"
+acc_type = "BwWitnessAcc"
+output_type = "i32"
+
+# 正常使用：SELECT 聚合函数，SQLite 对每行调用 xStep（step）→ 访问 referent。
+[trigger]
+step = "run_aggregate"
+rust = "let _ = conn.query_row(\"SELECT bw_witness_agg() FROM t\", [], |row| row.get::<_, i32>(0))?;"
+
+[teardown]
+step = "drop_connection"
+rust = "drop(conn);"
