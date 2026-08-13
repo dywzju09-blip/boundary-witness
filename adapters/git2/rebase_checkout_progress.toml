@@ -19,7 +19,7 @@ rust = "let dir = std::env::temp_dir().join(format!(\"bw-git2-rebase-{}\", std::
 
 [[setup]]
 step = "two_commits"
-rust = "{\n    let mut idx = repo.index()?;\n    let tree_id = idx.write_tree()?;\n    let tree = repo.find_tree(tree_id)?;\n    let oid1 = repo.commit(Some(\"HEAD\"), &sig, &sig, \"c1\", &tree, &[])?;\n    let parent = repo.find_commit(oid1)?;\n    let mut idx2 = repo.index()?;\n    let tree_id2 = idx2.write_tree()?;\n    let tree2 = repo.find_tree(tree_id2)?;\n    repo.commit(Some(\"HEAD\"), &sig, &sig, \"c2\", &tree2, &[&parent])?;\n}"
+rust = "{\n    std::fs::write(dir.join(\"a.txt\"), \"v1\")?;\n    let mut idx = repo.index()?;\n    idx.add_path(std::path::Path::new(\"a.txt\"))?;\n    idx.write()?;\n    let tree_id = idx.write_tree()?;\n    let tree = repo.find_tree(tree_id)?;\n    let oid1 = repo.commit(Some(\"HEAD\"), &sig, &sig, \"c1\", &tree, &[])?;\n    let parent = repo.find_commit(oid1)?;\n    std::fs::write(dir.join(\"a.txt\"), \"v2\")?;\n    let mut idx2 = repo.index()?;\n    idx2.add_path(std::path::Path::new(\"a.txt\"))?;\n    idx2.write()?;\n    let tree_id2 = idx2.write_tree()?;\n    let tree2 = repo.find_tree(tree_id2)?;\n    repo.commit(Some(\"HEAD\"), &sig, &sig, \"c2\", &tree2, &[&parent])?;\n}"
 
 [registration]
 receiver = "cb"
@@ -34,7 +34,8 @@ let mut opts = git2::RebaseOptions::new();
 opts.checkout_options(cb);
 let head = repo.head()?;
 let branch = repo.find_annotated_commit(head.target().ok_or("no target")?)?;
-let mut rebase = repo.rebase(None, None, Some(&branch), Some(&mut opts))?;"""
+let upstream = repo.find_annotated_commit(head.peel_to_commit()?.parent_id(0)?)?;
+let mut rebase = repo.rebase(Some(&branch), Some(&upstream), None, Some(&mut opts))?;"""
 invalidate_prelude = "drop(opts);"
 
 [trigger]
@@ -43,4 +44,4 @@ rust = "let _ = rebase.next();"
 
 [teardown]
 step = "drop"
-rust = "drop(branch);\ndrop(head);\ndrop(rebase);\ndrop(repo);"
+rust = "drop(upstream);\ndrop(branch);\ndrop(head);\ndrop(rebase);\ndrop(repo);"

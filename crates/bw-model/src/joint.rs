@@ -200,7 +200,7 @@ mod tests {
             safe_entry_instance: "Registry::register_borrowed".to_owned(),
             rust_def_instance: "Registry::register_borrowed::<F>".to_owned(),
             call_occurrence: "bb2[0]".to_owned(),
-            foreign_symbol: "fixture_register".to_owned(),
+            foreign_symbol: Some("fixture_register".to_owned()),
             callback_arg_index: 0,
             userdata_arg_index: Some(1),
             registration_key: None,
