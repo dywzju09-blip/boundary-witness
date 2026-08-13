@@ -1,6 +1,6 @@
 //! 跨函数透传追踪与 select 透传的单元测试（阶段 7 扩展）。
 
-use bw_foreign_ir::{ForeignRoleMap, IrModule, analyze_with_modules};
+use bw_foreign_ir::{BoundaryReason, ForeignRoleMap, IrModule, analyze, analyze_with_modules};
 use bw_model::ForeignRetention;
 
 /// 注册函数把回调经 select（null 时用默认回调）转给包装函数，包装函数只透传，
@@ -404,5 +404,56 @@ define %struct.CollSeq* @fixture_find(%struct.sqlite3* noundef %0) {
         analysis.retention,
         ForeignRetention::MayRetain,
         "从 caller-owned 可达容器读取的堆对象字段必须被判为保留"
+    );
+}
+
+
+/// clang 14+ 的 `#dbg_declare` 调试指令格式：落栈 alloca 的形参还原不能因为
+/// 一条调试元数据指令被判成「地址逃逸」。修复前 git2/libgit2（opaque ptr + 新
+/// debug 格式）的 Q1 数据流整条断掉（store_to_unresolved_pointer）。
+#[test]
+fn dbg_declare_intrinsic_does_not_break_spill_tracking() {
+    let register_ir = r#"
+%struct.walk = type { ptr, ptr }
+define i32 @fixture_add_hide(ptr noundef %0, ptr noundef %1, ptr noundef %2) {
+  %4 = alloca ptr, align 8
+  %5 = alloca ptr, align 8
+  store ptr %0, ptr %4, align 8
+    #dbg_declare(ptr %4, !1, !DIExpression(), !2)
+  store ptr %1, ptr %5, align 8
+    #dbg_declare(ptr %5, !3, !DIExpression(), !4)
+  %6 = load ptr, ptr %4, align 8
+  %7 = getelementptr inbounds %struct.walk, ptr %6, i32 0, i32 1
+  %8 = load ptr, ptr %5, align 8
+  store ptr %8, ptr %7, align 8
+  ret i32 0
+}
+!1 = !DILocalVariable(name: "walk", scope: !0, file: !0, line: 1, type: !5)
+!2 = !DIExpression()
+!3 = !DILocalVariable(name: "cb", scope: !0, file: !0, line: 2, type: !5)
+!4 = !DIExpression()
+!0 = !DISubprogram(name: "fixture")
+!5 = !DIBasicType(name: "ptr")
+"#;
+    let main_module = IrModule::parse(register_ir).expect("register parses");
+    let roles = ForeignRoleMap {
+        register_symbol: "fixture_add_hide".to_owned(),
+        callback_arg_index: 1,
+        userdata_arg_index: Some(2),
+        clear_symbol: None,
+    };
+    let analysis = analyze(&main_module, &roles);
+    println!("retention: {:?}", analysis.retention);
+    assert_eq!(
+        analysis.retention,
+        ForeignRetention::MayRetain,
+        "#dbg_declare 不得破坏形参落栈的 spill 还原，回调 store 到 walk 字段必须判保留"
+    );
+    assert!(
+        !analysis
+            .boundaries
+            .iter()
+            .any(|b| matches!(b.reason, BoundaryReason::StoreToUnresolvedPointer)),
+        "#dbg_declare 引发的落栈误判不应再出现"
     );
 }

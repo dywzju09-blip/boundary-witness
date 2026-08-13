@@ -123,6 +123,11 @@ pub enum InstKind {
     Compare {
         operands: Vec<Operand>,
     },
+    /// `#dbg_declare` / `#dbg_value` / `#dbg_assign` 等**调试元数据指令**（clang
+    /// 14+ 的 `#dbg_*` 格式，取代旧的 `call @llvm.dbg.declare`）。它们不读不存指针，
+    /// 必须与非逃逸 intrinsic 同等对待——否则 -O0 形参落栈的 alloca 会被判成
+    /// 「地址逃逸」，Q1 的数据流整条断掉。
+    DbgIntrinsic,
     Branch {
         targets: Vec<String>,
     },
@@ -466,6 +471,9 @@ fn parse_inst(line: &str, block: usize, ordinal: usize) -> Inst {
 
 fn parse_inst_kind(body: &str) -> InstKind {
     let opcode = body.split_whitespace().next().unwrap_or("");
+    if opcode.starts_with("#dbg_") {
+        return InstKind::DbgIntrinsic;
+    }
     match opcode {
         "alloca" => InstKind::Alloca,
         "store" => parse_store(body),

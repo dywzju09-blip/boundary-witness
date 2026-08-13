@@ -439,7 +439,7 @@ fn operands_of(inst: &Inst) -> Vec<Operand> {
             operands.extend(args.iter().cloned());
             operands
         }
-        InstKind::Alloca => Vec::new(),
+        InstKind::Alloca | InstKind::DbgIntrinsic => Vec::new(),
         _ => locals_in_text(&inst.text),
     }
 }
@@ -502,6 +502,7 @@ fn find_spill_allocas(
                     stored = Some(value.clone());
                 }
                 InstKind::Load { src } if src.as_local() == Some(name.as_str()) => {}
+                InstKind::DbgIntrinsic => {}
                 InstKind::Call { callee, .. }
                     if callee.as_global().is_some_and(is_non_escaping_intrinsic) => {}
                 // 地址被存到别处、被传给真实调用、或被当成值 store——都不再是纯落栈。

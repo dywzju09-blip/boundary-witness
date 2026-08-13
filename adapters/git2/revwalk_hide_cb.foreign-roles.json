@@ -1,0 +1,15 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "GIT-02 验证：git_revwalk_add_hide_cb(walk, hide_cb, payload)——hide 回调与 userdata 直接作为 fn 指针参数。",
+    "clear_symbol 就是注册符号本身：传 NULL 回调即清除。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "git_revwalk_add_hide_cb",
+      "callback_arg_index": 1,
+      "userdata_arg_index": 2,
+      "clear_symbol": "git_revwalk_add_hide_cb"
+    }
+  ]
+}
