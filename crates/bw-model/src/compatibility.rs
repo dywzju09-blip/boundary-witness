@@ -145,7 +145,9 @@ pub struct RustHandOffKey {
     pub rust_def_instance: String,
     pub call_occurrence: String,
     /// 编译器解析出的外部链接符号。这是与外部侧唯一的重叠部分，也是联结的主键。
-    pub foreign_symbol: String,
+    /// **延迟交出**（receiver 桥接到外部 C 结构体，git2 CheckoutBuilder）时符号
+    /// 不直接出现——`None` 表示「无符号」，不是占位。
+    pub foreign_symbol: Option<String>,
     pub callback_arg_index: u32,
     pub userdata_arg_index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -344,10 +346,20 @@ pub fn assemble_rust_contract_facts(
                 ) => {}
             }
             // 没有符号就没有联结主键，这个交出点接不上外部侧。
+            // **延迟交出**（guard=OwnerHoldsCallbackBridged）：回调经 receiver
+            // 桥接到外部 C 结构体，符号不直接出现——允许装配（Rust-only 判定 +
+            // witness 层），`foreign_symbol=None`。
+            let bridged = parts
+                .guard
+                .as_ref()
+                .is_some_and(|g| *g == RegistrationGuard::OwnerHoldsCallbackBridged);
             match parts.binding.as_ref() {
+                None if bridged => {}
                 None => gaps.push(RustContractGap::MissingForeignSymbol),
                 Some(fact) if fact.symbol.is_none() || fact.callback_arg_index.is_none() => {
-                    gaps.push(RustContractGap::ForeignSymbolUnresolved);
+                    if !bridged {
+                        gaps.push(RustContractGap::ForeignSymbolUnresolved);
+                    }
                 }
                 Some(_) => {}
             }
@@ -361,8 +373,8 @@ pub fn assemble_rust_contract_facts(
             let mut evidence = parts.evidence;
             evidence.sort();
             let binding = parts.binding.expect("checked above");
-            let symbol = binding.symbol.expect("checked above");
-            let registration_generation = match sites_per_symbol.get(&symbol) {
+            let symbol = binding.symbol.clone();
+            let registration_generation = match symbol.as_deref().and_then(|s| sites_per_symbol.get(s)) {
                 Some(1) => RegistrationGeneration::UniqueStaticSite,
                 Some(_) => RegistrationGeneration::MultipleStaticSites,
                 None => RegistrationGeneration::Unresolved,
@@ -378,7 +390,9 @@ pub fn assemble_rust_contract_facts(
                     rust_def_instance: api_id.clone(),
                     call_occurrence: binding.site_id.to_string(),
                     foreign_symbol: symbol,
-                    callback_arg_index: binding.callback_arg_index.expect("checked above"),
+                    // bridged（延迟交出）时外部调用点不存在，参数角色由 adapter 提供；
+                    // 0 只是装配占位（该值不参与 bridged 的联结与生成）。
+                    callback_arg_index: binding.callback_arg_index.unwrap_or(0),
                     userdata_arg_index: binding.userdata_arg_index,
                     registration_key: None,
                     registration_generation,
@@ -573,7 +587,7 @@ fn safe_lifetime_separation_possible(
 
     // 第二步：guard 是否否定分离。**这一步必须读外部侧的清槽证据。**
     let by_guard = match rust.guard {
-        RegistrationGuard::None => by_shape,
+        RegistrationGuard::None | RegistrationGuard::OwnerHoldsCallbackBridged => by_shape,
         RegistrationGuard::Unresolved => {
             assumptions.push("registration guard shape unresolved".to_owned());
             Tri::Unresolved

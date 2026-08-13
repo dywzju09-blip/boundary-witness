@@ -131,6 +131,16 @@ struct AdapterRegistration {
     /// 生成器构造 `let mut callback = ...` 并传 `&mut callback`。
     #[serde(default)]
     callback_by_ref: bool,
+    /// **延迟交出**注册模板（git2 CheckoutBuilder 形状）：回调存进 receiver 字段，
+    /// 稍后经 `checkout_options` 进 `RebaseOptions`、`rebase` 把 options memcpy 给
+    /// 外部。adapter 提供完整注册代码（含 `{callback}` 占位），**分离动作（referent
+    /// 失效）仍由判定推出**。`invalidate_prelude` 是判定允许分离时、在
+    /// drop(referent) 之前释放回调 owner 链的清理（如 `drop(opts);`）——两者都是
+    /// 「如何合法调用/释放」的 API 形状，不是缺陷推导。
+    #[serde(default)]
+    register_template: Option<String>,
+    #[serde(default)]
+    invalidate_prelude: Option<String>,
     /// 注册方法**消费 receiver 并返回 guard 类型**（`self` 方法，返回
     /// `RevwalkWithHideCb<'cb>`）：生成器持有返回值，且——
     /// - `guard_removal_method` 存在时，在 invalidate 里调用它（`into_inner` 形状：
@@ -205,6 +215,10 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
             // git2 into_inner 拆除 + Drop 不注销）时编过 → 候选。不因缺证假设分离
             // 不可构造。
             RegistrationGuard::Unresolved => InvalidateDecision::Generated,
+            // owner-held 但 receiver 被桥接到外部 C 结构体（git2 CheckoutBuilder）：
+            // owner drop 只释放闭包，注册在外部（memcpy 出去的 git_rebase）上
+            // 不解除——分离可构造。
+            RegistrationGuard::OwnerHoldsCallbackBridged => InvalidateDecision::Generated,
             // owner-held：闭包存 receiver 字段随 owner drop，referent 分离不可构造。
             RegistrationGuard::OwnerHoldsCallback => InvalidateDecision::Refused {
                 reason: "owner_holds_callback: 回调分配由 receiver 字段持有到 owner drop，                分离不可构造".to_owned(),
@@ -318,10 +332,11 @@ fn render_main(
             register_arg = register_arg,
         )
     };
-    // guard 形状（guard_removal_method 存在）：注册消费 receiver 并返回 guard
-    // （`with_hide_callback(&mut cb) -> Result<RevwalkWithHideCb>`），生成器持有
-    // 返回值，invalidate 里先拆除 guard 再 drop referent。`?` 要求返回 Result。
-    let register = if let Some(removal) = &adapter.registration.guard_removal_method {
+    // 延迟交出（register_template）：adapter 提供完整注册代码（含 {callback}）。
+    // guard 形状（guard_removal_method）：持有返回值，invalidate 先拆 guard。
+    let register = if let Some(template) = &adapter.registration.register_template {
+        template.replace("{callback}", &register_arg)
+    } else if let Some(removal) = &adapter.registration.guard_removal_method {
         let _ = removal;
         format!("let mut bw_guard = {call}?;")
     } else {
@@ -523,6 +538,16 @@ fn render_callback_block(
         } else {
             String::new()
         };
+        let prelude_line = if declare_referent {
+            adapter
+                .registration
+                .invalidate_prelude
+                .as_deref()
+                .map(|prelude| format!("    {prelude}\n"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         format!(
             r#"    // {header}
     // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的
@@ -531,12 +556,13 @@ fn render_callback_block(
         let _ = {referent}.len();{ret_tail}
     }};
     {register}
-{guard_removal_line}{drop_line}"#,
+{prelude_line}{guard_removal_line}{drop_line}"#,
             header = header,
             referent = referent,
             params = params,
             ret_tail = ret_tail,
             register = register,
+            prelude_line = prelude_line,
             guard_removal_line = guard_removal_line,
             referent_decl = referent_decl,
             drop_line = drop_line,

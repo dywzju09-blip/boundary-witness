@@ -168,7 +168,7 @@ pub fn run(args: JudgeHandOffsArgs) -> Result<CommandStatus, CliError> {
             }))
         } else {
             let Some(foreign) =
-                foreign_by_symbol.get(contract.hand_off.foreign_symbol.as_str())
+                contract.hand_off.foreign_symbol.as_deref().and_then(|s| foreign_by_symbol.get(s))
             else {
                 summary.no_foreign_counterpart += 1;
                 continue;

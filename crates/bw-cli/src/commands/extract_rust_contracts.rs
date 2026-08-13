@@ -110,7 +110,7 @@ pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
                     schema_version: SCHEMA_VERSION,
                     run_id: args.run_id.clone(),
                     api_id: fact.hand_off.rust_def_instance.clone(),
-                    foreign_symbol: Some(fact.hand_off.foreign_symbol.clone()),
+                    foreign_symbol: fact.hand_off.foreign_symbol.clone(),
                     callback_param: None,
                     contract: Some(
                         serde_json::to_value(&*fact)

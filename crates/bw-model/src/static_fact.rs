@@ -334,6 +334,12 @@ pub enum RegistrationGuard {
     /// 判据是函数体 MIR（receiver 字段上出现含 `dyn Fn` 的 store），不是返回值形状。
     /// git2 的 `set_progress_callback`（`self._progress = Some(boxed)`）即此形状。
     OwnerHoldsCallback,
+    /// owner-held，且 **receiver 被桥接到含函数指针字段的外部 C 结构体**（git2
+    /// CheckoutBuilder 形状）：回调存进 receiver 字段，稍后 configure 把
+    /// `self as *mut _` 写进 `raw::git_checkout_options` 字段，rebase 把整个
+    /// options memcpy 给外部。owner drop 只释放闭包，**不解除外部注册**——
+    /// 分离可构造。
+    OwnerHoldsCallbackBridged,
     /// 存在疑似 guard 的形状，但无法确定它约束了什么。
     ///
     /// 返回类型解析不到 ADT、该 ADT 定义在别的 crate 因而取不到 `Drop` 的 MIR、

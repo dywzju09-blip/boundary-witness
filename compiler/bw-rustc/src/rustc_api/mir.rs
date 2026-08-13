@@ -21225,19 +21225,26 @@ fn registration_guards<'tcx>(
             let ties_to_callback_bound = bound_lifetimes
                 .iter()
                 .any(|index| return_lifetimes.contains(index));
-            let (guard, foreign_release_callee, unresolved_reason) = if return_lifetimes.is_empty()
-            {
-                // 返回值不携带任何声明 lifetime。先查 owner-held 形状：注册函数把回调
-                // 分配存进 receiver 字段（如 git2 的 `self._progress = Some(boxed)`），
-                // 闭包随 owner drop 释放，referent 与 allocation 的分离都不可构造。
-                // 这是函数体 MIR 判据，不是返回值形状（阶段 5.5 在 git2 上实证的缺口）。
-                if owner_holds_callback(tcx, def_id) {
-                    (RegistrationGuard::OwnerHoldsCallback, None, None)
+            let (guard, foreign_release_callee, unresolved_reason) = if owner_holds_callback(
+                tcx, def_id,
+            ) {
+                // 回调分配**存进 receiver 字段**（owner-held，git2 的
+                // `self._progress = Some(boxed)` / `CheckoutBuilder::progress`）。
+                // 这是函数体 MIR 判据，优先于返回值形状——builder 模式返回
+                // `&mut self`（带 'cb）时 return_lifetimes 非空，但回调确实在
+                // 字段里。receiver 若被桥接到外部 C 结构体（configure 把
+                // `self as *mut _` 写进 `raw::git_checkout_options` 字段、rebase
+                // memcpy 给 git_rebase_init），owner drop 只释放闭包、不解除外部
+                // 注册 → 分离可构造；否则保守 OwnerHoldsCallback（安全方向）。
+                if receiver_bridged_to_foreign(tcx, def_id) {
+                    (RegistrationGuard::OwnerHoldsCallbackBridged, None, None)
                 } else {
-                    // 返回值不携带任何声明 lifetime，也没有 owner-held 持有：
-                    // 注册的存活没有被绑到调用方的任何东西上。
-                    (RegistrationGuard::None, None, None)
+                    (RegistrationGuard::OwnerHoldsCallback, None, None)
                 }
+            } else if return_lifetimes.is_empty() {
+                // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的
+                // 任何东西上。
+                (RegistrationGuard::None, None, None)
             } else if !ties_to_callback_bound {
                 if bound_lifetimes.is_empty() {
                     // 回调没有显式 outlives bound，返回值却带 lifetime。形状像 guard，但
@@ -21296,6 +21303,163 @@ fn registration_guards<'tcx>(
             }
         })
         .collect()
+}
+
+/// receiver 是否被桥接到「含函数指针字段的外部 C 结构体」。
+///
+/// git2 CheckoutBuilder 形状：回调经 `progress` 存进 receiver 字段（owner-held），
+/// 稍后 `configure(&mut self, opts: &mut raw::git_checkout_options)` 把
+/// `self as *mut _` 写进 C 结构体参数（`git_checkout_options`）的字段——receiver
+/// 从此进入外部数据结构，`Repository::rebase` 把整个 options memcpy 给
+/// `git_rebase_init`。owner drop 只释放闭包分配，不解除外部注册 → 分离可构造。
+///
+/// 判据：receiver 类型存在方法，其中 receiver 被 cast 成裸指针、store 进
+/// **参数结构体的字段**，且该参数结构体含函数指针字段（C 回调表特征，
+/// `git_checkout_options` 的 `progress_cb`）。内部容器（无函数指针字段）不命中。
+fn receiver_bridged_to_foreign(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    let body = tcx.optimized_mir(def_id);
+    let Some(receiver_local) = body.args_iter().next() else {
+        return false;
+    };
+    let mut receiver_ty = body.local_decls[receiver_local].ty;
+    // receiver 是 `&mut Self` / `&Self`：先解引用到 Self 类型。
+    if let ty::Ref(_, inner, _) = receiver_ty.kind() {
+        receiver_ty = *inner;
+    }
+    let Some(adt) = receiver_ty.ty_adt_def() else {
+        eprintln!("[bridge] no adt for {}", tcx.def_path_str(def_id));
+        return false;
+    };
+    eprintln!("[bridge] checking {} adt={} impls={}", tcx.def_path_str(def_id), tcx.def_path_str(adt.did()), tcx.inherent_impls(adt.did()).len());
+    for impl_def_id in tcx.inherent_impls(adt.did()).to_vec() {
+        for item in tcx.associated_items(impl_def_id).in_definition_order() {
+            if !matches!(item.kind, ty::AssocKind::Fn { .. }) {
+                continue;
+            }
+            let method_def_id = item.def_id;
+            if !tcx.is_mir_available(method_def_id) {
+                continue;
+            }
+            let bridged = bridged_in_method(tcx, method_def_id, &tcx.optimized_mir(method_def_id));
+            eprintln!("[bridge] {} bridged={}", tcx.def_path_str(item.def_id), bridged);
+            if bridged {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 单个方法里是否出现「receiver cast 成裸指针 → store 进参数结构体字段」。
+fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'tcx>) -> bool {
+    let Some(receiver_local) = body.args_iter().next() else {
+        return false;
+    };
+    // 收集 bridged 指针（不动点迭代）：place 是纯 local、类型是裸指针，且 rvalue
+    // 的操作数引用 receiver 或已识别的 bridged 指针。
+    // `self as *mut _` 在 MIR 里是 `&raw mut (*self)`（Rvalue 变体跨 rustc 版本
+    // 不稳定），后续 `as *mut c_void` 是第二层 cast——统一用 operands() 识别，
+    // 不依赖具体 Rvalue 变体名。
+    let mut bridged_ptrs: std::collections::HashSet<Local> = std::collections::HashSet::new();
+    loop {
+        let mut changed = false;
+        for block in body.basic_blocks.iter() {
+            for statement in &block.statements {
+                let StatementKind::Assign(assignment) = &statement.kind else {
+                    continue;
+                };
+                let (place, rvalue) = &**assignment;
+                if !place.projection.is_empty() {
+                    continue;
+                }
+                if !matches!(place.ty(body, tcx).ty.kind(), ty::RawPtr(..)) {
+                    continue;
+                }
+                // 该语句的 rvalue 是否引用 receiver 或已识别的 bridged 指针。
+                // `self as *mut _` 在 MIR 里是 `Rvalue::RawPtr(_, (*self))`；
+                // 后续 `as *mut c_void` 是 `Rvalue::Cast(_, _36, _)`。
+                let refs_receiver_or_bridged = match rvalue {
+                    Rvalue::RawPtr(_, src) => {
+                        src.local == receiver_local || bridged_ptrs.contains(&src.local)
+                    }
+                    Rvalue::Cast(_, operand, _) | Rvalue::Use(operand, _) => {
+                        operand.place().is_some_and(|p| {
+                            p.local == receiver_local || bridged_ptrs.contains(&p.local)
+                        })
+                    }
+                    _ => false,
+                };
+                if refs_receiver_or_bridged && bridged_ptrs.insert(place.local) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if bridged_ptrs.is_empty() {
+        return false;
+    }
+    // store 到「参数结构体字段」：`(*param).field = bridged_ptr`。
+    let arg_locals: std::collections::HashSet<Local> = body.args_iter().collect();
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                continue;
+            };
+            let (place, rvalue) = &**assignment;
+            if let Rvalue::Use(operand, _) = rvalue {
+                if let Some(vl) = operand.place() {
+                    if bridged_ptrs.contains(&vl.local) {
+                    }
+                }
+            }
+            let Rvalue::Use(operand, _) = rvalue else {
+                continue;
+            };
+            let Some(value_local) = operand.place() else {
+                continue;
+            };
+            if !bridged_ptrs.contains(&value_local.local) {
+                continue;
+            }
+            if !arg_locals.contains(&place.local) || place.local == receiver_local {
+                continue;
+            }
+            let has_deref = place
+                .projection
+                .iter()
+                .any(|elem| matches!(elem, ProjectionElem::Deref));
+            let ends_with_field = matches!(place.projection.last(), Some(ProjectionElem::Field(..)));
+            if !has_deref || !ends_with_field {
+                continue;
+            }
+            // 参数是「外部 C 结构体」：bindgen/手写 ffi 输出惯例上，C 结构体定义在
+            // `raw::` / `ffi` / `sys` 模块。内部容器不在此列。
+            // 用**参数 local** 的类型（`&mut raw::git_checkout_options`），不是字段
+            // 类型（`*mut c_void` 等裸指针没有 ADT）。
+            let mut param_ty = body.local_decls[place.local].ty;
+            if let ty::Ref(_, inner, _) = param_ty.kind() {
+                param_ty = *inner;
+            }
+            let Some(param_adt) = param_ty.ty_adt_def() else {
+                continue;
+            };
+            let param_def_path = tcx.def_path_str(param_adt.did());
+            // C 结构体定义在 ffi 边界：git2 0.18 用 `git2::raw`，0.21 移到
+            // `libgit2_sys`（-sys crate，Rust 惯例 crate 名以 `_sys` 结尾）。
+            let crate_name = param_def_path.split("::").next().unwrap_or("");
+            if param_def_path.contains("::raw::")
+                || param_def_path.contains("::ffi")
+                || param_def_path.contains("::sys::")
+                || crate_name.ends_with("_sys")
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 交出点能不能被**安全客户端**走到。

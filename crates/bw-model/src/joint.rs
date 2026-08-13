@@ -48,7 +48,7 @@ impl HandOffId {
             safe_entry_instance: rust.safe_entry_instance.clone(),
             rust_def_instance: rust.rust_def_instance.clone(),
             call_occurrence: rust.call_occurrence.clone(),
-            foreign_symbol: rust.foreign_symbol.clone(),
+            foreign_symbol: rust.foreign_symbol.clone().unwrap_or_default(),
             callback_arg_index: rust.callback_arg_index,
             userdata_arg_index: rust.userdata_arg_index,
             registration_key: rust.registration_key.clone(),
@@ -65,7 +65,7 @@ impl RustHandOffKey {
     #[must_use]
     pub fn joins_with(&self, foreign: &ForeignHandOffKey) -> bool {
         self.build_profile == foreign.build_profile
-            && self.foreign_symbol == foreign.foreign_symbol
+            && self.foreign_symbol.as_deref() == Some(foreign.foreign_symbol.as_str())
             && self.callback_arg_index == foreign.callback_arg_index
             && self.userdata_arg_index == foreign.userdata_arg_index
             && self.registration_key == foreign.registration_key
@@ -145,7 +145,7 @@ pub fn join_hand_off(
     if rust_key.build_profile != foreign_key.build_profile {
         reasons.push(JoinRejection::BuildProfileMismatch);
     }
-    if rust_key.foreign_symbol != foreign_key.foreign_symbol {
+    if rust_key.foreign_symbol.as_deref() != Some(foreign_key.foreign_symbol.as_str()) {
         reasons.push(JoinRejection::ForeignSymbolMismatch);
     }
     if rust_key.callback_arg_index != foreign_key.callback_arg_index {

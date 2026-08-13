@@ -1,0 +1,46 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:git2:rebase_checkout_progress"
+
+[freeze]
+frozen_at = "2026-08-13T13:00:00Z"
+frozen_at_commit = "ea91002"
+p3_verdict_available_at_freeze = true
+authored_from = "git2 公开 API 文档与 libgit2 git_rebase_init 公开 C 签名"
+
+[target]
+crate = "git2"
+versions = ["0.21.0"]
+features = ["vendored-libgit2"]
+api_path = "git2::build::CheckoutBuilder::progress"
+
+[[setup]]
+step = "open_repo"
+rust = "let dir = std::env::temp_dir().join(format!(\"bw-git2-rebase-{}\", std::process::id()));\nlet _ = std::fs::remove_dir_all(&dir);\nlet repo = git2::Repository::init(&dir)?;\nlet sig = git2::Signature::now(\"a\", \"a@b.c\")?;"
+
+[[setup]]
+step = "two_commits"
+rust = "{\n    let mut idx = repo.index()?;\n    let tree_id = idx.write_tree()?;\n    let tree = repo.find_tree(tree_id)?;\n    let oid1 = repo.commit(Some(\"HEAD\"), &sig, &sig, \"c1\", &tree, &[])?;\n    let parent = repo.find_commit(oid1)?;\n    let mut idx2 = repo.index()?;\n    let tree_id2 = idx2.write_tree()?;\n    let tree2 = repo.find_tree(tree_id2)?;\n    repo.commit(Some(\"HEAD\"), &sig, &sig, \"c2\", &tree2, &[&parent])?;\n}"
+
+[registration]
+receiver = "cb"
+method = "progress"
+callback_signature = "FnMut(Option<&std::path::Path>, usize, usize)"
+callback_arg_index = 0
+accepts_none_to_clear = false
+register_template = """
+let mut cb = git2::build::CheckoutBuilder::new();
+cb.progress({callback});
+let mut opts = git2::RebaseOptions::new();
+opts.checkout_options(cb);
+let head = repo.head()?;
+let branch = repo.find_annotated_commit(head.target().ok_or("no target")?)?;
+let mut rebase = repo.rebase(None, None, Some(&branch), Some(&mut opts))?;"""
+invalidate_prelude = "drop(opts);"
+
+[trigger]
+step = "next_rebase"
+rust = "let _ = rebase.next();"
+
+[teardown]
+step = "drop"
+rust = "drop(branch);\ndrop(head);\ndrop(rebase);\ndrop(repo);"
