@@ -340,6 +340,12 @@ pub enum RegistrationGuard {
     /// options memcpy 给外部。owner drop 只释放闭包，**不解除外部注册**——
     /// 分离可构造。
     OwnerHoldsCallbackBridged,
+    /// **receiver 自身地址作为 userdata 交给外部注册函数**（libsql
+    /// `authorizer` 的 `self as *const Connection` 传 `sqlite3_set_authorizer`）。
+    /// receiver 结构体地址不稳定（clone / move / drop 都会让 C 持有的 userdata
+    /// 悬垂），即使回调本身是 `'static`（`Arc<dyn Fn>` 捕获不可借用），userdata
+    /// 的生命周期逃逸仍独立构成 UAF——分离可构造。
+    ReceiverEscapesAsUserData,
     /// 存在疑似 guard 的形状，但无法确定它约束了什么。
     ///
     /// 返回类型解析不到 ADT、该 ADT 定义在别的 crate 因而取不到 `Drop` 的 MIR、

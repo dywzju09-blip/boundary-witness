@@ -235,9 +235,18 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
                 ),
             },
         },
-        EffectiveCaptureAdmission::RequiresStaticCapture => InvalidateDecision::Refused {
-            reason: "requires_static_capture: 类型层排除借用捕获，referent 分离不可构造".to_owned(),
-        },
+        EffectiveCaptureAdmission::RequiresStaticCapture => {
+            // receiver 自身地址作为 userdata 交给外部（libsql authorizer）时，
+            // 即使回调捕获是 'static（`Arc<dyn Fn>`），C 持有的 receiver 地址
+            // 仍会因 clone/move/drop 悬垂——分离可构造，与回调捕获无关。
+            if contract.guard == RegistrationGuard::ReceiverEscapesAsUserData {
+                InvalidateDecision::Generated
+            } else {
+                InvalidateDecision::Refused {
+                    reason: "requires_static_capture: 类型层排除借用捕获，referent 分离不可构造".to_owned(),
+                }
+            }
+        }
         EffectiveCaptureAdmission::ContextDependent => InvalidateDecision::Refused {
             reason: "context_dependent: 签名不足以判定分离可行性".to_owned(),
         },

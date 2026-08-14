@@ -587,7 +587,11 @@ fn safe_lifetime_separation_possible(
 
     // 第二步：guard 是否否定分离。**这一步必须读外部侧的清槽证据。**
     let by_guard = match rust.guard {
-        RegistrationGuard::None | RegistrationGuard::OwnerHoldsCallbackBridged => by_shape,
+        // receiver 地址作为 userdata 逃逸（libsql authorizer）：C 持有 receiver
+        // 地址，与回调捕获是否 'static 无关——与 bridged 一样分离可构造。
+        RegistrationGuard::None
+        | RegistrationGuard::OwnerHoldsCallbackBridged
+        | RegistrationGuard::ReceiverEscapesAsUserData => by_shape,
         RegistrationGuard::Unresolved => {
             assumptions.push("registration guard shape unresolved".to_owned());
             Tri::Unresolved

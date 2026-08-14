@@ -21242,9 +21242,16 @@ fn registration_guards<'tcx>(
                     (RegistrationGuard::OwnerHoldsCallback, None, None)
                 }
             } else if return_lifetimes.is_empty() {
-                // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的
-                // 任何东西上。
-                (RegistrationGuard::None, None, None)
+                // receiver 自身地址作为 userdata 交给外部注册函数（libsql
+                // authorizer 形状）：即使回调捕获是 'static，receiver 地址逃逸
+                // 仍独立构成 UAF（clone/move/drop 让 C 持有的 userdata 悬垂）。
+                if receiver_escapes_as_userdata(tcx, def_id) {
+                    (RegistrationGuard::ReceiverEscapesAsUserData, None, None)
+                } else {
+                    // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的
+                    // 任何东西上。
+                    (RegistrationGuard::None, None, None)
+                }
             } else if !ties_to_callback_bound {
                 if bound_lifetimes.is_empty() {
                     // 回调没有显式 outlives bound，返回值却带 lifetime。形状像 guard，但
@@ -21719,6 +21726,133 @@ fn owner_holds_callback(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
                 {
                     return true;
                 }
+            }
+        }
+    }
+    false
+}
+
+/// receiver 自身地址（`self as *const _`）是否作为参数交给外部注册函数。
+///
+/// libsql `Connection::authorizer` 形状：`let user_data = self as *const Connection
+/// as *mut c_void; sqlite3_set_authorizer(db, cb, user_data)`——C 持有 receiver
+/// 结构体地址，receiver 被 clone/move/drop 后 userdata 悬垂。回调捕获可以是
+/// `'static`（`Arc<dyn Fn>`），该逃逸独立构成 UAF。
+fn receiver_escapes_as_userdata(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    let Some(receiver_local) = body.args_iter().next() else {
+        return false;
+    };
+    // 收集「receiver cast 成裸指针」的 local（不动点迭代：`self as *const _ as
+    // *mut c_void` 是两层 cast，第二层的来源是已收集的指针）。
+    let mut self_ptrs = std::collections::HashSet::new();
+    loop {
+        let mut changed = false;
+        for block in body.basic_blocks.iter() {
+            for statement in &block.statements {
+                let StatementKind::Assign(assignment) = &statement.kind else {
+                    continue;
+                };
+                let (place, rvalue) = &**assignment;
+                if !place.projection.is_empty() {
+                    continue;
+                }
+                if !matches!(place.ty(body, tcx).ty.kind(), ty::RawPtr(..)) {
+                    continue;
+                }
+                let refs_self_or_self_ptr = match rvalue {
+                    Rvalue::RawPtr(_, src) => {
+                        src.local == receiver_local || self_ptrs.contains(&src.local)
+                    }
+                    Rvalue::Cast(_, operand, _) | Rvalue::Use(operand, _) => {
+                        operand.place().is_some_and(|p| {
+                            p.local == receiver_local || self_ptrs.contains(&p.local)
+                        })
+                    }
+                    _ => false,
+                };
+                if refs_self_or_self_ptr && self_ptrs.insert(place.local) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if self_ptrs.is_empty() {
+        return false;
+    }
+    // extern 调用参数里出现 receiver 指针。参数可能经 tuple/拷贝链中转
+    // （`(Some(callback), user_data)` 组 tuple 再取出），按数据流反向回溯。
+    let mut operand_sources = std::collections::HashMap::<Local, Vec<Local>>::new();
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assignment) = &statement.kind else {
+                continue;
+            };
+            let (place, rvalue) = &**assignment;
+            if !place.projection.is_empty() {
+                continue;
+            }
+            // 提取 rvalue 引用的 locals（本 nightly 无 Rvalue::operands()，手动覆盖
+            // 主要变体：Use/Cast/UnaryOp/BinaryOp/RawPtr/Ref/Aggregate）。
+            let srcs: Vec<Local> = match rvalue {
+                Rvalue::Use(op, _) | Rvalue::Cast(_, op, _) => op
+                    .place()
+                    .map(|p| vec![p.local])
+                    .unwrap_or_default(),
+                Rvalue::RawPtr(_, place) => vec![place.local],
+                Rvalue::Ref(_, _, place) => vec![place.local],
+                Rvalue::Aggregate(_, ops) => ops
+                    .iter()
+                    .filter_map(|op| op.place().map(|p| p.local))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if !srcs.is_empty() {
+                operand_sources.entry(place.local).or_default().extend(srcs);
+            }
+        }
+    }
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, .. } = &terminator.kind else {
+            continue;
+        };
+        let Some((callee_def_id, _)) = func.const_fn_def() else {
+            continue;
+        };
+        if !tcx.is_foreign_item(callee_def_id) {
+            continue;
+        }
+        for arg in args {
+            let Some(arg_local) = arg.node.place().map(|p| p.local) else {
+                continue;
+            };
+            // 反向 BFS：参数 local 沿拷贝链是否可达 receiver 指针。
+            let mut seen = std::collections::HashSet::new();
+            let mut stack = vec![arg_local];
+            let mut found = false;
+            while let Some(local) = stack.pop() {
+                if self_ptrs.contains(&local) {
+                    found = true;
+                    break;
+                }
+                if !seen.insert(local) {
+                    continue;
+                }
+                if let Some(srcs) = operand_sources.get(&local) {
+                    stack.extend(srcs.iter().copied());
+                }
+            }
+            if found {
+                return true;
             }
         }
     }
@@ -22244,6 +22378,37 @@ fn crate_call_graph(
                 ty::FnDef(callee, _) => {
                     if let Some(local) = callee.as_local() {
                         edges.insert(local);
+                        // trait 方法调用（`self.conn.authorizer(..)` 的 MIR func 是
+                        // trait 方法 FnDef，不是动态分发指针）：实际执行的是 trait 的
+                        // 某个 impl 方法。本 crate 内所有该 trait 的 impl 同名方法都
+                        // 是可能目标——不把它们连进来，公开入口经 `Arc<dyn Trait>`
+                        // 委托到 extern 的链会在 trait 方法处断掉（libsql
+                        // `Connection::authorizer -> Conn::authorizer -> local 实现`）。
+                        if tcx.def_kind(tcx.parent(*callee)) == DefKind::Trait {
+                            let trait_def_id = tcx.parent(*callee);
+                            for impl_def_id in tcx
+                                .trait_impls_of(trait_def_id)
+                                .non_blanket_impls()
+                                .values()
+                                .flatten()
+                            {
+                                let Some(impl_local) = impl_def_id.as_local() else {
+                                    continue;
+                                };
+                                for item in tcx
+                                    .associated_items(impl_local.to_def_id())
+                                    .in_definition_order()
+                                {
+                                    if matches!(item.kind, ty::AssocKind::Fn { .. })
+                                        && item.name() == tcx.item_name(*callee)
+                                    {
+                                        if let Some(method_local) = item.def_id.as_local() {
+                                            edges.insert(method_local);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     // 外部 crate 的被调方不影响本 crate 的可达性判定。
                 }
