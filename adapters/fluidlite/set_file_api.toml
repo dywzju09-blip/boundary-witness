@@ -1,0 +1,55 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:fluidlite:set_file_api"
+
+[freeze]
+frozen_at = "2026-08-15T00:00:00Z"
+frozen_at_commit = "5eaa159"
+p3_verdict_available_at_freeze = true
+authored_from = "fluidlite 公开 API 文档与 fluidlite-sys fluid_fileapi_t 公开 C 结构（回调结构体指针形状）"
+
+[target]
+crate = "fluidlite"
+versions = ["0.2.1"]
+features = ["builtin"]
+api_path = "loader::Loader::set_file_api"
+
+[[setup]]
+step = "open_synth"
+rust = "let settings = fluidlite::Settings::new()?;\nlet synth = fluidlite::Synth::new(settings)?;\nlet loader = fluidlite::Loader::new_default()?;"
+
+[registration]
+receiver = "loader"
+method = "set_file_api"
+callback_signature = ""
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "trait"
+trait_impl = """
+impl fluidlite::FileApi for BwWitnessAgg<'_> {
+    type File = std::io::Cursor<Vec<u8>>;
+    fn open(&mut self, _filename: &std::path::Path) -> Option<Self::File> {
+        let _ = self.referent.len();
+        Some(std::io::Cursor::new(Vec::new()))
+    }
+    fn read(file: &mut Self::File, buf: &mut [u8]) -> bool {
+        use std::io::Read;
+        file.read(buf).is_ok()
+    }
+    fn seek(file: &mut Self::File, pos: std::io::SeekFrom) -> bool {
+        use std::io::Seek;
+        file.seek(pos).is_ok()
+    }
+    fn tell(file: &mut Self::File) -> Option<u64> {
+        use std::io::Seek;
+        file.stream_position().ok()
+    }
+}
+"""
+
+[trigger]
+step = "sfload"
+rust = "synth.add_sfloader(loader);\nlet _ = synth.sfload(\"dummy.sf2\", true);"
+
+[teardown]
+step = "drop"
+rust = ""

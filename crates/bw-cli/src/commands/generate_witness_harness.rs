@@ -127,6 +127,12 @@ struct AdapterRegistration {
     /// trait 回调：输出类型名（`Aggregate<A, T>` 的 `T`）。
     #[serde(default)]
     output_type: String,
+    /// **通用 trait 回调实现模板**（可选）。存在时优先于 rusqlite Aggregate
+    /// 硬编码：adapter 提供完整 `struct BwWitnessAgg<'a>` + `impl ... for
+    /// BwWitnessAgg<'a>`（含 `{referent}` 占位），生成器只负责替换占位与组装。
+    /// 覆盖 fluidlite `FileApi` 等多方法回调结构体形状。
+    #[serde(default)]
+    trait_impl: Option<String>,
     /// 回调参数以**可变借用**传递（`with_hide_callback(&'cb mut C)` 形状）：
     /// 生成器构造 `let mut callback = ...` 并传 `&mut callback`。
     #[serde(default)]
@@ -424,7 +430,12 @@ fn render_callback_block(
         let is_window = trait_path.ends_with("WindowAggregate");
         // WindowAggregate 继承 Aggregate：super trait 的方法必须由 Aggregate impl
         // 提供，所以 window 形状需要两个 impl 块；Aggregate 单独用时一个 impl。
-        let (aggregate_impl, main_impl, window_impl) = if is_window {
+        let (aggregate_impl, main_impl, window_impl) = if let Some(trait_impl) =
+            &adapter.registration.trait_impl
+        {
+            // 通用 trait 回调：adapter 提供 struct + impl（含 {referent} 占位）。
+            (String::new(), trait_impl.replace("{referent}", referent), String::new())
+        } else if is_window {
             (
                 format!(
                     r#"    impl<'a> rusqlite::functions::Aggregate<{acc_type}, {output_type}> for BwWitnessAgg<'a> {{
@@ -490,12 +501,18 @@ fn render_callback_block(
         } else {
             String::new()
         };
+        // 通用 trait_impl 时跳过 `struct {acc_type};`（rusqlite 聚合上下文类型，
+        // 对 FileApi 等多方法回调结构体无意义，空 acc_type 会渲染成 `struct ;`）。
+        let acc_struct_decl = if adapter.registration.trait_impl.is_some() {
+            String::new()
+        } else {
+            format!("    struct {acc_type};\n")
+        };
         format!(
             r#"    // {header}
     // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的
     // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。
-{referent_decl}    struct {acc_type};
-    struct BwWitnessAgg<'a> {{
+{referent_decl}{acc_struct_decl}    struct BwWitnessAgg<'a> {{
         referent: &'a Box<String>,
     }}
 {aggregate_impl}{main_impl}{window_impl}    let callback = BwWitnessAgg {{ referent: &{referent} }};
@@ -507,7 +524,7 @@ fn render_callback_block(
             main_impl = main_impl,
             window_impl = window_impl,
             register = register,
-            acc_type = acc_type,
+            acc_struct_decl = acc_struct_decl,
             drop_line = if declare_referent {
                 format!("    drop({referent});")
             } else {

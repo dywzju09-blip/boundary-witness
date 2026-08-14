@@ -21091,7 +21091,7 @@ fn callback_lifetime_bounds<'tcx>(
         .filter(|(_, bounds)| {
             bounds
                 .iter()
-                .any(|bound| hir_bound_is_callable_trait(bound))
+                .any(|bound| hir_bound_is_callable_trait(tcx, bound))
         })
         .map(|(callback_param, bounds)| {
             let (bound_lifetime, bound_scope) =
@@ -21184,7 +21184,7 @@ fn registration_guards<'tcx>(
     };
 
     let declared_lifetimes = declared_lifetime_params_with_impl(tcx, def_id, generics);
-    let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    let mut callback_params = callback_param_bound_lifetimes(tcx, generics, &declared_lifetimes);
     if let Some(fn_decl) = node.fn_decl() {
         callback_params.extend(callback_params_from_signature(tcx, fn_decl, &declared_lifetimes));
     }
@@ -21361,9 +21361,11 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
     // 不稳定），后续 `as *mut c_void` 是第二层 cast——统一用 operands() 识别，
     // 不依赖具体 Rvalue 变体名。
     let mut bridged_ptrs: std::collections::HashSet<Local> = std::collections::HashSet::new();
+    let arg_locals_all: std::collections::HashSet<Local> = body.args_iter().collect();
     loop {
         let mut changed = false;
         for block in body.basic_blocks.iter() {
+            // 语句里的裸指针 cast / use。
             for statement in &block.statements {
                 let StatementKind::Assign(assignment) = &statement.kind else {
                     continue;
@@ -21392,6 +21394,40 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
                 if refs_receiver_or_bridged && bridged_ptrs.insert(place.local) {
                     changed = true;
                 }
+            }
+            // 终结指令里的回调参数包装调用：`dest = wrap_fileapi(fileapi)`——
+            // 回调参数（非 receiver 参数）被本地函数包装后返回裸指针。回调结构体
+            // 形状（fluidlite FileApi / vtable / ops）把 F box 进包装结构体交给 C，
+            // 与 git2 的 receiver 桥接是同一家族（间接交出）。
+            let Some(terminator) = &block.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind else {
+                continue;
+            };
+            if destination.projection.is_empty() == false && !destination.projection.is_empty() {
+                continue;
+            }
+            let dest_place = destination;
+            if !matches!(dest_place.ty(body, tcx).ty.kind(), ty::RawPtr(..)) {
+                continue;
+            }
+            // 被调方是本地函数（非 extern）——extern 调用是正式交出点，由
+            // foreign_symbol_binding 处理；这里只认「本地包装」。
+            let is_foreign_callee = match func.const_fn_def() {
+                Some((callee_def_id, _)) => tcx.is_foreign_item(callee_def_id),
+                None => false,
+            };
+            if is_foreign_callee {
+                continue;
+            }
+            let wraps_callback_arg = args.iter().any(|arg| {
+                arg.node.place().is_some_and(|p| {
+                    arg_locals_all.contains(&p.local) && p.local != receiver_local
+                })
+            });
+            if wraps_callback_arg && bridged_ptrs.insert(dest_place.local) {
+                changed = true;
             }
         }
         if !changed {
@@ -21424,9 +21460,6 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
             if !bridged_ptrs.contains(&value_local.local) {
                 continue;
             }
-            if !arg_locals.contains(&place.local) || place.local == receiver_local {
-                continue;
-            }
             let has_deref = place
                 .projection
                 .iter()
@@ -21435,28 +21468,34 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
             if !has_deref || !ends_with_field {
                 continue;
             }
-            // 参数是「外部 C 结构体」：bindgen/手写 ffi 输出惯例上，C 结构体定义在
-            // `raw::` / `ffi` / `sys` 模块。内部容器不在此列。
-            // 用**参数 local** 的类型（`&mut raw::git_checkout_options`），不是字段
-            // 类型（`*mut c_void` 等裸指针没有 ADT）。
-            let mut param_ty = body.local_decls[place.local].ty;
-            if let ty::Ref(_, inner, _) = param_ty.kind() {
-                param_ty = *inner;
-            }
-            let Some(param_adt) = param_ty.ty_adt_def() else {
-                continue;
+            // store 目标是「C 结构体的字段」。两类 base 都接受：
+            // - **参数结构体字段**（git2：`(*opts).checkout_options = cb`）——
+            //   place.local 是参数 local；
+            // - **receiver 持有的 C 结构体字段**（fluidlite：`(*self.handle).fileapi
+            //   = wrap_fileapi(f)`，base 是 receiver 裸指针字段解引用出的局部引用）。
+            //   回调载体进入 receiver 持有的 C 结构体，同样是「桥接进 C」的间接交出。
+            let base_is_arg = arg_locals.contains(&place.local) && place.local != receiver_local;
+            let base_is_c_struct = {
+                let mut base_ty = body.local_decls[place.local].ty;
+                if let ty::Ref(_, inner, _) = base_ty.kind() {
+                    base_ty = *inner;
+                }
+                base_ty
+                    .ty_adt_def()
+                    .map(|adt| {
+                        let p = tcx.def_path_str(adt.did());
+                        let crate_name = p.split("::").next().unwrap_or("");
+                        p.contains("::raw::")
+                            || p.contains("::ffi")
+                            || p.contains("::sys::")
+                            || crate_name.ends_with("_sys")
+                    })
+                    .unwrap_or(false)
             };
-            let param_def_path = tcx.def_path_str(param_adt.did());
-            // C 结构体定义在 ffi 边界：git2 0.18 用 `git2::raw`，0.21 移到
-            // `libgit2_sys`（-sys crate，Rust 惯例 crate 名以 `_sys` 结尾）。
-            let crate_name = param_def_path.split("::").next().unwrap_or("");
-            if param_def_path.contains("::raw::")
-                || param_def_path.contains("::ffi")
-                || param_def_path.contains("::sys::")
-                || crate_name.ends_with("_sys")
-            {
-                return true;
+            if !base_is_arg && !base_is_c_struct {
+                continue;
             }
+            return true;
         }
     }
     false
@@ -21590,6 +21629,7 @@ fn owner_holds_callback(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
     let Some(receiver_local) = body.args_iter().next() else {
         return false;
     };
+    let arg_locals_all: std::collections::HashSet<Local> = body.args_iter().collect();
     // 第一步：收集 `&mut (*self).<field>` 的借用临时（rustc 常经临时再 store）。
     let mut field_borrows = std::collections::HashSet::new();
     for block in body.basic_blocks.iter() {
@@ -21607,19 +21647,78 @@ fn owner_holds_callback(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
             }
         }
     }
-    // 第二步：store 到 receiver 字段或其借用临时，且类型含 dyn Fn。
+    // 第一步半：收集「回调参数（非 receiver 参数）经本地 helper 包装返回的裸指针」。
+    // 回调结构体形状（fluidlite FileApi 等）把泛型 F box 进包装结构体（*mut C struct）
+    // 后 store 到 receiver 持有的 C 结构体字段——包装指针就是回调载体，receiver 持有它。
+    let mut wrapped_cb_ptrs = std::collections::HashSet::new();
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind else {
+            continue;
+        };
+        if !matches!(destination.ty(body, tcx).ty.kind(), ty::RawPtr(..)) {
+            continue;
+        }
+        let is_foreign_callee = match func.const_fn_def() {
+            Some((callee_def_id, _)) => tcx.is_foreign_item(callee_def_id),
+            None => false,
+        };
+        if is_foreign_callee {
+            continue;
+        }
+        let wraps_callback_arg = args.iter().any(|arg| {
+            arg.node.place().is_some_and(|p| {
+                arg_locals_all.contains(&p.local) && p.local != receiver_local
+            })
+        });
+        if wraps_callback_arg {
+            wrapped_cb_ptrs.insert(destination.local);
+        }
+    }
+    // 第二步：store 到 receiver 字段或其借用临时。两类都算「回调由 receiver 持有」：
+    // - 类型含 dyn Fn（git2 `self.progress = Some(Box::new(cb))`）；
+    // - 值是回调参数包装指针（fluidlite `(*handle).fileapi = wrap_fileapi(f)`）。
     for block in body.basic_blocks.iter() {
         for statement in &block.statements {
             let StatementKind::Assign(assignment) = &statement.kind else {
                 continue;
             };
-            let (place, _) = &**assignment;
+            let (place, rvalue) = &**assignment;
             let place_ty = place.ty(&body.local_decls, tcx).ty;
-            if !ty_contains_dyn_fn(place_ty) {
-                continue;
-            }
-            if place.local == receiver_local || field_borrows.contains(&place.local) {
+            // store 目标相关于 receiver：直接 receiver 字段、receiver 的字段借用临时，
+            // 或 base 是 C 结构体引用/指针（receiver 持有的 C 结构体，
+            // fluidlite `(*handle).fileapi`，handle 来自 `&mut *self.handle`）。
+            let base_is_c_struct = {
+                let mut base_ty = body.local_decls[place.local].ty;
+                if let ty::Ref(_, inner, _) = base_ty.kind() {
+                    base_ty = *inner;
+                }
+                base_ty
+                    .ty_adt_def()
+                    .map(|adt| {
+                        let p = tcx.def_path_str(adt.did());
+                        let crate_name = p.split("::").next().unwrap_or("");
+                        p.contains("::raw::")
+                            || p.contains("::ffi")
+                            || p.contains("::sys::")
+                            || crate_name.ends_with("_sys")
+                    })
+                    .unwrap_or(false)
+            };
+            let place_is_receiver_related = place.local == receiver_local
+                || field_borrows.contains(&place.local)
+                || base_is_c_struct;
+            if ty_contains_dyn_fn(place_ty) && place_is_receiver_related {
                 return true;
+            }
+            if let Rvalue::Use(operand, _) = rvalue {
+                if operand.place().is_some_and(|p| wrapped_cb_ptrs.contains(&p.local))
+                    && place_is_receiver_related
+                {
+                    return true;
+                }
             }
         }
     }
@@ -22203,7 +22302,7 @@ fn allocation_ownerships(
     };
 
     let declared_lifetimes = declared_lifetime_params_with_impl(tcx, def_id, generics);
-    let mut callback_params = callback_param_bound_lifetimes(generics, &declared_lifetimes);
+    let mut callback_params = callback_param_bound_lifetimes(tcx, generics, &declared_lifetimes);
     if let Some(fn_decl) = node.fn_decl() {
         callback_params.extend(callback_params_from_signature(tcx, fn_decl, &declared_lifetimes));
     }
@@ -22300,6 +22399,7 @@ fn allocation_ownerships(
 /// 与 [`callback_lifetime_bounds`] 用同一个"什么算回调参数"的判据（有 `Fn` 家族 bound），
 /// 两处必须一致：guard 事实要能按 `callback_param` 与 bound 事实配对。
 fn callback_param_bound_lifetimes(
+    tcx: TyCtxt<'_>,
     generics: &hir::Generics<'_>,
     declared_lifetimes: &BTreeSet<usize>,
 ) -> Vec<(String, BTreeSet<usize>)> {
@@ -22323,7 +22423,7 @@ fn callback_param_bound_lifetimes(
         .filter(|(_, bounds)| {
             bounds
                 .iter()
-                .any(|bound| hir_bound_is_callable_trait(bound))
+                .any(|bound| hir_bound_is_callable_trait(tcx, bound))
         })
         .map(|(param_name, bounds)| {
             let mut lifetimes = BTreeSet::<usize>::new();
@@ -22793,28 +22893,47 @@ fn callback_bound_scope_from_bounds(
     (None, CallbackLifetimeBoundScope::NoLifetimeBound)
 }
 
-/// bound 是否是 `Fn` / `FnMut` / `FnOnce`。用来把回调参数和普通泛型参数分开。
-fn hir_bound_is_callable_trait(bound: &hir::GenericBound<'_>) -> bool {
+/// bound 是否是回调 trait。用来把回调参数和普通泛型参数分开。
+///
+/// 三类：
+/// - `Fn` / `FnMut` / `FnOnce` / `AsyncFn*` 家族；
+/// - rusqlite 的 aggregate 回调 trait（`Aggregate` / `WindowAggregate`，历史形状）；
+/// - **任何非 auto、有关联方法的 trait**（回调结构体形状：fluidlite `FileApi`、
+///   各种 vtable/ops 结构体）。回调结构体把「函数指针数组 + data 指针」打包成
+///   一个对象交给 C，语义上是回调但不是 Fn 家族。
+///
+/// 第三类比 Fn 家族宽松：`T: Clone` 之类普通约束也会命中。**这不构成误报**——
+/// callback_lifetime_bound 只是候选观察，装配阶段要求 allocation（into_raw 证据）、
+/// lineage 与外部符号/桥接证据齐全，普通约束不会形成真实交出点，落缺证而非契约。
+fn hir_bound_is_callable_trait(tcx: TyCtxt<'_>, bound: &hir::GenericBound<'_>) -> bool {
     let hir::GenericBound::Trait(poly_trait_ref) = bound else {
         return false;
     };
-    poly_trait_ref
-        .trait_ref
-        .path
-        .segments
-        .last()
-        .is_some_and(|segment| {
-            matches!(
-                segment.ident.name.as_str(),
-                "Fn" | "FnMut" | "FnOnce" | "AsyncFn" | "AsyncFnMut" | "AsyncFnOnce"
-            )
-                // rusqlite 的 aggregate 回调 trait：`D: Aggregate<A, T>` /
-                // `W: WindowAggregate<A, T>`。外部经 xStep/xFinal/xValue/xInverse
-                // trampoline 调用其方法——语义上是回调，只是不是 Fn 家族。
-                // （rusqlite 特定形状，Gate C0 会暴露其他库的同类回调 trait。）
-                || segment.ident.name.as_str() == "Aggregate"
-                || segment.ident.name.as_str() == "WindowAggregate"
-        })
+    let Some(segment) = poly_trait_ref.trait_ref.path.segments.last() else {
+        return false;
+    };
+    let name = segment.ident.name.as_str();
+    if matches!(
+        name,
+        "Fn" | "FnMut" | "FnOnce" | "AsyncFn" | "AsyncFnMut" | "AsyncFnOnce"
+            | "Aggregate"
+            | "WindowAggregate"
+    ) {
+        return true;
+    }
+    // 泛化：非 auto、有关联方法的 trait 作为回调候选。
+    // `path.res` 指向 trait 定义；`trait_is_auto` 排除 Send/Sync/Unpin 等；
+    // `associated_items` 里有关联方法（AssocKind::Fn）即视为回调结构体形状。
+    let def_id = poly_trait_ref.trait_ref.path.res.def_id();
+    if tcx.def_kind(def_id) != DefKind::Trait {
+        return false;
+    }
+    if tcx.trait_is_auto(def_id) {
+        return false;
+    }
+    tcx.associated_items(def_id)
+        .in_definition_order()
+        .any(|item| matches!(item.kind, ty::AssocKind::Fn { .. }))
 }
 
 fn function_declared_lifetime_params(generics: &hir::Generics<'_>) -> BTreeSet<usize> {
