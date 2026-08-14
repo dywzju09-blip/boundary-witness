@@ -87,7 +87,15 @@ struct AdapterTarget {
     versions: Vec<String>,
     #[serde(default)]
     features: Vec<String>,
+    /// 是否启用 crate 的默认 feature（libsql 的默认 feature 会拉 HTTP/hrana 栈，
+    /// 目标形状只用 core；PoC 也用 `default-features = false`）。
+    #[serde(default = "default_true")]
+    default_features: bool,
     api_path: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +126,12 @@ struct AdapterRegistration {
     /// 生成 struct + impl——rusqlite 的 `Aggregate`/`WindowAggregate` 形状）。
     #[serde(default)]
     callback_kind: String,
+    /// 回调**不访问 referent**（libsql authorizer 形状）：UAF 不经过回调捕获
+    /// （`Arc<dyn Fn>` 是 'static，回调捕获不了借用），而经 receiver 自身地址
+    /// 作为 userdata 逃逸（guard=ReceiverEscapesAsUserData）。此时不声明 referent、
+    /// 回调体不引用它，分离动作由 invalidate_prelude 提供（drop(receiver)）。
+    #[serde(default)]
+    callback_no_referent: bool,
     /// trait 回调：trait 完整路径（如 `rusqlite::functions::Aggregate`）。
     #[serde(default)]
     trait_path: String,
@@ -541,15 +555,23 @@ fn render_callback_block(
             },
         )
     } else {
-        let referent_decl = if declare_referent {
+        let no_referent = adapter.registration.callback_no_referent;
+        let referent_decl = if declare_referent && !no_referent {
             format!("    let {referent} = Box::new(String::from(\"bw-witness-referent\"));\n")
         } else {
             String::new()
         };
-        let drop_line = if declare_referent {
+        let drop_line = if declare_referent && !no_referent {
             format!("    drop({referent});")
         } else {
             String::new()
+        };
+        let callback_body = if no_referent {
+            format!("    let mut callback = |{params}| {{{ret_tail}\n    }};")
+        } else {
+            format!(
+                "    let mut callback = |{params}| {{\n        let _ = {referent}.len();{ret_tail}\n    }};"
+            )
         };
         // guard 拆除：invalidate 先拆 guard（解除类型层借用绑定，如 into_inner）
         // 再 drop referent；Refused 时只保留注册行（回调引用未声明的 referent →
@@ -578,15 +600,11 @@ fn render_callback_block(
             r#"    // {header}
     // referent 用堆对象（Box）：失效后访问走 heap-use-after-free，ASan 对堆的
     // 检测可靠；Rust 栈 use-after-scope 的 ASan 插桩不可靠（已知 rust-lang 限制）。
-{referent_decl}    let mut callback = |{params}| {{
-        let _ = {referent}.len();{ret_tail}
-    }};
+{referent_decl}{callback_body}
     {register}
 {prelude_line}{guard_removal_line}{drop_line}"#,
             header = header,
-            referent = referent,
-            params = params,
-            ret_tail = ret_tail,
+            callback_body = callback_body,
             register = register,
             prelude_line = prelude_line,
             guard_removal_line = guard_removal_line,
@@ -603,6 +621,7 @@ fn render_cargo_toml(
     crate_name: &str,
     version: &str,
     features: &[String],
+    default_features: bool,
     crate_source_dir: &Path,
 ) -> String {
     let features = features
@@ -625,7 +644,7 @@ name = "{harness_name}"
 path = "src/main.rs"
 
 [dependencies]
-{crate_name} = {{ version = "={version}", features = [{features}] }}
+{crate_name} = {{ version = "={version}", default-features = {default_features}, features = [{features}] }}
 
 [patch.crates-io]
 {crate_name} = {{ path = "{source}" }}
@@ -634,6 +653,7 @@ path = "src/main.rs"
         crate_name = crate_name,
         version = version,
         features = features,
+        default_features = default_features,
         source = crate_source_dir.display(),
     )
 }
@@ -707,10 +727,17 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
         .next()
         .unwrap_or("")
         .to_owned();
-    let contract_row = contracts.iter().find(|row| {
-        row.api_id == adapter.target.api_path
-            || row.api_id.ends_with(&format!("::{api_tail}"))
-    });
+    // 精确匹配优先：`ends_with("::authorizer")` 的宽松匹配在多个同尾契约
+    // （libsql 的公开包装/impl/trait 默认实现都有 authorizer）时会取到第一个，
+    // 而 adapter 指定的是具体实现（guard 语义不同）。先精确，再回退宽松。
+    let contract_row = contracts
+        .iter()
+        .find(|row| row.api_id == adapter.target.api_path)
+        .or_else(|| {
+            contracts
+                .iter()
+                .find(|row| row.api_id.ends_with(&format!("::{api_tail}")))
+        });
     let Some(contract_row) = contract_row else {
         return Err(CliError::input(
             "BW-CONTRACT",
@@ -777,6 +804,7 @@ pub fn run(args: GenerateWitnessHarnessArgs) -> Result<CommandStatus, CliError> 
         &adapter.target.crate_name,
         &version,
         &adapter.target.features,
+        adapter.target.default_features,
         &crate_source_dir,
     );
 
@@ -1084,9 +1112,10 @@ rust = "drop(conn);"
             "rusqlite",
             "0.26.1",
             &["bundled".to_owned(), "hooks".to_owned()],
+            true,
             Path::new("/repo/benchmarks/historical-cves/rusqlite/vendor/rusqlite-0.26.1"),
         );
-        assert!(cargo.contains("rusqlite = { version = \"=0.26.1\", features = [\"bundled\", \"hooks\"] }"));
+        assert!(cargo.contains("rusqlite = { version = \"=0.26.1\", default-features = true, features = [\"bundled\", \"hooks\"] }"));
         assert!(cargo.contains("vendor/rusqlite-0.26.1"));
         assert!(!cargo.contains("bw_runtime"));
         assert!(!cargo.contains("bw-model"));

@@ -38,6 +38,7 @@
 | 多库家族负方向批量验证（openssl / libpulse / libsql / duckdb） | ✅ **zero 误报**（2026-08-14：openssl 48 hand-offs/23 装配，5 个非 static PEM 同步回调正确落 insufficient_evidence、18 个 'static 落 compatible；libpulse 116/124 装配全 compatible；libsql 'static+leak、duckdb 无 safe 闭包注册。生态再确认：同类 nday 仅 rusqlite 典型，git2 是例外，见 [记录](../experiments/results/multi-family-negative-validation-2026-08-14.md)） |
 | Q3 同步/延迟晚调判别基线（sqlite3_exec vs update_hook） | ✅ **判别正确**（2026-08-14：真实 sqlite3 IR 上同步回调落 no_retain+synchronous_invoke_only、延迟注册落 may_retain+may_invoke_after_return；降级 Q3 的可达性升级基线已划界，见 [记录](../experiments/results/q3-sync-late-invoke-baseline-2026-08-14.md)） |
 | fluidlite FLUID-01 unseen 正例（set_file_api 回调结构体 UAF） | ✅ **工具全链路 ASan 出证**（2026-08-15：trait 回调识别泛化 + bridged 间接交出 + owner-held 回调包装三判据扩展、生成器通用 trait_impl；自动生成 harness 报 heap-use-after-free，no-trigger/no-invalidate 对照干净，变异检查判据有判别力。覆盖「回调结构体指针」形状家族（vtable/ops）。见 [记录](../experiments/results/fluidlite-021-detected-2026-08-15.md)） |
+| libsql LSQL-01 unseen 正例（authorizer receiver-as-userdata UAF） | ✅ **工具全链路 ASan 出证**（2026-08-15：动态分发调用图边（Arc<dyn Conn> 委托链穿透）+ RegistrationGuard::ReceiverEscapesAsUserData 判据 + 生成器 callback_no_referent/default-features/契约精确匹配；自动生成 harness 报 heap-use-after-free（authorizer_callback 读已释放 ArcInner），no-trigger（无事务）/no-invalidate 对照干净，变异检查判据有判别力。**判定维度从回调捕获扩展到 userdata 载体生命周期**。见 [记录](../experiments/results/libsql-0930-lsql01-detected-2026-08-15.md)） |
 
 Rust 侧契约事实、外部侧行为事实与精确联结现在都能从真实构建产物自动产出。5.2 在
 rusqlite 0.26.1 上跑通 `Connection::update_hook → sqlite3_update_hook` 的

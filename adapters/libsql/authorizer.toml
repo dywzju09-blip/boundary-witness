@@ -1,0 +1,64 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:libsql:authorizer"
+
+[freeze]
+frozen_at = "2026-08-15T00:00:00Z"
+frozen_at_commit = "cce076e"
+p3_verdict_available_at_freeze = true
+authored_from = "libsql 公开 API 文档与 sqlite3_set_authorizer 公开 C 签名（receiver-as-userdata 形状）"
+
+[target]
+crate = "libsql"
+versions = ["0.9.30"]
+features = ["core"]
+default_features = false
+api_path = "local::connection::Connection::authorizer"
+
+[[setup]]
+step = "block_on_and_open"
+rust = """
+struct NoopWaker;
+impl std::task::Wake for NoopWaker {
+    fn wake(self: std::sync::Arc<Self>) {}
+    fn wake_by_ref(self: &std::sync::Arc<Self>) {}
+}
+fn bw_block_on<F: std::future::Future>(fut: F) -> F::Output {
+    let waker = std::task::Waker::from(std::sync::Arc::new(NoopWaker));
+    let mut cx = std::task::Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop {
+        if let std::task::Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; }
+        std::thread::yield_now();
+    }
+}
+let (db, conn) = bw_block_on(async {
+    let db = libsql::Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+    Ok::<_, Box<dyn std::error::Error>>((db, conn))
+})?;
+"""
+
+[registration]
+receiver = "conn"
+method = "authorizer"
+callback_signature = "FnMut(&libsql::AuthContext)"
+callback_arg_index = 0
+accepts_none_to_clear = true
+callback_kind = "closure"
+callback_no_referent = true
+callback_ret_tail = "libsql::Authorization::Allow"
+register_template = """
+eprintln!("MARK registered-authorizer");
+let cb = std::sync::Arc::new(callback);
+let _ = conn.authorizer(Some(cb));
+let tx = bw_block_on(conn.transaction())?;
+"""
+invalidate_prelude = "drop(conn);"
+
+[trigger]
+step = "execute_on_tx"
+rust = "eprintln!(\"MARK before-execute\");\nlet _ = bw_block_on(tx.execute(\"CREATE TABLE t(x INTEGER)\", ()));\neprintln!(\"MARK after-execute\");"
+
+[teardown]
+step = "drop"
+rust = "drop(tx);\ndrop(db);"
