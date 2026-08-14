@@ -22748,8 +22748,17 @@ fn callback_trait_object_lifetime<'tcx, 'hir>(
                         })
                     },
                 );
-                if let Some(lifetime) = lifetime {
-                    return Some(TraitObjectCallbackLifetime::Lifetime(lifetime));
+                match lifetime {
+                    Some(lifetime) => {
+                        return Some(TraitObjectCallbackLifetime::Lifetime(lifetime));
+                    }
+                    // alias 没有 lifetime 实参（`AuthHook = Arc<dyn Fn(..)>` 形状）：
+                    // 展开体递归已确认是 callable trait object，且外层是容器/static
+                    // 默认——按容器默认 static 处理。此前这里不返回、继续落到泛型参数
+                    // 扫描，最终返回 None，导致 `Option<AuthHook>` 类参数漏掉 bound
+                    // 观察（collect_callable_trait_object_lifetimes 与
+                    // callback_trait_object_lifetime 两套识别漂移）。
+                    None => return Some(TraitObjectCallbackLifetime::StaticByContainerDefault),
                 }
             }
             let inner_context = path
@@ -22929,6 +22938,13 @@ fn hir_bound_is_callable_trait(tcx: TyCtxt<'_>, bound: &hir::GenericBound<'_>) -
         return false;
     }
     if tcx.trait_is_auto(def_id) {
+        return false;
+    }
+    // core/std 的 trait（Clone/Debug/Iterator 等）几乎不可能是 FFI 回调结构体——
+    // 唯一例外 Fn 家族已在上面的 matches 分支处理。排除它们避免 `T: Clone + 'c`
+    // 类普通约束变成回调候选（hand-off 池噪音）。
+    let def_path = tcx.def_path_str(def_id);
+    if def_path.starts_with("core::") || def_path.starts_with("std::") {
         return false;
     }
     tcx.associated_items(def_id)

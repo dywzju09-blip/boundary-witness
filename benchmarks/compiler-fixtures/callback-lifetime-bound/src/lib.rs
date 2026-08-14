@@ -153,6 +153,17 @@ impl Handle {
     }
 }
 
+/// libsql `Option<AuthHook>` 形状：type alias 到 `Arc<dyn Fn>`，参数用 `Option<..>` 包装。
+/// 两套 trait object 识别（callback_trait_object_lifetime vs collect_callable_...）曾在此
+/// 形状上漂移：allocation/guard 识别了 arg，bound 观察没有——修复回归锚点。
+pub type AuthHook = std::sync::Arc<dyn Fn(&Handle) -> bool>;
+
+impl Handle {
+    pub fn alias_trait_object(&self, hook: Option<AuthHook>) {
+        let _ = hook;
+    }
+}
+
 impl<'owner> Registry<'owner> {
     /// `'other` 由另一个参数引入，不来自 receiver → `declared_free_lifetime`。
     ///

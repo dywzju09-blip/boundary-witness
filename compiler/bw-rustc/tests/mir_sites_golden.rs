@@ -7152,6 +7152,18 @@ fn callback_lifetime_bound_fixture_separates_receiver_scoped_bounds_from_static_
         "`F: FnMut()` and `F: 'c` as separate predicates must aggregate to one verdict"
     );
 
+    // libsql `Option<AuthHook>`（type alias 到 `Arc<dyn Fn>`）形状：alias 无 lifetime
+    // 实参时按容器默认 static 处理。此前 alias 分支识别成功但不返回（lifetime=None），
+    // 与 collect_callable_trait_object_lifetimes 漂移，bound 观察缺失。
+    assert_eq!(
+        scope_of("alias_trait_object"),
+        Some((
+            bw_model::CallbackLifetimeBoundScope::StaticLifetime,
+            Some("'static".to_owned())
+        )),
+        "`Option<Alias<Arc<dyn Fn>>>` without an alias lifetime arg defaults to 'static"
+    );
+
     // 负控：判据是"回调参数"，不是"任何被声明 lifetime 约束的泛型参数"。
     assert!(
         scope_of("not_a_callback").is_none(),
