@@ -21228,15 +21228,22 @@ fn registration_guards<'tcx>(
             let (guard, foreign_release_callee, unresolved_reason) = if owner_holds_callback(
                 tcx, def_id,
             ) {
-                // 回调分配**存进 receiver 字段**（owner-held，git2 的
-                // `self._progress = Some(boxed)` / `CheckoutBuilder::progress`）。
-                // 这是函数体 MIR 判据，优先于返回值形状——builder 模式返回
-                // `&mut self`（带 'cb）时 return_lifetimes 非空，但回调确实在
-                // 字段里。receiver 若被桥接到外部 C 结构体（configure 把
-                // `self as *mut _` 写进 `raw::git_checkout_options` 字段、rebase
-                // memcpy 给 git_rebase_init），owner drop 只释放闭包、不解除外部
-                // 注册 → 分离可构造；否则保守 OwnerHoldsCallback（安全方向）。
-                if receiver_bridged_to_foreign(tcx, def_id) {
+                // receiver 自身地址作为 userdata 交给外部（mosquitto
+                // `Callbacks::initialize` 的 `&*self` 传 mosquitto_user_data_set）：
+                // 闭包虽是 owner-held，但 C 持有的是 **receiver 结构体地址**——owner
+                // drop/move 后 receiver 悬垂，独立于闭包捕获。优先于 bridged/纯
+                // owner-held（比闭包释放更直接地构成分离）。
+                if receiver_escapes_as_userdata(tcx, def_id) {
+                    (RegistrationGuard::ReceiverEscapesAsUserData, None, None)
+                } else if receiver_bridged_to_foreign(tcx, def_id) {
+                    // 回调分配**存进 receiver 字段**（owner-held，git2 的
+                    // `self._progress = Some(boxed)` / `CheckoutBuilder::progress`）。
+                    // 这是函数体 MIR 判据，优先于返回值形状——builder 模式返回
+                    // `&mut self`（带 'cb）时 return_lifetimes 非空，但回调确实在
+                    // 字段里。receiver 若被桥接到外部 C 结构体（configure 把
+                    // `self as *mut _` 写进 `raw::git_checkout_options` 字段、rebase
+                    // memcpy 给 git_rebase_init），owner drop 只释放闭包、不解除外部
+                    // 注册 → 分离可构造；否则保守 OwnerHoldsCallback（安全方向）。
                     (RegistrationGuard::OwnerHoldsCallbackBridged, None, None)
                 } else {
                     (RegistrationGuard::OwnerHoldsCallback, None, None)
@@ -21739,6 +21746,18 @@ fn owner_holds_callback(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
 /// 结构体地址，receiver 被 clone/move/drop 后 userdata 悬垂。回调捕获可以是
 /// `'static`（`Arc<dyn Fn>`），该逃逸独立构成 UAF。
 fn receiver_escapes_as_userdata(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    receiver_escapes_as_userdata_inner(tcx, def_id, 0)
+}
+
+/// 跨方法调用链的 receiver 逃逸检查。`on_connect` 把 `&mut self` 传给
+/// `initialize()`，真正的 self-as-userdata 在 initialize 里——本体检查看不到，
+/// 需要沿「self 传给本地方法」的边递归。深度上限防环。
+fn receiver_escapes_as_userdata_inner(
+    tcx: TyCtxt<'_>,
+    def_id: LocalDefId,
+    depth: u32,
+) -> bool {
+    const MAX_DEPTH: u32 = 3;
     if !tcx.is_mir_available(def_id) {
         return false;
     }
@@ -21746,8 +21765,8 @@ fn receiver_escapes_as_userdata(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
     let Some(receiver_local) = body.args_iter().next() else {
         return false;
     };
-    // 收集「receiver cast 成裸指针」的 local（不动点迭代：`self as *const _ as
-    // *mut c_void` 是两层 cast，第二层的来源是已收集的指针）。
+    // 收集「源自 receiver 的引用/裸指针」local（不动点迭代：`&*self as *const as
+    // *mut c_void` 是 引用→裸指针→裸指针 的链，中间引用也要传播）。
     let mut self_ptrs = std::collections::HashSet::new();
     loop {
         let mut changed = false;
@@ -21760,11 +21779,11 @@ fn receiver_escapes_as_userdata(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
                 if !place.projection.is_empty() {
                     continue;
                 }
-                if !matches!(place.ty(body, tcx).ty.kind(), ty::RawPtr(..)) {
+                if !matches!(place.ty(body, tcx).ty.kind(), ty::RawPtr(..) | ty::Ref(..)) {
                     continue;
                 }
                 let refs_self_or_self_ptr = match rvalue {
-                    Rvalue::RawPtr(_, src) => {
+                    Rvalue::RawPtr(_, src) | Rvalue::Ref(_, _, src) => {
                         src.local == receiver_local || self_ptrs.contains(&src.local)
                     }
                     Rvalue::Cast(_, operand, _) | Rvalue::Use(operand, _) => {
@@ -21852,6 +21871,51 @@ fn receiver_escapes_as_userdata(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
                 }
             }
             if found {
+                return true;
+            }
+        }
+    }
+    // self 方法调用链：`self.initialize()` 把 receiver 传给本地方法，真正的
+    // self-as-userdata 可能在被调方法里（mosquitto `on_connect` → `initialize`）。
+    if depth < MAX_DEPTH {
+        for block in body.basic_blocks.iter() {
+            let Some(terminator) = &block.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call { func, args, .. } = &terminator.kind else {
+                continue;
+            };
+            let Some((callee_def_id, _)) = func.const_fn_def() else {
+                continue;
+            };
+            let Some(callee_local) = callee_def_id.as_local() else {
+                continue;
+            };
+            // 被调方是本地方法，且 receiver 参数（args[0]）是 self 或其 reborrow
+            // （`self.initialize()` 在 MIR 里是 `&mut (*self)` 临时再传参）。
+            let passes_self = args.first().and_then(|arg| arg.node.place()).is_some_and(
+                |p| {
+                    if p.local == receiver_local {
+                        return true;
+                    }
+                    // 沿拷贝链反向：args[0] 的来源是否 receiver。
+                    let mut seen = std::collections::HashSet::new();
+                    let mut stack = vec![p.local];
+                    while let Some(local) = stack.pop() {
+                        if local == receiver_local {
+                            return true;
+                        }
+                        if !seen.insert(local) {
+                            continue;
+                        }
+                        if let Some(srcs) = operand_sources.get(&local) {
+                            stack.extend(srcs.iter().copied());
+                        }
+                    }
+                    false
+                },
+            );
+            if passes_self && receiver_escapes_as_userdata_inner(tcx, callee_local, depth + 1) {
                 return true;
             }
         }

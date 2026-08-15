@@ -239,6 +239,10 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
             // owner drop 只释放闭包，注册在外部（memcpy 出去的 git_rebase）上
             // 不解除——分离可构造。
             RegistrationGuard::OwnerHoldsCallbackBridged => InvalidateDecision::Generated,
+            // receiver 自身地址作为 userdata 交给外部（mosquitto Callbacks /
+            // libsql authorizer）：C 持有 receiver 结构体地址，move/drop 后悬垂，
+            // 独立于回调捕获——分离可构造。
+            RegistrationGuard::ReceiverEscapesAsUserData => InvalidateDecision::Generated,
             // owner-held：闭包存 receiver 字段随 owner drop，referent 分离不可构造。
             RegistrationGuard::OwnerHoldsCallback => InvalidateDecision::Refused {
                 reason: "owner_holds_callback: 回调分配由 receiver 字段持有到 owner drop，                分离不可构造".to_owned(),

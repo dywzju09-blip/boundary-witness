@@ -1,0 +1,42 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:mosquitto:callbacks_on_connect"
+
+[freeze]
+frozen_at = "2026-08-15T00:00:00Z"
+frozen_at_commit = "54e9cf3"
+p3_verdict_available_at_freeze = true
+authored_from = "mosquitto-client 公开 API 文档与 libmosquitto mosquitto_user_data_set 公开 C 签名（receiver-as-userdata + move 逃逸形状）"
+
+[target]
+crate = "mosquitto-client"
+versions = ["0.1.5"]
+features = []
+api_path = "Callbacks::<'a, T>::on_connect"
+
+[[setup]]
+step = "open_mosq"
+rust = "let m = mosquitto_client::Mosquitto::new(\"bw-witness-mosq\");\nm.connect(\"127.0.0.1\", 1883)?;"
+
+[registration]
+receiver = "mc"
+method = "on_connect"
+callback_signature = "FnMut(&mut i32, i32)"
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "closure"
+callback_no_referent = true
+register_template = """
+let boxed = {
+    let mut mc = m.callbacks(0i32);
+    mc.on_connect({callback});
+    Box::new(mc)
+};
+"""
+
+[trigger]
+step = "do_loop"
+rust = "for _ in 0..10 {\n    let _ = m.do_loop(50);\n}"
+
+[teardown]
+step = "drop"
+rust = "drop(boxed);\ndrop(m);"
