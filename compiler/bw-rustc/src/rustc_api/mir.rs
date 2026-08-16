@@ -21254,13 +21254,16 @@ fn registration_guards<'tcx>(
                 // 仍独立构成 UAF（clone/move/drop 让 C 持有的 userdata 悬垂）。
                 if receiver_escapes_as_userdata(tcx, def_id) {
                     (RegistrationGuard::ReceiverEscapesAsUserData, None, None)
-                } else if receiver_bridged_to_foreign(tcx, def_id) {
-                    // 回调载体经 receiver 的 C 结构体指针字段间接交出
-                    // （tree-sitter `(*self.0).logger = Box::into_raw(...)`——
-                    // 无 extern setter，回调写进 receiver 持有的 C 结构体字段，
-                    // parse 时 C 读）。非 owner-held 也成立：C 结构体字段是
-                    // receiver 生命周期的一部分，drop receiver 即释放回调载体，
-                    // 外部注册不解除——分离可构造。
+                } else if tcx.is_mir_available(def_id)
+                    && bridged_in_method(tcx, def_id.to_def_id(), &tcx.optimized_mir(def_id))
+                {
+                    // 回调载体经 C 结构体间接交出：receiver 方法的 C 结构体指针
+                    // 字段（tree-sitter `(*self.0).logger = Box::into_raw(...)`）
+                    // 或**自由函数的 C 结构体参数**（sqlite-vfs `sqlite3_vfs_register
+                    // (vfs)` 的 vfs 是 `Box::into_raw(Box::new(sqlite3_vfs{..}))`、
+                    // ffmpeg `(*ps).interrupt_callback = AVIOInterruptCB{..}`）。
+                    // C 结构体字段/参数是注册载体的一部分，外部注册不解除——
+                    // 分离可构造（与 receiver 是否持有无关）。
                     (RegistrationGuard::OwnerHoldsCallbackBridged, None, None)
                 } else {
                     // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的

@@ -1,0 +1,64 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:sqlite-vfs:register"
+
+[freeze]
+frozen_at = "2026-08-16T00:00:00Z"
+frozen_at_commit = "6f72fd7"
+p3_verdict_available_at_freeze = true
+authored_from = "sqlite-vfs 公开 API 文档与 sqlite3_vfs_register 公开 C 签名（回调结构体指针间接交出形状）"
+
+[target]
+crate = "sqlite-vfs"
+versions = ["0.2.0"]
+features = []
+api_path = "register"
+
+[registration]
+receiver = "vfs"
+method = "register"
+callback_signature = ""
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "trait"
+trait_impl = """
+impl sqlite_vfs::Vfs for BwWitnessAgg<'_> {
+    type Handle = BwHandle;
+    fn open(&self, _db: &str, _opts: sqlite_vfs::OpenOptions) -> Result<Self::Handle, std::io::Error> {
+        let _ = self.referent.len();
+        Err(std::io::Error::other("bw-witness"))
+    }
+    fn delete(&self, _db: &str) -> Result<(), std::io::Error> { Ok(()) }
+    fn exists(&self, _db: &str) -> Result<bool, std::io::Error> { Ok(true) }
+    fn temporary_name(&self) -> String { "bw-witness-tmp".to_owned() }
+    fn random(&self, _b: &mut [i8]) {}
+    fn sleep(&self, _d: std::time::Duration) -> std::time::Duration { std::time::Duration::ZERO }
+}
+struct BwHandle;
+impl sqlite_vfs::DatabaseHandle for BwHandle {
+    type WalIndex = BwWal;
+    fn size(&self) -> Result<u64, std::io::Error> { Ok(0) }
+    fn read_exact_at(&mut self, _b: &mut [u8], _o: u64) -> Result<(), std::io::Error> { Ok(()) }
+    fn write_all_at(&mut self, _b: &[u8], _o: u64) -> Result<(), std::io::Error> { Ok(()) }
+    fn sync(&mut self, _d: bool) -> Result<(), std::io::Error> { Ok(()) }
+    fn set_len(&mut self, _s: u64) -> Result<(), std::io::Error> { Ok(()) }
+    fn lock(&mut self, _l: sqlite_vfs::LockKind) -> Result<bool, std::io::Error> { Ok(true) }
+    fn reserved(&mut self) -> Result<bool, std::io::Error> { Ok(false) }
+    fn current_lock(&self) -> Result<sqlite_vfs::LockKind, std::io::Error> { Ok(sqlite_vfs::LockKind::None) }
+    fn wal_index(&self, _r: bool) -> Result<Self::WalIndex, std::io::Error> { Ok(BwWal) }
+}
+struct BwWal;
+impl sqlite_vfs::wip::WalIndex for BwWal {
+    fn map(&mut self, _r: u32) -> Result<[u8; 32768], std::io::Error> { Ok([0; 32768]) }
+    fn lock(&mut self, _l: std::ops::Range<u8>, _k: sqlite_vfs::wip::WalIndexLock) -> Result<bool, std::io::Error> { Ok(true) }
+    fn delete(self) -> Result<(), std::io::Error> { Ok(()) }
+}
+"""
+register_template = "let _ = sqlite_vfs::register(\"bwvfs\", {callback}, false);"
+
+[trigger]
+step = "open_with_vfs"
+rust = "let _ = rusqlite::Connection::open_with_flags_and_vfs(\"bwvfs.db\", rusqlite::OpenFlags::default(), \"bwvfs\");"
+
+[teardown]
+step = "drop"
+rust = ""
