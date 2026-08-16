@@ -21254,6 +21254,14 @@ fn registration_guards<'tcx>(
                 // 仍独立构成 UAF（clone/move/drop 让 C 持有的 userdata 悬垂）。
                 if receiver_escapes_as_userdata(tcx, def_id) {
                     (RegistrationGuard::ReceiverEscapesAsUserData, None, None)
+                } else if receiver_bridged_to_foreign(tcx, def_id) {
+                    // 回调载体经 receiver 的 C 结构体指针字段间接交出
+                    // （tree-sitter `(*self.0).logger = Box::into_raw(...)`——
+                    // 无 extern setter，回调写进 receiver 持有的 C 结构体字段，
+                    // parse 时 C 读）。非 owner-held 也成立：C 结构体字段是
+                    // receiver 生命周期的一部分，drop receiver 即释放回调载体，
+                    // 外部注册不解除——分离可构造。
+                    (RegistrationGuard::OwnerHoldsCallbackBridged, None, None)
                 } else {
                     // 返回值不携带任何声明 lifetime：注册的存活没有被绑到调用方的
                     // 任何东西上。
@@ -21435,12 +21443,20 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
             if is_foreign_callee {
                 continue;
             }
+            let callee_name = func.const_fn_def().map(|(d, _)| tcx.item_name(d).as_str().to_owned());
+            // `Box::into_raw(Box::new(logger))`（tree-sitter set_logger 形状）：
+            // into_raw 的 dest 是裸指针，arg 追溯含回调参数（或回调参数的 box）。
+            // 宽松收集（dest 裸指针 + 回调相关 arg），store 检测严格化兜底。
+            let is_into_raw = callee_name.as_deref() == Some("into_raw");
             let wraps_callback_arg = args.iter().any(|arg| {
                 arg.node.place().is_some_and(|p| {
                     arg_locals_all.contains(&p.local) && p.local != receiver_local
                 })
             });
             if wraps_callback_arg && bridged_ptrs.insert(dest_place.local) {
+                changed = true;
+            }
+            if is_into_raw && bridged_ptrs.insert(dest_place.local) {
                 changed = true;
             }
         }
@@ -21450,6 +21466,30 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
     }
     if bridged_ptrs.is_empty() {
         return false;
+    }
+    // extern 调用参数含 bridged 指针（tree-sitter `ts_parser_set_logger(parser,
+    // c_logger)`——c_logger 是 TSLogger 结构体，其 payload 字段是 `Box::into_raw`
+    // 的结果，按值传给 extern；callback 载体随结构体进入 C）。
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, .. } = &terminator.kind else {
+            continue;
+        };
+        let Some((callee_def_id, _)) = func.const_fn_def() else {
+            continue;
+        };
+        if !tcx.is_foreign_item(callee_def_id) {
+            continue;
+        }
+        if args.iter().any(|arg| {
+            arg.node
+                .place()
+                .is_some_and(|p| bridged_ptrs.contains(&p.local))
+        }) {
+            return true;
+        }
     }
     // store 到「参数结构体字段」：`(*param).field = bridged_ptr`。
     let arg_locals: std::collections::HashSet<Local> = body.args_iter().collect();
@@ -21506,7 +21546,21 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
                     })
                     .unwrap_or(false)
             };
-            if !base_is_arg && !base_is_c_struct {
+            // tree-sitter 形状：`(*self.0).logger = c_logger`——store 目标是 receiver
+            // 的**裸指针字段** deref 后的字段（self.0: *mut TS_Parser）。值必须是
+            // 已收集的 bridged 指针（回调 into_raw 结果），投影结构是
+            // `[Field, Deref, ...Field]` 且 base 是 receiver——回调载体经 receiver
+            // 的 C 结构体指针字段进入 C，与 bridged 语义一致。
+            let base_is_receiver_c_field = if place.local == receiver_local {
+                matches!(place.projection.first(), Some(ProjectionElem::Field(..)))
+                    && place
+                        .projection
+                        .iter()
+                        .any(|e| matches!(e, ProjectionElem::Deref))
+            } else {
+                false
+            };
+            if !base_is_arg && !base_is_c_struct && !base_is_receiver_c_field {
                 continue;
             }
             return true;

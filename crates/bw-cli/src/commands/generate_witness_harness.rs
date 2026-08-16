@@ -268,9 +268,18 @@ fn decide_invalidate(contract: Option<&RustContractFact>) -> InvalidateDecision 
         EffectiveCaptureAdmission::ContextDependent => InvalidateDecision::Refused {
             reason: "context_dependent: 签名不足以判定分离可行性".to_owned(),
         },
-        EffectiveCaptureAdmission::Unresolved => InvalidateDecision::Refused {
-            reason: "capture_admission_unresolved".to_owned(),
-        },
+        EffectiveCaptureAdmission::Unresolved => {
+            // capture lifetime 解析不出（elided lifetime 如 tree-sitter
+            // `Logger`），但 bridged 载体（回调经 C 结构体字段间接交出）的分离
+            // 与 capture 维度独立——缺证不阻塞 bridged 的分离构造。
+            if contract.guard == RegistrationGuard::OwnerHoldsCallbackBridged {
+                InvalidateDecision::Generated
+            } else {
+                InvalidateDecision::Refused {
+                    reason: "capture_admission_unresolved".to_owned(),
+                }
+            }
+        }
     }
 }
 

@@ -1,0 +1,35 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:tree-sitter:set_logger"
+
+[freeze]
+frozen_at = "2026-08-16T00:00:00Z"
+frozen_at_commit = "2664285"
+p3_verdict_available_at_freeze = true
+authored_from = "tree-sitter 公开 API 文档与 ts_parser_set_logger 公开 C 签名（回调结构体按值交出形状）"
+
+[target]
+crate = "tree-sitter"
+versions = ["0.26.12"]
+features = []
+api_path = "Parser::set_logger"
+
+[[setup]]
+step = "new_parser"
+rust = "let mut parser = tree_sitter::Parser::new();"
+
+[registration]
+receiver = "parser"
+method = "set_logger"
+callback_signature = "FnMut(tree_sitter::LogType, &str)"
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "closure"
+register_template = "parser.set_logger(Some(Box::new({callback})));"
+
+[trigger]
+step = "parse"
+rust = "let _ = parser.parse(\"let x = 1;\", None);"
+
+[teardown]
+step = "drop"
+rust = "drop(parser);"
