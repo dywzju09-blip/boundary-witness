@@ -1,0 +1,36 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:fluidsynth:midi_router_new"
+
+[freeze]
+frozen_at = "2026-08-16T00:00:00Z"
+frozen_at_commit = "2664285"
+p3_verdict_available_at_freeze = true
+authored_from = "fluidsynth 公开 API 文档与 libfluidsynth new_fluid_midi_router 公开 C 签名（callback 参数地址逃逸形状）"
+
+[target]
+crate = "fluidsynth"
+versions = ["0.0.1"]
+features = []
+api_path = "midi::MidiRouter::new"
+
+[[setup]]
+step = "open_settings"
+rust = "let mut settings = fluidsynth::settings::Settings::new();\nlet mut synth = fluidsynth::synth::Synth::new(&mut settings);"
+
+[registration]
+receiver = "router"
+method = "new"
+callback_signature = "FnMut(fluidsynth::midi::MidiEvent)"
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "closure"
+callback_ret_tail = "0"
+register_template = "let router = fluidsynth::midi::MidiRouter::new(&mut settings, {callback});\nsynth.set_midi_router(&router);"
+
+[trigger]
+step = "handle_event"
+rust = "let _ = synth.noteon(0, 60, 100);"
+
+[teardown]
+step = "drop"
+rust = "drop(synth);\ndrop(router);\ndrop(settings);"
