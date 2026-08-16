@@ -1,0 +1,36 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:ffmpeg:input_with_interrupt"
+
+[freeze]
+frozen_at = "2026-08-16T00:00:00Z"
+frozen_at_commit = "173c0d7"
+p3_verdict_available_at_freeze = true
+authored_from = "ffmpeg 公开 API 文档与 AVIOInterruptCB 公开 C 结构（回调结构体跨函数间接交出形状）"
+
+[[setup]]
+step = "start_slow_server"
+rust = "let _server = std::process::Command::new(\"python3\").arg(\"/tmp/server2.py\").spawn()?;\nstd::thread::sleep(std::time::Duration::from_millis(1000));"
+
+[target]
+crate = "ffmpeg"
+versions = ["0.3.0"]
+features = []
+api_path = "format::input_with_interrupt"
+
+[registration]
+receiver = "input"
+method = "input_with_interrupt"
+callback_signature = "FnMut()"
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "closure"
+callback_ret_tail = "false"
+register_template = "let url = String::from(\"http://127.0.0.1:8899/test.mp3\");\nlet mut input = ffmpeg::format::input_with_interrupt(&url, {callback})?;"
+
+[trigger]
+step = "drain_packets"
+rust = "let mut packets = input.packets();\nlet mut n = 0usize;\nwhile let Some(_p) = packets.next() {\n    n += 1;\n    if n >= 3000 { break; }\n}"
+
+[teardown]
+step = "drop"
+rust = "drop(input);"

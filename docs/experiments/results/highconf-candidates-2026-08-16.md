@@ -13,7 +13,7 @@
 | fluidsynth 0.0.1 MidiRouter::new | ✅ ASSEMBLED（permits+None） | ✅ 生成 | ⚠️ 触发受限 | 判定通过；crate 触发 API（Synth::set_midi_router）是 1.x 符号，系统 libfluidsynth 2.2.5 已移除；MidiRouterRule::handle_midi_event ABI 错位 → safe harness 无法触发（非证伪，缺证记录） |
 | fltk 1.5.23 app::widget::set_callback | ✅ ASSEMBLED（permits+None） | ✅ 生成 | ⚠️ 待 GUI 触发 | 判定通过；触发需 GUI 事件循环（xvfb），未搭 |
 | fltk 1.5.23 TreeItem::draw_item_content | ✅ ASSEMBLED（permits+ReceiverEscapes） | ✅ 生成 | ⚠️ 待 GUI 触发 | 同上 |
-| ffmpeg 0.3.0 input_with_interrupt | ⬜ 未跑 | — | — | ffmpeg-sys 4.3.3 bindgen 与现代 rustc 冲突（proc-macro2 Ident panic），需报告所述补丁，未做 |
+| ffmpeg 0.3.0 input_with_interrupt | ✅ ASSEMBLED（bridged，跨函数传播） | ✅ 自动生成 | ✅ **heap-UAF 出证** | **完成**（bridged 跨函数扩展 + 变异检查，详见 ffmpeg-030-input-with-interrupt-detected-2026-08-17.md） |
 
 ## 工具能力扩展（本批 3 个提交）
 

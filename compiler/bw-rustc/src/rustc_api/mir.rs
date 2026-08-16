@@ -21377,6 +21377,20 @@ fn receiver_bridged_to_foreign(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
 
 /// 单个方法里是否出现「receiver cast 成裸指针 → store 进参数结构体字段」。
 fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'tcx>) -> bool {
+    bridged_in_method_depth(tcx, def_id, body, 0)
+}
+
+/// 带深度限制的 bridged 检查（跨函数递归防环）。
+fn bridged_in_method_depth<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    body: &'tcx Body<'tcx>,
+    depth: u32,
+) -> bool {
+    const MAX_DEPTH: u32 = 3;
+    if depth > MAX_DEPTH {
+        return false;
+    }
     let Some(receiver_local) = body.args_iter().next() else {
         return false;
     };
@@ -21434,6 +21448,27 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
                 continue;
             }
             let dest_place = destination;
+            // 跨函数 bridged：被调本地函数自身 bridged（其体内有回调 into_raw /
+            // extern 结构体参数，如 ffmpeg `interrupt::new`）→ 返回值（可能是
+            // 结构体）作 bridged 载体，主函数 store 其字段进 C 结构体。
+            let callee_is_bridged = func
+                .const_fn_def()
+                .and_then(|(callee_def_id, _)| callee_def_id.as_local())
+                .is_some_and(|callee_local| {
+                    def_id.as_local().map_or(true, |d| d != callee_local)
+                        && tcx.is_mir_available(callee_local)
+                        && bridged_in_method_depth(
+                            tcx,
+                            callee_local.to_def_id(),
+                            &tcx.optimized_mir(callee_local),
+                            1,
+                        )
+                });
+            if callee_is_bridged {
+                if bridged_ptrs.insert(dest_place.local) {
+                    changed = true;
+                }
+            }
             if !matches!(dest_place.ty(body, tcx).ty.kind(), ty::RawPtr(..)) {
                 continue;
             }
@@ -21569,7 +21604,11 @@ fn bridged_in_method<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'t
             return true;
         }
     }
-    false
+    // bridged_ptrs 非空 = 本函数体内有回调载体（Box::into_raw / 包装指针）。
+    // 即使本函数没有直接的 store/extern 交出（如 ffmpeg `interrupt::new`
+    // 构造含裸指针的 AVIOInterruptCB 返回），调用方把它 store 进 C 结构体或
+    // 传 extern 时构成 bridged——跨函数 bridged 传播依赖此判定。
+    true
 }
 
 /// 交出点能不能被**安全客户端**走到。
