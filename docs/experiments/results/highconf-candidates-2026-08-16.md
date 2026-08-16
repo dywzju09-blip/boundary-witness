@@ -10,7 +10,7 @@
 |---|---|---|---|---|
 | tree-sitter 0.26.12 set_logger | ✅ ASSEMBLED（bridged） | ✅ 自动生成 | ✅ **heap-UAF 出证** | **完成**（6f72fd7） |
 | sqlite-vfs 0.2.0 register | ✅ ASSEMBLED（bridged） | ✅ 自动生成 | ✅ **heap-UAF 出证** | **完成**（9d258f8） |
-| fluidsynth 0.0.1 MidiRouter::new | ✅ ASSEMBLED（permits+None） | ✅ 生成 | ⚠️ 触发受限 | 判定通过；crate 触发 API（Synth::set_midi_router）是 1.x 符号，系统 libfluidsynth 2.2.5 已移除；MidiRouterRule::handle_midi_event ABI 错位 → safe harness 无法触发（非证伪，缺证记录） |
+| fluidsynth 0.0.1 MidiRouter::new | ✅ ASSEMBLED（permits+None） | ✅ 生成 | ⚠️ 触发缺证 | 构建阻塞解除（编译 fluidsynth 1.1.10 → /usr/local/lib64）；1.1.10 源码确认 synth/player 事件路径不查 router，crate 唯一 safe 入口 ABI 错位，正确触发需 unsafe → harness 禁 unsafe → ASan 缺证（非证伪，详见 fluidsynth-midi-router-trigger-blocked-2026-08-17.md） |
 | fltk 1.5.23 app::widget::set_callback | ✅ ASSEMBLED（permits+None） | ✅ 自动生成 | ✅ **heap-UAF 出证** | **完成**（adapter + do_callback 触发；发现生成器缺 ASan profile 段，详见 fltk-set-callback-detected-2026-08-17.md） |
 | fltk 1.5.23 TreeItem::draw_item_content | ✅ ASSEMBLED（permits+ReceiverEscapes） | ✅ 自动生成 | ✅ **heap-UAF 出证** | **完成**（cfltk 下载解除 + xvfb 触发，详见 fltk-tree-draw-item-content-detected-2026-08-17.md） |
 | ffmpeg 0.3.0 input_with_interrupt | ✅ ASSEMBLED（bridged，跨函数传播） | ✅ 自动生成 | ✅ **heap-UAF 出证** | **完成**（bridged 跨函数扩展 + 变异检查，详见 ffmpeg-030-input-with-interrupt-detected-2026-08-17.md） |
