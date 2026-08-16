@@ -7,6 +7,12 @@ frozen_at_commit = "6f72fd7"
 p3_verdict_available_at_freeze = true
 authored_from = "sqlite-vfs 公开 API 文档与 sqlite3_vfs_register 公开 C 签名（回调结构体指针间接交出形状）"
 
+[[extra_dependencies]]
+name = "rusqlite"
+version = "0.32"
+default_features = false
+features = ["modern_sqlite"]
+
 [target]
 crate = "sqlite-vfs"
 versions = ["0.2.0"]

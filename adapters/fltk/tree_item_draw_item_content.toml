@@ -26,7 +26,7 @@ accepts_none_to_clear = false
 callback_kind = "closure"
 callback_ret_tail = "0"
 register_template = """
-let item = fltk::tree::TreeItem::new(&tree, "first");
+let mut item = fltk::tree::TreeItem::new(&tree, "first");
 item.draw_item_content({callback});
 let _ = tree.add_item("first", &item);
 """
