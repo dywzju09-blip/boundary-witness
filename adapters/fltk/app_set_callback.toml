@@ -1,0 +1,36 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:fltk:app_set_callback"
+
+[freeze]
+frozen_at = "2026-08-17T00:00:00Z"
+frozen_at_commit = "7317b11"
+p3_verdict_available_at_freeze = true
+authored_from = "fltk 公开 API 文档与 Fl_Widget_set_callback/Fl_Widget_do_callback 公开 C 签名（app::set_callback 自由函数 Box::into_raw 进 C++ widget，do_callback 晚调）"
+
+[target]
+crate = "fltk"
+versions = ["1.5.23"]
+features = ["fltk-bundled"]
+api_path = "app::widget::set_callback"
+
+[[setup]]
+step = "open_win"
+rust = "use fltk::prelude::*;\nlet mut win = fltk::window::Window::new(0, 0, 300, 200, \"bw\");\nlet mut w = fltk::button::Button::new(10, 10, 100, 100, \"btn\");\nwin.end();"
+
+[registration]
+receiver = "w"
+method = "set_callback"
+callback_signature = "FnMut(&mut dyn fltk::prelude::WidgetExt)"
+callback_arg_index = 1
+accepts_none_to_clear = false
+callback_kind = "closure"
+callback_ret_tail = ""
+register_template = "fltk::app::set_callback(&mut w, {callback});"
+
+[trigger]
+step = "do_callback"
+rust = "w.do_callback();"
+
+[teardown]
+step = "drop"
+rust = "drop(w);\ndrop(win);"
