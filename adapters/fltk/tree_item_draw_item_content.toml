@@ -1,0 +1,40 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:fltk:tree_item_draw_item_content"
+
+[freeze]
+frozen_at = "2026-08-16T00:00:00Z"
+frozen_at_commit = "4b78083"
+p3_verdict_available_at_freeze = true
+authored_from = "fltk 公开 API 文档与 Fl_Tree_Item_draw_item_content 公开 C 签名（Box::into_raw 进 C++ widget，绘制晚调）"
+
+[target]
+crate = "fltk"
+versions = ["1.5.23"]
+features = ["fltk-bundled"]
+api_path = "tree::TreeItem::draw_item_content"
+
+[[setup]]
+step = "open_win"
+rust = "use fltk::prelude::*;\nlet mut win = fltk::window::Window::new(0, 0, 300, 300, \"bw\");\nlet mut tree = fltk::tree::Tree::new(10, 10, 250, 250, \"tree\");"
+
+[registration]
+receiver = "item"
+method = "draw_item_content"
+callback_signature = "FnMut(&mut fltk::tree::TreeItem, bool)"
+callback_arg_index = 0
+accepts_none_to_clear = false
+callback_kind = "closure"
+callback_ret_tail = "0"
+register_template = """
+let item = fltk::tree::TreeItem::new(&tree, "first");
+item.draw_item_content({callback});
+let _ = tree.add_item("first", &item);
+"""
+
+[trigger]
+step = "show_run"
+rust = "win.end();\nwin.show();\nlet _ = fltk::app::run();"
+
+[teardown]
+step = "drop"
+rust = "drop(win);\ndrop(tree);"
