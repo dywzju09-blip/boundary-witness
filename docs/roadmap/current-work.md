@@ -1,259 +1,55 @@
 # 当前工作
 
-本文只记录当前所处阶段与下一步，不保存 Agent prompt 或逐日执行过程。阶段定义见 [roadmap](roadmap.md)，方向权威见 [research thesis](../project/research-thesis.md)。状态词含义见 [terminology](../project/terminology.md)。
+本文只记录当前所处阶段与下一步。阶段定义见 [roadmap](roadmap.md)，方向权威见
+[research thesis](../project/research-thesis.md)，执行顺序权威见
+[execution plan](execution-plan.md)。
 
 ## 所处位置
 
-**执行顺序的权威是 [execution plan](execution-plan.md)**；本文只说现在在哪一步。
+**阶段 0–4、5.0、5.2、5.3、5.4、5.5 全部完成。** 下一步：**大规模 0day 探针**
+（判定→生成→oracle 三层流水线已就绪，规模从小到大）。
 
-**阶段 0–4 完成，5.0–5.5 完成，阶段 6 核心验收大部分完成。** 研究路线于 2026-07-30 重定向、2026-07-31 复审后修正核心关系。当前进度：
+| 阶段 | 状态 | 证据 |
+| --- | --- | --- |
+| 0–4（范围/Rust 侧/外部 IR/联结） | ✅ | [results 索引](../experiments/results/README.md) |
+| 5.0 符号解析（rusqlite 6/6） | ✅ | [stage5-0](../experiments/results/stage5-0-symbol-resolution-2026-08-07.md) |
+| 5.2 真实 source-to-verdict | ✅ | [stage5-2](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md) |
+| 5.3 生成器重写（D3） | ✅ **2026-08-17** | [stage5-3](../experiments/results/stage5-3-witness-generator-rewrite-2026-08-17.md)（硬编码清零 + ASan profile + extra_dependencies；旧 08-10 记录已删） |
+| 5.4 ASan 独立 oracle | ✅ **2026-08-17** | [stage5-4-5](../experiments/results/stage5-4-5-asan-oracle-and-negative-control-2026-08-17.md)（`bw run-witness-oracle`） |
+| 5.5 rusqlite 0.26.2 负对照 | ✅ **2026-08-17** | 同上（对照矩阵 5/5） |
+| 候选验证（0day 候选） | ✅ 5/6 出证 + 1 缺证 | tree-sitter / sqlite-vfs / ffmpeg / fltk×2 ASan 出证；fluidsynth 触发缺证（非证伪）；见 [highconf](../experiments/results/highconf-candidates-2026-08-16.md) |
+| **大规模 0day 探针** | ⬜ **下一步** | 用户指示：规模从小到大，先验证有效性；披露判断必须询问用户 |
+| 阶段 6–9（论文级验收/holdout） | ⬜ 后置 | execution-plan |
 
-| 阶段 | 状态 |
-| --- | --- |
-| PF 核心关系与四 fixture（Gate R） | ✅ `Implemented` |
-| PC `EffectiveCaptureAdmission` | ✅ `Implemented` |
-| PG-1 `RegistrationGuard` | ✅ `Implemented` |
-| PG-2 `AllocationOwnership` | ✅ `Implemented`（覆盖缺口见阶段 1.1 limitation） |
-| 阶段 2 真实外部 IR | ✅ `Implemented` |
-| 阶段 3 Q1/Q4′/降级 Q3 | ✅ `Implemented` |
-| 阶段 4 联结与三态判定 | ✅ `Implemented`（schema 升版 4.2 未做，见 stage4 记录） |
-| 5.0 符号解析（rusqlite 6/6） | ✅ 完成 |
-| **5.2 真实目标 source-to-verdict** | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-2-source-to-verdict-2026-08-10.md)） |
-| 5.3 反证生成器重写（D3） | ✅ **完成**（2026-08-10，见 [结果记录](../experiments/results/stage5-3-witness-generator-rewrite-2026-08-10.md)） |
-| 5.4 ASan 执行 + 独立 oracle | ✅ **完成**（2026-08-10，vulnerable 0.26.1 ASan 出证 heap-use-after-free，见 [结果记录](../experiments/results/stage5-4-asan-oracle-2026-08-10.md)） |
-| 5.5 rusqlite 0.26.2 负对照 | ✅ **完成**（2026-08-10：fixed 编不过 + owned/unregister/no-trigger 三变体 ASan 干净，见 [结果记录](../experiments/results/stage5-5-fixed-negative-control-2026-08-10.md)） |
-| 阶段 6 多 nday 检出（RUSTSEC-2021-0128 家族） | ✅ **3 个已知 nday ASan 出证**（2026-08-12：update/commit/rollback hook 各 3/3 heap-use-after-free；0.26.2 fixed 全 E0425；owned/unregister/no-trigger 对照全干净，见 [结果记录](../experiments/results/stage6-multi-nday-rusqlite-2026-08-12.md)） |
-| 阶段 6 纪律 bug 修复（缺证当否定） | ✅ **2 个修复 + 变异验证**（2026-08-12：phi 无模型、is_caller_owned 漏 origins，均把错误 NoRetain 纠正为 Unresolved） |
-| 阶段 6.5 同族 nday 补齐（RUSTSEC-2021-0128 全部 7 API） | ✅ **7/7 ASan 出证**（2026-08-13：新增 create_scalar_function / create_collation / create_aggregate_function / create_window_function，全部 heap-use-after-free；fixed 0.26.2 全 E0425；owned/no-trigger 干净。能力补齐：Rust userdata 角色（闭包 box+into_raw）、外部堆逃逸追踪（HashInsert/HashFind 容器两点传播）、多回调参数（Aggregate/WindowAggregate + 跳过 None）、生成器 trait 回调形状。见 [stage6-5 记录 ①](../experiments/results/stage6-5-userdata-role-2026-08-13.md) [②](../experiments/results/stage6-5-foreign-heap-escape-2026-08-13.md) [③出证](../experiments/results/stage6-5-nday-asan-create-2026-08-13.md) [④多回调](../experiments/results/stage6-5-multi-callback-aggregate-window-2026-08-13.md) [⑤7/7](../experiments/results/stage6-5-seven-of-seven-asan-2026-08-13.md)） |
-| 阶段 6.5 portaudio 负方向对照 | ✅ **不误判**（2026-08-13：panic 类缺陷 supported_incompatibility=0，全部 insufficient_evidence） |
-| Gate A1（Full vs Rust-only） | ✅ **通过**（2026-08-12：判据预注册 → 正式运行 → 真实 universe 3 个 hand-off 差异 + guard 分支差异，见 [记录](../experiments/results/gate-a1-formal-2026-08-12.md)） |
-| git2 GIT-02 unseen 正例（revwalk hide_cb） | ✅ **ASan 出证**（2026-08-13：heap-use-after-free，owned/no-trigger 对照干净；能力补齐：guard_removal generator、候选验证、`#dbg_*` 修复，见 [记录](../experiments/results/git2-021-git02-detected-2026-08-13.md)） |
-| git2 GIT-01 unseen 正例（rebase checkout progress） | ✅ **ASan 出证**（2026-08-13：receiver-bridged 检测 → harness 自动生成 → heap-use-after-free，no-trigger/no-invalidate 对照干净；根因是原 adapter 的 rebase 参数构造无效导致 next() 无晚调，非证伪；adapter 缺陷已修，见 [判定层](../experiments/results/git2-021-git01-judgement-2026-08-13.md) [出证](../experiments/results/git2-021-git01-asan-2026-08-13.md)） |
-| Gate B（unseen 正例） | ⚠️ **GIT-01/GIT-02 两个 unseen 候选均已 ASan 出证**（2026-08-13）；2026-08-12 普查的「无 unseen 正例」结论已被用户提供的 git2 候选推翻——工具能检出的 unseen 形状存在于 git2 0.21（owner-held 存字段 + receiver 桥接 / guard 拆除） |
-| PG-1 扩展：owner-held 判据 | ✅ 完成（2026-08-10，`RegistrationGuard::OwnerHoldsCallback`，见 [记录](../experiments/results/pg1-owner-held-2026-08-10.md)） |
-| Gate P 工具：PP 批量驱动器 | ✅ 完成（2026-08-10，`tools/experiment/pp_scan.py`，盲化 Tier A-R/A-A 统计） |
-| Gate P 正式运行 | ⬜ 等维护者定样本框与预注册判据 |
-| portaudio nday 实测 + 三轮编译器扩展 | ✅ 完成（2026-08-10：Box<dyn> 参数 / type alias 展开 / impl 块 lifetime，见 [记录](../experiments/results/stage7-portaudio-capability-2026-08-10.md)；git2 覆盖 32->44 hand-offs） |
-| PP 猎物探针 / Gate P | ⬜ 核心闭环后由维护者执行，决定是否扩大评估 |
-| 多库家族负方向批量验证（openssl / libpulse / libsql / duckdb） | ✅ **zero 误报**（2026-08-14：openssl 48 hand-offs/23 装配，5 个非 static PEM 同步回调正确落 insufficient_evidence、18 个 'static 落 compatible；libpulse 116/124 装配全 compatible；libsql 'static+leak、duckdb 无 safe 闭包注册。生态再确认：同类 nday 仅 rusqlite 典型，git2 是例外，见 [记录](../experiments/results/multi-family-negative-validation-2026-08-14.md)） |
-| Q3 同步/延迟晚调判别基线（sqlite3_exec vs update_hook） | ✅ **判别正确**（2026-08-14：真实 sqlite3 IR 上同步回调落 no_retain+synchronous_invoke_only、延迟注册落 may_retain+may_invoke_after_return；降级 Q3 的可达性升级基线已划界，见 [记录](../experiments/results/q3-sync-late-invoke-baseline-2026-08-14.md)） |
-| fluidlite FLUID-01 unseen 正例（set_file_api 回调结构体 UAF） | ✅ **工具全链路 ASan 出证**（2026-08-15：trait 回调识别泛化 + bridged 间接交出 + owner-held 回调包装三判据扩展、生成器通用 trait_impl；自动生成 harness 报 heap-use-after-free，no-trigger/no-invalidate 对照干净，变异检查判据有判别力。覆盖「回调结构体指针」形状家族（vtable/ops）。见 [记录](../experiments/results/fluidlite-021-detected-2026-08-15.md)） |
-| libsql LSQL-01 unseen 正例（authorizer receiver-as-userdata UAF） | ✅ **工具全链路 ASan 出证**（2026-08-15：动态分发调用图边（Arc<dyn Conn> 委托链穿透）+ RegistrationGuard::ReceiverEscapesAsUserData 判据 + 生成器 callback_no_referent/default-features/契约精确匹配；自动生成 harness 报 heap-use-after-free（authorizer_callback 读已释放 ArcInner），no-trigger（无事务）/no-invalidate 对照干净，变异检查判据有判别力。**判定维度从回调捕获扩展到 userdata 载体生命周期**。见 [记录](../experiments/results/libsql-0930-lsql01-detected-2026-08-15.md)） |
-| mosquitto-client MOSQ-02 unseen 正例（Callbacks self 指针 + move 逃逸 UAF） | ✅ **工具全链路 ASan 出证**（2026-08-15：owner-held 分支优先查 receiver 逃逸 + self 方法调用链递归（on_connect→initialize）+ self_ptrs 引用传播 + decide_invalidate Permits 分支；自动生成 harness（Box::new 搬出栈）报 stack-use-after-scope（mosq_connect_callback 读已结束栈帧），no-trigger/no-invalidate 对照干净，变异检查判据有判别力。**失效机制从 drop 扩展到 move**。见 [记录](../experiments/results/mosq-015-mosq02-detected-2026-08-15.md)） |
-| tree-sitter 0.26.12 set_logger 0day 候选（ffi-callback-hunt #3） | ✅ **工具全链路 ASan 出证**（2026-08-16：bridged 扩展——into_raw 收集 + extern 结构体参数 + 非 owner-held 分支 + Unresolved 覆盖；自动生成 harness（set_language+parse 触发）报 heap-use-after-free，no-trigger/no-invalidate 对照干净，变异检查判据有判别力。**判定维度扩展到回调经 C 结构体按值间接交出**。见 [记录](../experiments/results/treesitter-setlogger-detected-2026-08-16.md)） |
-| sqlite-vfs 0.2.0 register 0day 候选（ffi-callback-hunt #16） | ✅ **工具全链路 ASan 出证**（2026-08-16：bridged 扩展到自由函数（函数体自身检查）——Vfs trait 实例经 Box::into_raw 进 sqlite3_vfs 结构体指针交 sqlite3_vfs_register；自动生成 harness（Vfs 实现 + rusqlite open_with_flags_and_vfs 触发）报 heap-use-after-free，no-trigger/no-invalidate 对照干净，变异复用 tree-sitter 同判据。见 [记录](../experiments/results/sqlitevfs-register-detected-2026-08-16.md)） |
-
-Rust 侧契约事实、外部侧行为事实与精确联结现在都能从真实构建产物自动产出。5.2 在
-rusqlite 0.26.1 上跑通 `Connection::update_hook → sqlite3_update_hook` 的
-source-to-verdict：判定为 `InsufficientEvidence`（Q3 降级 + Q4′ 无结论），所有缺证
-原因具体可回查。因此：
-
-| 创新点 | 状态 |
-| --- | --- |
-| C1 safe-only 可执行反证合成 | 未开始（roadmap P4 / 5.3） |
-| C2 类型契约 × 外部 effect 的精化检查 | 机制成立（真实 IR 上 Q1/Q3 有指令级证据）；Q4′ 在真实库上尚无结论，Full 判别力待 witness 阶段 |
-| C3 生态级度量与新发现 | 未开始 |
-
-## 已完成：PF 核心关系与四个 matched fixture（Gate R）
-
-2026-07-31 完成。落点：
-
-| 内容 | 位置 |
-| --- | --- |
-| 关系实现 | `crates/bw-model/src/compatibility.rs` |
-| 四个 fixture 的判定断言 | `crates/bw-model/tests/compatibility.rs`（14 项） |
-| Rust 侧三种形状 | `benchmarks/compiler-fixtures/callback-retention-relation/src/lib.rs` |
-| 外部侧四个 C stub | 同目录 `foreign/`，对应关系见其 `README.md` |
-
-**结果**：四个 fixture 全部判对。fixture 2 与 3 的 Rust 事实完全相同、只有 C stub 的注销是否真清槽不同——**Full 能分开，Rust-only 只能记缺证**。按 [Gate R](milestone-gates.md#gate-r关系正确性) 这是通过，且不构成 Gate A 的提前失败信号。
-
-**非空性检查已做**：故意让 guard 分支忽略 Q4′ 证据后，恰好 6 项依赖该分支的断言失败、8 项不依赖的仍通过，失败位置符合预期。
-
-### 这一步证明了什么，没证明什么
-
-- **证明了**：关系本身能分开该分开的情况；外部侧的判别力确实落在 Q4′（清槽）上；`'static` 不约束回调分配这一漏报已被 fixture 4 覆盖。
-- **没证明**：Q4′ 能从真实的 LLVM IR 推导出来。外部侧取值当前由 C stub **手工标注**（评估设计里的 `manual foreign oracle` 变体）。这一半由 P1/P2 回答。
-
-### 一处顺带的边界发现
-
-并非关系的每一项都需要外部证据：**回调分配的归属是纯 Rust 侧事实**，`ForeignOwnedUntilUnregister` 时 Rust-only 就能正确判为相容。外部证据的净贡献集中在 guard 分支。
-
-**[Gate A](milestone-gates.md#gate-a外部证据必要性) 的增益必须归因到那里**，不能笼统地说「因为我们看了外部侧」。
-
-## 已完成：PC `EffectiveCaptureAdmission`（Rust 契约事实之一）
-
-2026-07-31 完成。落点：`crates/bw-model/src/static_fact.rs`（语义取值与映射）、
-`compiler/bw-rustc/src/rustc_api/mir.rs`（trait object 覆盖）、
-`crates/bw-model/src/lifecycle_v326.rs`（判定推导的更正）。
-
-### 先测量后写代码，探针改了方案
-
-按纪律先跑探针看现状，四项结果里有三项与预期不同：
-
-| 探针结果 | 影响 |
-| --- | --- |
-| APIT（`impl Fn`）**已经能工作** | 原计划的一项工作取消 |
-| **`dyn Fn` 一条事实都不产出** | trait object 是参数类型，不在 `generics.predicates` 里，现有分类器完全看不到。是漏报 |
-| `Box<dyn Fn()>` 与 `&'c mut dyn Fn()` 在 HIR 里是**同一个** `ImplicitObjectLifetimeDefault` | 语义相反，只看 lifetime kind 会把一半判反。必须靠外层容器区分 |
-| `lifecycle_v326.rs` 的判定推导对 `no_lifetime_bound` 直接 `continue` | `fn register<F: Fn()>(f: F)` **产出零个判定**——猎物池被数少的确切机制 |
-
-### 改了什么
-
-- `NoLifetimeBound` 的语义订正为 `PermitsNonStaticCapture`。没有 `'static` 恰恰是允许捕获借用，这是候选形状里最强的一种，不是最弱的；
-- 新增 `UnresolvedLifetime`，真正「解析不出」的那一格。容器不在已知集合（`Box`/`Rc`/`Arc`）时落这里，**不猜**；
-- trait object 覆盖，object lifetime 的默认值由外层容器解析；
-- `is_shorter_than_static()` 改为由语义映射推导，并有断言钉死两者不得分叉。
-
-### 非空性检查
-
-故意让容器判据失效后，`boxed_dyn_default` 从 `RequiresStaticCapture` 落到 `Unresolved`，断言在预期那一行失败。
-
-### 一处顺带修掉的自造问题
-
-`EffectiveCaptureAdmission` 一度在 `compatibility.rs` 与 `static_fact.rs` 各有一份定义——正是 [代码库审计 §7.3](../development/codebase-realignment.md) 记的 `sanitize_id` 那种分歧。已合并成一份，放在事实层，关系层 import。
-
-## Gate P（PP 猎物存在性探针）：核心闭环后由维护者执行
-
-**2026-08-04 调整执行时机。** 本阶段仍由维护者执行，但不再阻塞 P0–P4 的核心功能实现；它在 Core Complete 后决定是否投入规模化评估和新发现搜索。
-
-**维护者对猎物池规模的印象可以决定是否值得跑这个实验，但不构成 Gate P 通过**——通过需要预注册的正式结果。
-
-**由谁执行不改变判据。** [runbook](../experiments/runbooks/prey-existence-probe.md) 的六条方法学要求缺一条结论就不可用：语义取值 `EffectiveCaptureAdmission`（不用语法四态）；只数 Tier A（dataflow 到达精确 extern 参数，不是语法共现）；**safe-entry lineage**（只到达 extern 参数不证明安全客户端够得着）；只算 L1 可分析；**Tier A-R 与 Tier A-A 分开判定**；判据用换算公式与置信界，不用「足够」这类事后可移动的措辞。**运行前必须完成 family-level sealed split**，否则整个前瞻池变成开发集。
-
-**三处必须先修的判据缺口**，见 [execution plan 阶段 1 与阶段 7](execution-plan.md)：事实层不记录 `is_unsafe_fn`（实测 `unsafe extern "C" fn trampoline` 也产出 callback bound 事实）；没有 safe-entry lineage；`AllocationOwnership` 未实现导致 Tier A-A 无法统计。**第三项若来不及做，必须写明本次只决定 R 子路线，A 保持 `Unknown`，不得默认为零。**
-
-## 已完成：PG-1 `RegistrationGuard`
-
-2026-07-31 完成。落点：`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `registration_guards`、
-`crates/bw-model/src/static_fact.rs`（`RegistrationGuard` + `RegistrationGuardFact`）、
-golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。
-
-在 Gate R fixture 的 Rust 侧上，编译器产出的取值与 `tests/compatibility.rs` 手写的那组一致：
-`register_guarded` → `TiesSlotToSubject`（guard 类型 `Registration`，`Drop` 里调 `fixture_unregister`）；
-其余三个 → `None`。
-
-### 第 3 条判据改了措辞
-
-计划原文是「`Drop` impl 里有指向**注销角色 API** 的调用」，实现改为「有指向**外部函数**的调用」。
-角色分类目前只能来自人工 API map（`registration.rs`），拿它当必要条件有两个后果：guard 检测只能
-在有清单的 crate 上工作，规模化探针拿不到这个事实；而且那是人工标注的语义，不是 Rust 侧观察。
-
-**更重要的是，「Rust 只能看到 `Drop` 调了某个外部函数、判断不了它是否真的清空槽位」正是要外部侧
-证据的那条论证本身**（[research thesis §2.6](../project/research-thesis.md)）。所以只判 Rust 侧看得见的形状，
-是否真的注销由 Q4′ 回答。有 API map 时角色信息仍在 `RegistrationSiteFact` 里，可作交叉验证。
-
-### 非空性检查（两半都做了）
-
-| 扰动 | 结果 |
-| --- | --- |
-| 让「`Drop` 里调了外部函数」判据失效 | `register_guarded` 从 `TiesSlotToSubject` 落到 `Unresolved`，失败落在 golden 的第 31 行；其余断言不受影响 |
-| 把 fixture 2/3 手写事实的 guard 改成 `Unresolved` | 14 项里恰好 5 项失败，且 **`full_separates_fixtures_2_and_3` 是其中之一**——guard 取值错了，Full 就分不开 fixture 2 与 3 |
-
-第二项值得单独记：**Gate R 的分离能力依赖这个事实**，而它此前是手写的。
-
-### 没有覆盖的形状
-
-- **不产出 `OwnerDropUnregisters`**：那一取值的判据是 owner 类型 drop 路径的证明，与 `ReleasePathProofFact` 同源，不是返回值形状；
-- `Result<Registration<'a>, E>` 这类包一层的返回值落 `Unresolved`，是已知覆盖缺口，不是判「无 guard」；
-- guard 类型定义在别的 crate 时拿不到 `Drop` 的 MIR，落 `Unresolved`。
-
-## 下一步：PG-2 `AllocationOwnership`
-
-| 事实 | 状态 |
-| --- | --- |
-| `EffectiveCaptureAdmission` | ✅ PC |
-| `RegistrationGuard` | ✅ PG-1 |
-| `AllocationOwnership` | ❌ **零行代码** |
-
-**这一项是漏报来源**：`'static` 只管住回调借了什么，管不住 `Box<F>` 还活着没有。PF 的 fixture 4 就是这一类。
-
-**原材料已经在产出。** PG-1 的探针顺带确认：同一个 fixture 上，`register_static_then_free` 产出
-`RawPointerTransfer{IntoRaw}` + `RawPointerTransfer{FromRaw}` + `DropSite{Explicit}`，而只差一行
-`Box::from_raw` 的 `register_static_owned` 只产出 `IntoRaw`。两者的区别在事实层**已经可见**，
-需要的是按交出点聚合再加一层分类。
-
-另有一处：**目前没有任何代码把编译器输出装成 `RustContractFact`**，PF 那四个 fixture 的 Rust 侧事实
-仍是手写的。这一步属于 P0。
-
-细化、可复用原材料与非空性检查见 [implementation plan 的 PG](implementation-plan.md#pg-rust-侧剩余的两个事实)。
-
-## PG-2 之后的直接顺序
-
-完整顺序与每一步验收见 [execution plan](execution-plan.md)。当前主线不先跑大规模 Gate P：
+## 当前可复现命令链
 
 ```text
-PG-2
-→ is_unsafe_fn + safe-entry lineage
-→ RustContractFact 自动装配
-→ 真实外部 IR 获取与 artifact binding
-→ Q1 → Q4′ → 降级 Q3
-→ P0 identity + Schema → P3
-→ P4 witness + 独立 oracle
-→ Core Complete
-→ 小样本 Gate P / Gate C0
+# 1) 静态分析（判定层）
+bw extract-static-facts --manifest <m> --output-dir <o> --logs-root <l> --run-id <r> --rustc-wrapper <w> [--all-features]
+bw extract-rust-contracts --facts <static-facts> --output-dir <o> --run-id <r> --build-profile <bp> --rust-artifact <ra>
+# 2) 外部侧（阶段 3 产物，如需）
+bw extract-foreign-facts --ir <sqlite3.ll> --roles <roles.json>
+bw judge-hand-offs --rust-contracts ... --foreign-facts ...
+# 3) witness（5.3 生成器 + 5.4 oracle）
+bw generate-witness-harness --adapter <adapter.toml> --contracts ... --verdicts ... --repo-root ... --crate-version <v> --crate-source-dir ...
+bw run-witness-oracle --harness-dir <dir> --run-id <id> --toolchain nightly-2026-07-08 --expect triggered|clean|build_failed
 ```
 
-### P0 hand-off 身份与双侧事实模型
+## 环境（远端服务器）
 
-| 字段 | 内容 |
-| --- | --- |
-| 服务 | C2 的前提 |
-| 状态 | `Planned` |
-| 代码入口 | `crates/bw-model/src/static_fact.rs`、`crates/bw-model/src/lifecycle_v326.rs`、`crates/bw-model/src/id.rs`、`compiler/bw-rustc/src/site.rs`（`SiteDescriptor` 是现成的可扩展入口）、`compiler/bw-rustc/src/domain.rs` |
-| 完成谓词 | 两侧事实可在不依赖候选切分的前提下联结；同一调用含多组 callback/userdata 时仍能区分；判定按 `StaticVerdict` / `EvidenceGrade` / `WitnessStatus` 三个正交维度记录 |
-| 风险 | 低，但必须一次做对 |
+- 服务器：`ssh -i /Users/dingyanwen/Desktop/RAG/id_rsa_fixed -p 61015 root@10.98.36.107`
+- worktree：`/mnt/hw/bw-agent/worktree`（分支 `deepseek`）；results：`/mnt/hw/bw-agent/results/`
+- 工具链：`nightly-2026-07-08`；构建需
+  `LD_LIBRARY_PATH=/root/.rustup/toolchains/nightly-2026-07-08-x86_64-unknown-linux-gnu/lib`
+- 提交前 `bash /mnt/hw/bw-agent/pubcheck.sh`（自动移 target → check_public_tree → 移回）；
+  推送 `GIT_SSH_COMMAND="ssh -i /root/.ssh/id_ed25519_dywzju09_blip -o StrictHostKeyChecking=no" git push origin deepseek`
+- 环境备注：`/usr/local/lib64` 有 fluidsynth 1.1.10（系统 2.2.5 缺 midi router 符号，
+  已备份 `.bak2x`）；`/mnt/hw/bw-agent/results/cfltk-lib/` 有 cfltk 预编译库
+  （harness 构建 `CFLTK_BUNDLE_DIR`）；`/tmp/server2.py` 是 ffmpeg harness 慢速
+  HTTP 服务器；`/mnt/hw/bw-agent/disk-clean.sh` 磁盘清理（类别规则，dry-run 默认）。
 
-### P1 外部侧 Q1 逃逸
+## 已知未解决问题
 
-| 字段 | 内容 |
-| --- | --- |
-| 服务 | C2 的**前提**，不是判别项 |
-| 状态 | `Planned` |
-| 范围 | 只支持外部 C 源码随构建提供的 crate（L1） |
-| 完成谓词 | 单一库上端到端产出指令级可回查的逃逸证据；查不出逃逸时记 `InsufficientEvidence` 而非判安全 |
-| 风险 | 中。**止损**：两三周内看不到端到端结果，贡献结构需重新设计 |
-
-## 已记录的降级
-
-**Q3 晚调查询首期降级为「同槽间接调用存在性」。** 完整 Q3 需要全库可达性加间接调用 callee 解析，代价高一个数量级。降级版输出 `StaticVerdict = InsufficientEvidence` + 最低档晚调证据 + `EstablishLateInvoke` 义务，由 P4 的反证补上真实可达性证明。**不得输出 `SupportedIncompatibility (weak)` 或任何第四态。**
-
-**P4 必须能消费这条输出。** 降级 Q3 永不产出 `SupportedIncompatibility`，若 P4 只接受不相容判定，首期实现里 P4 就没有合法输入。见 [ADR-0004](../decisions/ADR-0004-joint-trace-verdict-semantics.md)。
-
-外部证据当前是单一 `EvidenceGrade` 枚举，**拆成四个正交字段的设计状态为 `Planned`**，随一次性 schema 升版落地。
-
-**即使 F1–F4 全部完成，静态 Q3 也只能称「declared abstraction 内的高精度」，不能称独立确认。**
-
-降级的确切代价、必须量化的三个指标、完整实现的 F1–F4 分阶段计划，见 [implementation plan 的 P2](implementation-plan.md#p2-外部侧-q4-清槽-与降级-q3-晚调)。
-
-## 代码处置
-
-逐组件的保留 / 冻结 / 重构 / 删除见 [代码库对齐审计](../development/codebase-realignment.md)。结论是**补充优化而非重构**：编译器 Rust 侧在新路线中价值上升，身份模型是可扩展的 builder，外部侧属纯新增。
-
-三条具名决定：
-
-| 编号 | 决定 |
-| --- | --- |
-| D1 | 冻结 returned-borrow 维度——不删除、不新增投入、不作为贡献陈述 |
-| D2 | `HandOffId` + 三态判定 + 外部侧事实合并为**一次** schema 升版 |
-| D3 | 重写 `generate_witness_harness.rs` 的产出目标，保留其推导逻辑 |
-
-## 已推迟的决定
-
-**跨外部库家族的数量下限推迟到认证期。** 取得多个外部库 LLVM IR 的工程可行性是已知风险，但按当前决定不构成现阶段的实现约束——P1/P2 只要求单库端到端打通。见 [Gate C](milestone-gates.md#gate-c跨库泛化)。
-
-## 已知未收口项
-
-不阻塞关键路径，但影响评估质量。
-
-| 项 | 影响 |
-| --- | --- |
-| `CallbackLifetimeBoundFact` 不记录该 API 是不是 `unsafe fn` | Gate P 的 Tier A 判据第一条是「是安全 API」，事实层没有这个字段。PG-1 探针实测：fixture 的 `unsafe extern "C" fn trampoline<F: FnMut()>` 也产出了一条 callback bound 事实。**PP 探针必须能过滤掉它**，否则猎物池被高估 |
-| 排名未把可绑定的注册候选排进默认输出上限 | 默认扫描看不到判定结果，每次都要手动放宽上限 |
-| 保护性特征仍依赖源码文本匹配 | 同类候选内部排序不可靠 |
-| n-day 度量仪器只接入了单一库 | 召回率数字不具代表性 |
-| 跨函数对象流只覆盖有限形状 | 影响未来扩维，当前不阻塞 |
-| release/use ordering 中 unregister-before-drop 与 conditional release gap 未分开报告 | 需在 release-proof 层新增事实种类，不能靠扩展 ordering 枚举解决 |
-
-## V3.3
-
-`Blocked`。依赖 clean method commit、公开数据集 manifest、Contract/config hash、pair gate、动态桥接与约 100 crate pilot。判据见 [milestone gates](milestone-gates.md) 的工程 gate 部分与 [public regression runbook](../experiments/runbooks/public-regression.md)。准备 V3.3 设施不改变当前阶段判断，也**不能替代研究 gate**。
+见 [current-status](../project/current-status.md#已知未解决问题不重复发现)（Q4′
+无结论、Q3 降级、rust_def_instance、registration_key、3 跳上界、fluidsynth
+触发缺证、setup 片段责任）。

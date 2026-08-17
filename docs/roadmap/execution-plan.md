@@ -79,39 +79,38 @@
 ## 3. 当前位置
 
 ```text
-✅ PF：核心关系与四个 matched fixture                 Implemented
-✅ PC：EffectiveCaptureAdmission                     Implemented
-✅ PG-1：RegistrationGuard                           Implemented
-✅ PG-2：AllocationOwnership                         Implemented
-✅ safe-entry lineage / is_unsafe_fn                 Implemented
-✅ RustContractFact 自动装配                         Implemented
-✅ 1.4 Rust 侧输出固定与回归                         Implemented
-✅ 真实外部 IR 获取与绑定（阶段 2，V0 通过）        Implemented
-⬜ Q1 / Q4′ / 降级 Q3                                下一步
-⬜ P0 identity / Schema / P3                          Planned
-⬜ P4 witness / 独立 oracle                           Planned
-⬜ 小样本与大规模评估                                后置
+✅ 阶段 0：最小范围与接口草案                           Implemented
+✅ 阶段 1：Rust 侧契约事实（PC/PG-1/PG-2/lineage）      Implemented
+✅ 阶段 2：真实外部 IR 获取与绑定                        Implemented
+✅ 阶段 3：外部侧 Q1/Q3/降级 Q4′                         Implemented（Q4′ 真实库无结论，见 stage3 记录）
+✅ 阶段 4：联结与三态判定                                Implemented
+✅ 阶段 5.0：符号解析（rusqlite 6/6）                    Implemented
+✅ 阶段 5.2：真实目标 source-to-verdict                  Implemented
+✅ 阶段 5.3：witness 生成器重写（D3）                    Implemented（2026-08-17：硬编码清零 + ASan profile + extra_dependencies）
+✅ 阶段 5.4：ASan 独立 oracle（bw run-witness-oracle）   Implemented（2026-08-17）
+✅ 阶段 5.5：rusqlite 0.26.2 负对照                      Implemented（2026-08-17：对照矩阵 5/5）
+✅ 候选验证（0day 候选 → ASan 出证）                    5/6 出证 + 1 缺证（fluidsynth 触发不可达）
+⬜ 大规模 0day 探针                                      Planned（判定→生成→oracle 三层就绪）
+⬜ 阶段 6：核心功能验收（论文级）                        Planned
+⬜ 阶段 7-9：小样本、规模化、冻结评估                    后置
 ```
 
-**阶段 1 已完成（2026-08-04，含 1.4）。** Rust 侧现在能自动产出四样：`EffectiveCaptureAdmission`、
-`RegistrationGuard`、`AllocationOwnership`、safe-entry lineage，并按 `(api_id, callback_param)`
-装配成 `RustContractFact`；缺任何一半产出写明缺什么的 gap，不静默丢弃。
+**当前主线已完成到 5.5。** 下一步是**大规模 0day 探针**：判定层（bw-rustc +
+extract-rust-contracts）、生成器（5.3 重写版，四槽 + ASan profile）、独立 oracle
+（bw run-witness-oracle）三层均已就绪，可对批量 crate 执行
+「分析 → 判定 → 生成 → ASan 裁决」流水线。探针规模从小到大，先验证有效性再扩量
+（用户指示）。披露类判断（候选是否可上报）必须询问用户。
 
-1.4 的三项也已落地：`bw extract-rust-contracts` 让 Rust 侧**能独立运行**并写出带
-checksum 的产物；重复运行产出逐字节相同（有断言）；`Unresolved` 带 `UnresolvedReason`
-机器可读原因，并按原因分类计数——那是 attrition waterfall 的输入。
+已知未解决问题（不重复发现）：
 
-**阶段 2 已完成（2026-08-04）**，见 [结果记录](../experiments/results/stage2-foreign-ir-v0-2026-08-04.md)：
-参考目标选定为 rusqlite 0.26.1/0.26.2（L1，SQLite 随构建从源码编译），adapter 已在
-`809cc2f` 冻结且冻结时无任何 P3 判定，`tools/foreign-ir/cc-capture` 用**同一组构建参数**
-捕获到 40 个编译单元的 bitcode，V0 检查确认 `sqlite3_update_hook` 在捕获的 IR 中有定义。
-
-**当前唯一主线下一步是阶段 3：Q1 → Q4′ → 降级 Q3。** 不先跑 300–500 crate，不先做完整
-baseline，也不先准备 sealed holdout。
-
-**adapter 已按这条要求在选定目标时同步冻结**，见 `adapters/rusqlite/update_hook.toml`。
-它直到阶段 5 才用得上，但拖到那时再写就无法证明没有掺入缺陷信息，
-[Gate B](milestone-gates.md) 的判据会废掉。
+- Q4′ 在真实库上无结论（入口参数校验提前返回 → 缺证）；
+- Q3 是降级实现（只找同槽间接调用点，不证明晚调可达）；
+- rust_def_instance 还不是单态化实例 id；
+- registration_key 恒为 None；
+- 搜索上界 3 跳只在 rusqlite 验证过，不要随手调大；
+- fluidsynth 类候选（触发需 unsafe C 调用）在 `#![forbid(unsafe_code)]` harness
+  下不可达，safe 触发不可达 → 缺证（非证伪）；
+- harness 生成器的 setup 片段（`Command::spawn()?` 等）是 adapter 作者责任。
 
 ---
 

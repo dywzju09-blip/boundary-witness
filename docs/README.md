@@ -70,18 +70,13 @@
 
 - [案例索引](case-studies/README.md)
 - [rusqlite callback lifecycle](case-studies/rusqlite-callback-lifecycle.md)
-- [OpenSSL lifetime](case-studies/openssl-lifetime.md)
 
 ## 历史结果
 
-- [D1 structured search](experiments/results/d1-structured-search-2026-07-19.md)
-- [D2 small comparison](experiments/results/d2-small-comparison-2026-07-20.md)
-- [rusqlite M12 blind gate](experiments/results/rusqlite-m12-blind-gate-2026-07-20.md)
-- [V3.1 N-day gate](experiments/results/v3-1-nday-gate-2026-07-20.md)
-- [V3.2 20-crate pilot](experiments/results/v3-2-20-crate-pilot-2026-07-21.md)
-- [V3.2.5 public blind smoke](experiments/results/v3-2-5-nday-blind-smoke-2026-07-21.md)
-- [Gate 0 外部基线对照](experiments/results/gate0-baseline-comparison-2026-07-31.md)
-- [Gate 0 Yuga 误报归因](experiments/results/gate0-yuga-precision-triage-2026-07-31.md)
+历史结果索引与当前主线见 [实验结果索引](experiments/results/README.md)。其中
+[Gate 0 外部基线对照](experiments/results/gate0-baseline-comparison-2026-07-31.md)
+与 [Yuga 误报归因](experiments/results/gate0-yuga-precision-triage-2026-07-31.md)
+仍被 [research thesis](project/research-thesis.md) 引用（n=1 反例，不构成精度证据）。
 
 **历史结果绑定各自的 historical commit，不代表当前能力，也不因路线重写而升级为 `Verified`。**
 
