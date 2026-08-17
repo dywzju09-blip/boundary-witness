@@ -37,12 +37,12 @@ bw run-witness-oracle --harness-dir <dir> --run-id <id> --toolchain nightly-2026
 
 ## 环境（远端服务器）
 
-- 服务器：`ssh -i /Users/dingyanwen/Desktop/RAG/id_rsa_fixed -p 61015 root@10.98.36.107`
+- 服务器：`ssh -i <local-key-path> -p <port> root@<server>`（工作机本地凭据，不提交）
 - worktree：`/mnt/hw/bw-agent/worktree`（分支 `deepseek`）；results：`/mnt/hw/bw-agent/results/`
 - 工具链：`nightly-2026-07-08`；构建需
   `LD_LIBRARY_PATH=/root/.rustup/toolchains/nightly-2026-07-08-x86_64-unknown-linux-gnu/lib`
 - 提交前 `bash /mnt/hw/bw-agent/pubcheck.sh`（自动移 target → check_public_tree → 移回）；
-  推送 `GIT_SSH_COMMAND="ssh -i /root/.ssh/id_ed25519_dywzju09_blip -o StrictHostKeyChecking=no" git push origin deepseek`
+  推送 `GIT_SSH_COMMAND="ssh -i <server-key-path> -o StrictHostKeyChecking=no" git push origin deepseek`
 - 环境备注：`/usr/local/lib64` 有 fluidsynth 1.1.10（系统 2.2.5 缺 midi router 符号，
   已备份 `.bak2x`）；`/mnt/hw/bw-agent/results/cfltk-lib/` 有 cfltk 预编译库
   （harness 构建 `CFLTK_BUNDLE_DIR`）；`/tmp/server2.py` 是 ffmpeg harness 慢速
