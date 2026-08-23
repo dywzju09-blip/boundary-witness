@@ -1,28 +1,22 @@
 # 当前状态
 
-**阶段锚点：V3.2.x core-effect hardening。V3.3 gate 未通过。**
+**阶段锚点：V3.2.x core-effect hardening；P4 反证合成已在 fixture 级实现（2026-08-08）。V3.3 gate 未通过。**
 
 本文只陈述当前公开工作树中可以由代码、测试和运行记录支撑的状态。方向权威见 [research thesis](research-thesis.md)；能力边界见 [scope and boundaries](scope-and-boundaries.md)。状态含义见 [术语](terminology.md#状态词)。`Implemented` 说明实现和测试存在；只有与当前 commit、配置、数据及 checksum 对齐的正式运行记录才能标为 `Verified`。
 
 ## 相对研究主线的位置
 
-[research thesis](research-thesis.md) 于 2026-07-30 重写，创新点编号由 N1/N2/N3 改为 C1/C2/C3。**外部侧分析尚未开始，三条创新点均未成立：**
+[research thesis](research-thesis.md) 于 2026-07-30 重写，创新点编号由 N1/N2/N3 改为 C1/C2/C3。**2026-08-08 起静态闭环（C2）与反证合成链路（C1）在 fixture 上实现并端到端验证；2026-08-23 起反证合成链路在真实组件（rusqlite 0.26.1 / RUSTSEC-2021-0128）上端到端复验：**
 
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
-| C1 safe-only 可执行反证合成 | `Planned` | 反证合成（roadmap P4）未开始。这是重排后的**首要**创新点。**delta 已收窄**：deepSURF 已生成 safe-only harness 并用 ASan，safe-only 本身不是创新点 |
-| C2 类型契约 × 外部 effect 的精化检查 | `Planned` | 关系已实现并通过 Gate R（PF）。**Rust 侧三个事实做完两个**（PC 的 `EffectiveCaptureAdmission`、PG-1 的 `RegistrationGuard`），分配归属（PG-2）仍为零行代码。外部侧 Q1/Q3/Q4′（P1/P2）未开始。精度对照只有单 crate 数据，且该 crate 参与过开发，不构成证据 |
+| C1 safe-only 可执行反证合成 | `Implemented`（fixture + 真实组件） | fixture：7/7 primary 触发 ASan heap-use-after-free、19 个控制组全干净。真实组件：rusqlite 0.26.1 `update_hook`（M12）2/2 borrowed-capture 计划 confirmed、no-trigger 判别控制干净，witness 回执已接入 checksum 清单（六个产物目录 verify-run 全过）。**正式 Verified 仍需按 D2 判据把 scratch 产物纳入受管位置并对齐 commit 与 checksum 的运行记录** |
+| C2 类型契约 × 外部 effect 的精化检查 | `Implemented`（fixture + 真实 IR） | 两侧事实均从真实构建产物推导（wrapper MIR/HIR + clang IR），分层联结产出三态判定与证据来源记录；真实 sqlite3.c IR（78 万行）上 Q1/Q3/Q4′ 提取实测 4.4 s。跨库泛化（Gate C）、别名/线程/重入/展开/值域/初始化六维未做 |
 | C3 生态级度量与新发现 | `Planned` | 猎物存在性尚未测量（roadmap PP），无法判断新发现目标是否可达 |
 
-**artifact-aligned hand-off identity 不再列为创新点**，降为实现属性（roadmap P0）。**旧 N2「消除人工 API 清单」已于 2026-07-31 撤销**：Yuga 不用清单即报出 5/7，该主张对本缺陷类不成立；结构化角色推断仍会实现，但作为工程属性。
+**外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md)**（历史记录：排除误报当时只用了 Rust 侧签名形状）。Gate R 关系正确性已通过（2026-07-31），且自 stage3 起「外部侧手工标注」这一限制已解除——Q1/Q4′/降级 Q3 均由真实 LLVM IR 推导。
 
-外部基线对照结果见 [Gate 0](../experiments/results/gate0-baseline-comparison-2026-07-31.md) 与 [误报归因](../experiments/results/gate0-yuga-precision-triage-2026-07-31.md)。**注意该记录显示本系统排除那 8 条误报只用了 Rust 侧签名形状、没有用外部证据**，因此 n=1 数据不构成「外部侧信息消除了误报」的证据。
-
-**[Gate R](../roadmap/milestone-gates.md#gate-r关系正确性) 的关系正确性部分已通过**（2026-07-31）：四个 matched fixture 全部判对；fixture 2 与 3 的 Rust 事实完全相同、只有外部侧清槽行为不同，Full 能分开而 Rust-only 只能记缺证。非空性检查已做——故意让 guard 分支忽略 Q4′ 证据后，恰好 6 项依赖该分支的断言失败、8 项不依赖的仍通过。
-
-**Gate R 证明的是关系本身，不是 Q4′ 可实现。** 外部侧取值目前由 C stub 手工标注（manual foreign oracle，来源等级与自动分析不同），能否从真实构建的 LLVM IR 推导出同样的取值，由 P1/P2 回答。
-
-**当前最高优先级是 PG-2 `AllocationOwnership`。其后依次完成 safe-entry lineage、RustContractFact、真实外部 IR、Q1/Q4′/降级 Q3、P0/P3 和 P4；Gate P 与规模评估后置到单目标核心闭环完成之后。** 完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
+**当前最高优先级是 stage6 剩余收口**：verify-run checksum 清单接入与真实 rusqlite 组件端到端复验均已完成（2026-08-23，见 [stage6 记录](../experiments/results/stage6-checksum-and-rusqlite-e2e-2026-08-23.md)）；剩 Gate 复核材料准备与正式 D2 对齐。完整执行顺序见 [execution plan](../roadmap/execution-plan.md)。
 
 ## 状态总览
 
@@ -41,13 +35,13 @@
 | `Implemented` | 核心关系与四个 matched fixture（roadmap PF） | `crates/bw-model/src/compatibility.rs` + `crates/bw-model/tests/compatibility.rs`（14 项）+ `benchmarks/compiler-fixtures/callback-retention-relation/`。四个 fixture 全部判对，Full 能分开 2 与 3、Rust-only 不能。**外部侧事实由 C stub 手工标注**（manual foreign oracle），不是从 IR 推导 |
 | `Implemented` | `EffectiveCaptureAdmission`（roadmap PC） | 语法 scope 到语义取值的映射 + `dyn Fn` 覆盖。`crates/bw-model/src/static_fact.rs`、`compiler/bw-rustc/src/rustc_api/mir.rs`。golden 与模型测试覆盖 APIT / HRTB / `Box<dyn>` / `&mut dyn` / 显式 lifetime |
 | `Implemented` | `RegistrationGuard` 检测（roadmap PG-1） | 从 HIR 签名与 guard 类型的 `Drop` MIR 判定，无需 API map。`compiler/bw-rustc/src/rustc_api/mir.rs` 的 `registration_guards`、`crates/bw-model/src/static_fact.rs` 的 `RegistrationGuard`/`RegistrationGuardFact`。golden 见 `compiler/bw-rustc/tests/callback_retention_relation_golden.rs`。**不产出 `OwnerDropUnregisters`**——那一取值的判据是 owner drop 路径证明，不是返回值形状 |
-| `Planned` | `AllocationOwnership` 检测（roadmap PG-2） | **零行代码。** `'static` 只管住捕获、不管 `Box<F>` 存活；缺它漏掉整类问题。原材料（raw pointer transfer / release path proof）已有 |
-| `Planned` | 把编译器输出装成 `RustContractFact`（roadmap P0） | 目前无生产者；PF 阶段的 Rust 侧事实是手写的 |
+| `Implemented` | `AllocationOwnership` 检测（roadmap PG-2，2026-08-06） | 编译器探针先行：容器形状 + raw-pointer transfer 证据推导分配归属取值。`crates/bw-model/src/static_fact.rs` 的 `AllocationOwnership` + `compiler/bw-rustc/src/rustc_api/mir.rs`。计划见 [execution plan](../roadmap/execution-plan.md) |
+| `Implemented` | 编译器输出装成 `RustContractFact`（roadmap P0，2026-08-06） | `extract-rust-contracts` 命令 + `bw-model::RustContractFact`（schema `bw.rust-contract/0.1`）。PF 阶段的手写事实已被生产者取代 |
 | `Planned` | 猎物存在性探针（roadmap PP） | 未测量。P-a 前置是 PC、PG-2、`is_unsafe_fn`、safe-entry lineage 与 L1 binding；P-b 还依赖 P0–P4 核心闭环 |
-| `Planned` | 外部侧 Q1 逃逸与 Q3 晚调（roadmap P1/P2） | 均未实现。这是 C2 的前提。Q3 首期降级为「同槽间接调用存在性」，见 [implementation plan](../roadmap/implementation-plan.md) |
-| `Planned` | hand-off 身份与双侧事实模型（roadmap P0） | 现有事实全部单侧；`HandOffId` 未引入。**不是创新点，是前提** |
+| `Implemented` | 外部行为事实：Q1 逃逸、Q4′ 清槽、降级 Q3（roadmap P1/P2/P3，2026-08-05） | `extract-foreign-facts` 从 clang IR 推导 `ForeignRetention`/`ForeignInvocation`/`ForeignClear`，RoleMap JSON 声明符号角色（不接受人工标注行为）。降级 Q3 只产出 `same_slot_invoke_candidate` 级证据且从不输出 `SupportedIncompatibility`（ADR-0004） |
+| `Implemented` | hand-off 身份与双侧事实模型（roadmap P0，2026-08-06） | `HandOffId` 五层身份 + `judge-hand-offs` 分层联结 + 三态判定（`SupportedIncompatibility`/`CompatibleWithinAnalyzedFragment`/`InsufficientEvidence`），判定来源与证据等级全部入产物。**artifact-aligned identity 是实现属性，不是创新点** |
 | `Planned` | 别名、线程、重入、展开、值域、初始化六个维度 | 两侧均未实现，属 future work，持有期一维闭环前不扩维 |
-| `Planned` | safe-only 反证合成与执行（roadmap P4） | witness plan 到自动 harness/executor/receipt 的闭环不完整。这是 C1 的全部内容 |
+| `Implemented` | safe-only 反证合成与执行（roadmap P4，2026-08-08；真实组件 2026-08-23） | `plan-witnesses` → `generate-safe-client` → `run-safe-client` 全链。fixture：7 计划全部合成并确认为反例（ASan heap-use-after-free），25 条拒绝留痕，19 控制组全绿。真实组件 rusqlite 0.26.1 `update_hook`：联结零拒绝、2 borrowed-capture 计划 confirmed + no-trigger 控制干净。结果见 [stage5 记录](../experiments/results/stage5-p4-witness-synthesis-2026-08-08.md)与 [stage6 记录](../experiments/results/stage6-checksum-and-rusqlite-e2e-2026-08-23.md)。正式 D2 对齐未做 |
 | `Planned` | 排名把可绑定的注册候选排进默认输出上限 | 默认上限取不到它们，默认扫描看不到判定结果 |
 | `Planned` | 通用跨函数 `ObjectFlow`、完整 release/use ordering、通用 contract registry | 仅覆盖有限代码形状 |
 | `Blocked` | V3.3、约 100 crate pilot、sealed holdout | clean method commit、完整 public regression、pilot、freeze 与新 sealed smoke 尚未全部完成 |
@@ -173,6 +167,31 @@ runtime 能记录对象和 callback 事件；oracle 能融合 static/runtime/con
 
 这些测试证明组件行为，不构成当前迁移 commit 上的正式动态实验记录，因此不标为 `Verified`。`bw-experiment` 与 rusqlite 定向 harness 的代码和公开 fixtures 已迁入，可用于组件级测试，但 formal D0/D1/D2 和 public regression 仍需要独立 run manifest、checksum 与对照证据。
 
+## Implemented：反证合成链路（roadmap P4，2026-08-08）
+
+判定 → 反证计划 → safe-only 客户端 → oracle 回执 → 控制矩阵的完整链路已实现并在
+callback-retention-relation fixture 上端到端验证。
+
+- 代码路径：
+  - `crates/bw-model/src/witness.rs`（计划推导、schema 常量）
+  - `crates/bw-cli/src/commands/plan_witnesses.rs`
+  - `crates/bw-cli/src/commands/safe_client.rs`（生成引擎）
+  - `crates/bw-cli/src/commands/generate_safe_client.rs`
+  - `crates/bw-cli/src/commands/run_safe_client.rs`
+  - `experiments/configs/p4-fixture-controls.toml`（判决后控制矩阵）
+  - `contracts/callback-retention/callback-retention.foreign-roles.json`
+- 测试路径：
+  - `crates/bw-cli/tests/witness_pipeline_cli.rs`（真实 wire 格式的链路集成测试）
+  - `crates/bw-cli/src/commands/safe_client.rs`（引擎单测：变体重排、覆盖断言、拒绝路径）
+  - `crates/bw-cli/src/commands/plan_witnesses.rs`（关联键身份性测试）
+
+fixture 运行结果：7 计划全部合成并执行，primary 全部触发 ASan heap-use-after-free；
+25 条拒绝留痕；19 个控制组（fixed_foreign / owned_callback / unregister_before_drop /
+no_trigger / synchronous）全部符合预期。回执 schema `bw.witness-receipt/0.1`，
+含 binary/stderr sha256、sanitizer 结构化报告与可重放 argv。**这是 fixture 级
+`Implemented`：真实组件复验、verify-run checksum 清单接入、跨库泛化均未完成，
+不标 `Verified`。** 结果与边界见 [stage5 记录](../experiments/results/stage5-p4-witness-synthesis-2026-08-08.md)。
+
 ## Planned：仍不完整的核心能力
 
 以下能力有明确方向，但当前实现不能被描述为通用完成：
@@ -182,7 +201,7 @@ runtime 能记录对象和 callback 事件；oracle 能融合 static/runtime/con
 - 条件 release、复杂 Drop、完整 release/use coverage 与 ordering；
 - 动态 key/index、多来源合流和任意堆别名；
 - 无需改 compiler 代码即可接入新组件的统一 contract registry；
-- witness plan 自动选择/生成 harness，并驱动 Miri、fuzz、runtime、oracle 与 replay receipt 的通用 executor。
+- 通用 executor：把反证计划驱动到 Miri、fuzz、runtime、oracle 与 replay receipt 的任意后端组合（当前 oracle 后端只覆盖 ASan heap-use-after-free 一类证据）。
 
 相关现有入口包括 `compiler/bw-rustc/src/rustc_api/mir.rs`、`crates/bw-cli/src/commands/build_witness_plan.rs`、`crates/bw-experiment/src/` 和 `contracts/callback-retention/`，但这些路径的存在不能升级状态。
 
