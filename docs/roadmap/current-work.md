@@ -19,7 +19,7 @@
 | stage4 分层联结 + 三态判定 | ✅ `Implemented`（2026-08-06） |
 | stage5.0 符号解析（真实 rusqlite 包装层） | ✅ `Implemented`（2026-08-07） |
 | **stage5 P4 反证合成** | ✅ **`Implemented`（2026-08-08，fixture 端到端 7/7 confirmed + 控制矩阵全绿）** |
-| stage5.1 真实组件端到端（rusqlite 0.26.1 / M12） | ✅ **`Implemented`（2026-08-23，2/2 计划 confirmed + no-trigger 控制全绿；witness 回执已接入 checksum 清单）** |
+| stage5.1 真实组件端到端（rusqlite 0.26.1 / M12） | ✅ **`Implemented`（2026-08-23，M12 家族 3 API 6/6 计划 confirmed + 判别控制全绿；witness 回执已接入 checksum 清单）** |
 | stage6 核心收口 / Gate 复核 | ⬜ 进行中（checksum 收口完成；正式 D2 对齐待做） |
 
 结果与证据：[stage5 结果记录](../experiments/results/stage5-p4-witness-synthesis-2026-08-08.md)、[stage6 结果记录](../experiments/results/stage6-checksum-and-rusqlite-e2e-2026-08-23.md)。

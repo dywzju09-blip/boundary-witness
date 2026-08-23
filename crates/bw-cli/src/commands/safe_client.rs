@@ -438,6 +438,21 @@ fn param_name(existing: &[String], type_text: &str) -> String {
     format!("_p{}: {}", existing.len(), type_text.trim())
 }
 
+/// 公开签名是否声明了返回类型（如 `FnMut() -> bool`）。
+///
+/// 声明了返回类型的回调，生成的闭包体以 `Default::default()` 收尾——这只是让
+/// 闭包满足公开签名的**类型**要求；返回值的具体取值对反证无关（UAF 读取发生在
+/// 回调被调用的瞬间，与其返回什么无关）。已知局限：不实现 Default 的返回类型
+/// （如部分枚举）会编译失败；那类 API 目前都带 `'static` 界、不产生借用计划。
+pub(crate) fn signature_has_return(callback_signature: &str) -> bool {
+    let Some(close) = callback_signature.rfind(')') else {
+        return false;
+    };
+    callback_signature[close + 1..]
+        .trim_start()
+        .starts_with("->")
+}
+
 /// 变体生效后的动作序列。控制组只做两种机械改动：删掉触发步，
 /// 或者把触发步挪到所有失效动作之前。其余一律原样保留。
 fn effective_steps(plan: &WitnessPlan, variant: ClientVariant) -> Vec<DangerStep> {
@@ -523,6 +538,13 @@ fn render_main(
     let allocation_shape = plan.shape == HarnessShape::AllocationFreedByWrapper;
     let params = closure_params(&registration.1.callback_signature);
     let param_list = params.join(", ");
+    // 公开签名带返回类型时（FnMut() -> bool 等），闭包体补 Default::default()
+    // 以满足类型；返回值取值对反证无关。
+    let callback_body = if signature_has_return(&registration.1.callback_signature) {
+        "std::hint::black_box(*payload); Default::default()"
+    } else {
+        "std::hint::black_box(*payload);"
+    };
     // Option<F> 形状的注册入口（rusqlite）：回调表达式包一层 Some。
     let wrap_option = |expression: &str| -> String {
         if registration.1.wraps_callback_in_option {
@@ -549,9 +571,7 @@ fn render_main(
                     // 必须是**解引用加载**而不是传递引用：black_box(&*payload)
                     // 只把指针值交给不透明函数，已释放的堆块从未被读——oracle
                     // 看不到任何访问。*payload 才是对失效内存的真实读取。
-                    &format!(
-                        "let callback = |{param_list}| {{ std::hint::black_box(*payload); }};",
-                    ),
+                    &format!("let callback = |{param_list}| {{ {callback_body} }};"),
                 );
             }
             DangerStep::RegisterThroughSafeApi => {
@@ -961,6 +981,47 @@ rust = "drop(registry);"
         );
         // 没有括号：零参数，不猜。
         assert!(closure_params("FnMut").is_empty());
+    }
+
+    #[test]
+    fn return_type_detection_follows_the_public_signature() {
+        assert!(!signature_has_return("FnMut()"));
+        assert!(signature_has_return("FnMut() -> bool"));
+        assert!(signature_has_return("FnMut(rusqlite::hooks::Action, &str, &str, i64)").eq(&false));
+    }
+
+    /// 带返回类型的回调（rusqlite commit_hook：FnMut() -> bool）：闭包体补
+    /// Default::default() 满足公开签名，解引用加载不变。
+    #[test]
+    fn returning_callback_closures_satisfy_the_declared_return_type() {
+        let mut adapter = adapter();
+        adapter.registration_forms[0].callback_signature = "FnMut() -> bool".to_owned();
+        adapter.registration_forms[0].wraps_callback_in_option = true;
+        let dir = tempfile::tempdir().unwrap();
+        let root = repo_with_component(dir.path());
+
+        let client = generate_client(
+            &plan_for(
+                "register_borrowed",
+                HarnessShape::BorrowedCaptureEscapingScope,
+            ),
+            ClientVariant::Primary,
+            &adapter,
+            &root,
+        )
+        .unwrap();
+
+        assert!(
+            client.main_rs.contains(
+                "let callback = || { std::hint::black_box(*payload); Default::default() };"
+            ),
+            "零参 + 返回 bool 的闭包形状"
+        );
+        assert!(
+            client
+                .main_rs
+                .contains(".register_borrowed(Some(callback));")
+        );
     }
 
     /// 真实组件场景（rusqlite）：四参数回调闭包、组件 feature、Option 包裹、

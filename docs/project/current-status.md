@@ -10,7 +10,7 @@
 
 | 创新点 | 状态 | 缺什么 |
 | --- | --- | --- |
-| C1 safe-only 可执行反证合成 | `Implemented`（fixture + 真实组件） | fixture：7/7 primary 触发 ASan heap-use-after-free、19 个控制组全干净。真实组件：rusqlite 0.26.1 `update_hook`（M12）2/2 borrowed-capture 计划 confirmed、no-trigger 判别控制干净，witness 回执已接入 checksum 清单（六个产物目录 verify-run 全过）。**正式 Verified 仍需按 D2 判据把 scratch 产物纳入受管位置并对齐 commit 与 checksum 的运行记录** |
+| C1 safe-only 可执行反证合成 | `Implemented`（fixture + 真实组件） | fixture：7/7 primary 触发 ASan heap-use-after-free、19 个控制组全干净。真实组件：rusqlite 0.26.1 M12 家族三个 API（update_hook / commit_hook / rollback_hook）6/6 borrowed-capture 计划全部 confirmed、no-trigger 判别控制全干净，witness 回执已接入 checksum 清单（十四个产物目录 verify-run 全过）**正式 Verified 仍需按 D2 判据把 scratch 产物纳入受管位置并对齐 commit 与 checksum 的运行记录** |
 | C2 类型契约 × 外部 effect 的精化检查 | `Implemented`（fixture + 真实 IR） | 两侧事实均从真实构建产物推导（wrapper MIR/HIR + clang IR），分层联结产出三态判定与证据来源记录；真实 sqlite3.c IR（78 万行）上 Q1/Q3/Q4′ 提取实测 4.4 s。跨库泛化（Gate C）、别名/线程/重入/展开/值域/初始化六维未做 |
 | C3 生态级度量与新发现 | `Planned` | 猎物存在性尚未测量（roadmap PP），无法判断新发现目标是否可达 |
 

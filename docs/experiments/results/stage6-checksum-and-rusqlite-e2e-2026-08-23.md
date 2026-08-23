@@ -194,13 +194,39 @@ rust = "drop(conn);"
 - `(cd compiler/bw-rustc && cargo test --locked)`：70 项通过（fixture golden 不变，
   证明两处 wrapper 修复对既有完整调用图场景零回归）。
 
+## 家族扩展：commit_hook 与 rollback_hook（同日追加，run_id `rusqlite-m12-family-e2e-2026-08-23`）
+
+同一构建的契约装配里还有两个同家族 API（`permits_non_static_capture` + `guard:
+none`）：`Connection::commit_hook`（`FnMut() -> bool + Send + 'c`）与
+`Connection::rollback_hook`（`FnMut() + Send + 'c`）。外部 IR 已在手，只补了
+各自的 RoleMap（cb 1 / ud 2 / clear = 注册符号本身）与 adapter（触发分别为
+`BEGIN; INSERT; COMMIT;` 与 `BEGIN; INSERT; ROLLBACK;`），即跑完整条链：
+
+| API | 联结 | 计划 | 执行 | 结论 |
+| --- | --- | --- | --- | --- |
+| commit_hook | 2 joined / 0 拒绝 | 2× borrowed_capture_escaping_scope | 4 次：2 confirmed + 2 clean | **confirmed_counterexample ×2，控制违规 0** |
+| rollback_hook | 2 joined / 0 拒绝 | 2× borrowed_capture_escaping_scope | 4 次：2 confirmed + 2 clean | **confirmed_counterexample ×2，控制违规 0** |
+
+八个新产物目录 verify-run 全过。ASan 证据与 update_hook 同形：
+heap-use-after-free READ @ 客户端闭包体（main.rs:17），经 rusqlite
+call_boxed_closure trampoline 进入。
+
+生成器为此新增一条**纯类型层面**的规则：公开签名声明返回类型时（`-> bool`），
+闭包体以 `Default::default()` 收尾以满足签名；返回值取值对反证无关（UAF 读取
+发生在回调被调用的瞬间）。单测 `returning_callback_closures_satisfy_the_declared_return_type`。
+
+M12 缺陷家族在真实组件上的覆盖至此为 **3 个公开 API、6/6 计划全部确认、0 控制
+违规**。其余两个 hooks API（authorizer / progress_handler）静态侧判定为
+`requires_static_capture`（'static 界，修复后形状），按语义不产生借用计划——这
+本身就是「缺陷形状 vs 安全形状」在同组件内的判别对照。
+
 ## 边界与下一步
 
 - 本轮结果按纪律只标 `Implemented`；正式 D2 对齐需要把 scratch 产物（adapter、
   controls、组件源）纳入受管位置并重跑正式记录。
 - `allocation_freed_by_wrapper` 计划（InnerConnection 层的
-  `rust_retains_and_may_free_early`）本轮未生成客户端运行（其 primary 判定属于
-  同一符号的另一个交出点）；后续可补对应 controls。
+  `rust_retains_and_may_free_early`）在三个 hook 上都只到「生成端按表单正确拒绝」；
+  补齐对应 static-capture 表单的 adapter 与 controls 是后续项。
 - 固定侧（0.26.2）判别目前只在**静态侧**成立：`+ 'static` 界让借用闭包在编译期
   被拒（compatible 拒绝路径）。动态侧的固定组件控制需要独立计划，未在本轮范围。
 - sqlite3 IR 提取性能实测 4.4 s（782,531 行文本 IR），无性能问题。
