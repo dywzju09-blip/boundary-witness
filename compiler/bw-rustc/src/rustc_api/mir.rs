@@ -21316,31 +21316,42 @@ fn safe_entry_lineages(
         .iter()
         .map(|(def_id, api_id, callback_param, source_path, span)| {
             let owner_is_unsafe_fn = fn_is_unsafe(tcx, *def_id);
-            let (lineage, entry_def_path, hops, unresolved_reason) = if !call_graph_complete {
-                (
-                    SafeEntryLineage::Unresolved,
-                    None,
-                    None,
-                    Some(UnresolvedReason::LineageCallGraphIncomplete),
-                )
-            } else if is_public_safe_entry(tcx, *def_id) {
-                (
-                    SafeEntryLineage::DirectPublicSafeEntry,
-                    Some(tcx.def_path_str(def_id.to_def_id())),
-                    Some(0),
-                    None,
-                )
-            } else {
-                match nearest_public_safe_caller(tcx, *def_id, &callers) {
-                    Some((entry, hops)) => (
-                        SafeEntryLineage::ReachableFromPublicSafeEntry,
-                        Some(tcx.def_path_str(entry.to_def_id())),
-                        Some(hops),
+            // 调用图不完整（crate 里存在解析不出被调方的间接调用）时，**只有否定性
+            // 结论需要降级**。正向证明不依赖全局完整性：
+            //   - 入口本身就是公开安全 fn → 零跳，不需要任何调用边；
+            //   - 沿**已解析**的 FnDef 边找到公开安全 caller → 这条路径是真实存在
+            //     的证据，未解析的边只会增加 caller、不会推翻已有路径。
+            // 反过来，「没有公开安全 caller」（NoPublicSafeEntry）是全称命题——
+            // 图缺边时它证不出来，只能落 Unresolved。此前先判 completeness 把整个
+            // crate 的所有交出点一刀切成 Unresolved，真实组件（rusqlite）里一处
+            // 闭包间接调用就淹没了全部正向证据；fixture 太小从未暴露。
+            let (lineage, entry_def_path, hops, unresolved_reason) =
+                if is_public_safe_entry(tcx, *def_id) {
+                    (
+                        SafeEntryLineage::DirectPublicSafeEntry,
+                        Some(tcx.def_path_str(def_id.to_def_id())),
+                        Some(0),
                         None,
-                    ),
-                    None => (SafeEntryLineage::NoPublicSafeEntry, None, None, None),
-                }
-            };
+                    )
+                } else {
+                    match nearest_public_safe_caller(tcx, *def_id, &callers) {
+                        Some((entry, hops)) => (
+                            SafeEntryLineage::ReachableFromPublicSafeEntry,
+                            Some(tcx.def_path_str(entry.to_def_id())),
+                            Some(hops),
+                            None,
+                        ),
+                        None if call_graph_complete => {
+                            (SafeEntryLineage::NoPublicSafeEntry, None, None, None)
+                        }
+                        None => (
+                            SafeEntryLineage::Unresolved,
+                            None,
+                            None,
+                            Some(UnresolvedReason::LineageCallGraphIncomplete),
+                        ),
+                    }
+                };
             SafeEntryLineageObservation {
                 owner_def_path: tcx.def_path_str(def_id.to_def_id()),
                 source_path: source_path.clone(),
@@ -21527,7 +21538,14 @@ fn foreign_callback_calls(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Vec<ForeignCal
             let index = index as u32;
             if callback_arg_index.is_none() && ty_carries_fn_pointer(ty) {
                 callback_arg_index = Some(index);
-            } else if userdata_arg_index.is_none() && ty.is_raw_ptr() {
+            } else if callback_arg_index.is_some()
+                && userdata_arg_index.is_none()
+                && ty.is_raw_ptr()
+            {
+                // user-data 只在回调**之后**找：注册式 API 的前导 raw 指针是被注册
+                // 的对象本身（如 sqlite3_update_hook(db, cb, pArg) 的 db）。此前不
+                // 设这个约束，db 指针先到就被记成 user-data（rusqlite 实测报 0，
+                // 真实角色是 2，联结被 UserDataRoleMismatch 正确拒绝）。
                 userdata_arg_index = Some(index);
             }
         }
