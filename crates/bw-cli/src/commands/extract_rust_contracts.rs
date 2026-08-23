@@ -162,6 +162,16 @@ pub fn run(args: ExtractRustContractsArgs) -> Result<CommandStatus, CliError> {
     write_records(&records_path, &records)?;
     let summary_path = args.output_dir.join("rust-contract-summary.json");
     write_json_file(&summary_path, &summary)?;
+    crate::commands::write_checksums(
+        &[
+            (
+                "rust-contract-summary.json".to_owned(),
+                summary_path.clone(),
+            ),
+            ("rust-contracts.jsonl".to_owned(), records_path.clone()),
+        ],
+        &args.output_dir.join("checksums.sha256"),
+    )?;
 
     let status = serde_json::json!({
         "kind": "rust-contracts",

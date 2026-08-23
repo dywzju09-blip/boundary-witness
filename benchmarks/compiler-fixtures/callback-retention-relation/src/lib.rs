@@ -26,6 +26,9 @@ unsafe extern "C" {
     /// 请求外部清除当前注册。**它是否真的清空槽位，只有外部侧的代码能回答**——
     /// 这正是 Q4′ 要判的东西，也是 fixture 2 与 3 的唯一差别。
     fn fixture_unregister();
+
+    /// 请求外部执行一次已存储的回调。由安全入口 [`Registry::fire`] 包装。
+    fn fixture_fire();
 }
 
 unsafe extern "C" fn trampoline<F: FnMut()>(user_data: *mut c_void) {
@@ -91,6 +94,18 @@ impl Registry {
         unsafe { fixture_register(Some(trampoline::<F>), boxed.cast::<c_void>()) };
         // 交出之后立刻回收：外部槽位里的指针从此悬垂。
         drop(unsafe { Box::from_raw(boxed) });
+    }
+
+    /// 请求外部组件**现在**调用它存储的回调。
+    ///
+    /// 这是中性的正常使用入口，对应真实库里「执行一条 SQL 让 SQLite 调用 update
+    /// hook」的形状：任何真实组件都存在这样的安全 API 路径，否则存储回调就没有
+    /// 意义。反证客户端必须能只通过安全入口请求这次晚调——`extern` 调用留在组件
+    /// 内部，客户端保持 `#![forbid(unsafe_code)]`。
+    ///
+    /// 外部何时真的调用、调用的是哪个槽位里的回调，由外部侧代码决定，本函数不表态。
+    pub fn fire(&self) {
+        unsafe { fixture_fire() };
     }
 
     /// 负对照：`'static` bound，且分配交由外部持有到注销为止。

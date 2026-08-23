@@ -24,6 +24,7 @@ mod slot;
 mod static_fact;
 mod static_ranking_reveal;
 mod validate;
+mod witness;
 
 pub use adapter_effort::{
     V3_2_ADAPTER_EFFORT_SCHEMA_V1, V32AdapterEffortRecord, V32AdapterEffortSummary, V32AdapterKind,
@@ -126,9 +127,10 @@ pub use scanner_freeze::{
     V33ScannerFreezeToolchain, validate_v3_3_scanner_freeze,
 };
 pub use schema::{
-    CONTRACT_SCHEMA_V01, FINDING_SCHEMA_V01, FOREIGN_BEHAVIOR_SCHEMA_V01,
+    CONTRACT_SCHEMA_V01, CONTROLS_SCHEMA_V01, FINDING_SCHEMA_V01, FOREIGN_BEHAVIOR_SCHEMA_V01,
     FOREIGN_ROLE_MAP_SCHEMA_V01, JOINT_VERDICT_SCHEMA_V01, RUN_SCHEMA_V01,
-    RUST_CONTRACT_SCHEMA_V01, STATIC_SCHEMA_V01, STATIC_SCHEMA_V02, TRACE_SCHEMA_V01,
+    RUST_CONTRACT_SCHEMA_V01, SAFE_CLIENT_SCHEMA_V01, STATIC_SCHEMA_V01, STATIC_SCHEMA_V02,
+    TRACE_SCHEMA_V01, WITNESS_PLAN_SCHEMA_V01, WITNESS_RECEIPT_SCHEMA_V01,
 };
 pub use slot::{SlotBase, SlotId};
 pub use static_fact::{
@@ -154,3 +156,7 @@ pub use static_ranking_reveal::{
     validate_v3_2_5_private_ground_truth, validate_v3_2_5_static_ranking_reveal,
 };
 pub use validate::{RuntimeValidationSummary, validate_runtime_path, validate_runtime_stream};
+pub use witness::{
+    DangerStep, ExpectedEvidenceClass, HarnessShape, WitnessInputKind, WitnessPlan,
+    WitnessPlanInput, WitnessPlanRefusal, plan_witness,
+};

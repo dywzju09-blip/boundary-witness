@@ -1,0 +1,17 @@
+{
+  "schema_version": "bw.foreign-role-map/0.1",
+  "notes": [
+    "Gate R 回调保留 fixture 的外部符号与参数角色，供 bw extract-foreign-facts 绑定用。",
+    "只声明符号与参数位置。是否保留、是否晚调、是否清槽一律由 IR 回答——执行计划阶段 3 的完成条件要求 RoleMap 不参与行为结论。",
+    "依据：fixture 公开签名 void fixture_register(void (*)(void*), void*)、void fixture_unregister(void)、void fixture_fire(void)。",
+    "clear_symbol 是独立的注销入口 fixture_unregister：它是否真的清空槽位是 Q4′ 判定的问题，fixture 2（clearing）与 fixture 3（leaky）的唯一差别。"
+  ],
+  "roles": [
+    {
+      "register_symbol": "fixture_register",
+      "callback_arg_index": 0,
+      "userdata_arg_index": 1,
+      "clear_symbol": "fixture_unregister"
+    }
+  ]
+}

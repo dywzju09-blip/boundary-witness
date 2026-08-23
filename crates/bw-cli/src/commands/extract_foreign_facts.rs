@@ -165,6 +165,13 @@ pub fn run(args: ExtractForeignFactsArgs) -> Result<CommandStatus, CliError> {
     write_records(&records_path, &records)?;
     let summary_path = args.output_dir.join("foreign-fact-summary.json");
     write_json_file(&summary_path, &summary)?;
+    crate::commands::write_checksums(
+        &[
+            ("foreign-fact-summary.json".to_owned(), summary_path.clone()),
+            ("foreign-facts.jsonl".to_owned(), records_path.clone()),
+        ],
+        &args.output_dir.join("checksums.sha256"),
+    )?;
 
     let slots: usize = records
         .iter()

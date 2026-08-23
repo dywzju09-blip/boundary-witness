@@ -171,6 +171,16 @@ pub fn run(args: JudgeHandOffsArgs) -> Result<CommandStatus, CliError> {
     write_records(&records_path, &records)?;
     let summary_path = args.output_dir.join("joint-verdict-summary.json");
     write_json_file(&summary_path, &summary)?;
+    crate::commands::write_checksums(
+        &[
+            (
+                "joint-verdict-summary.json".to_owned(),
+                summary_path.clone(),
+            ),
+            ("joint-verdicts.jsonl".to_owned(), records_path.clone()),
+        ],
+        &args.output_dir.join("checksums.sha256"),
+    )?;
 
     let incompatible = summary
         .verdicts

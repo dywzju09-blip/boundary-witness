@@ -28,6 +28,14 @@ pub const FOREIGN_BEHAVIOR_SCHEMA_V01: &str = "bw.foreign-behavior/0.1";
 pub const FOREIGN_ROLE_MAP_SCHEMA_V01: &str = "bw.foreign-role-map/0.1";
 /// 两侧联结之后的三态判定。
 pub const JOINT_VERDICT_SCHEMA_V01: &str = "bw.joint-verdict/0.1";
+/// 由三态判定推导出的反证计划（执行计划阶段 5.1）。
+pub const WITNESS_PLAN_SCHEMA_V01: &str = "bw.witness-plan/0.1";
+/// 由反证计划生成的 safe-only 客户端描述（阶段 5.2）。
+pub const SAFE_CLIENT_SCHEMA_V01: &str = "bw.safe-client/0.1";
+/// 反证执行与独立 oracle 的回执（阶段 5.3）。
+pub const WITNESS_RECEIPT_SCHEMA_V01: &str = "bw.witness-receipt/0.1";
+/// 反证运行的控制矩阵。**post-verdict artifact**：在判定可用之后才允许写。
+pub const CONTROLS_SCHEMA_V01: &str = "bw.controls/0.1";
 
 #[derive(Deserialize)]
 struct SchemaHeader {

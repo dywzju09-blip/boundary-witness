@@ -189,6 +189,7 @@ name = "bw-cli"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "bw-experiment",
  "bw-foreign-ir",
  "bw-model",
  "bw-oracle",
@@ -274,19 +275,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "zstd",
-]
-
-[[package]]
-name = "bw-rusqlite-v3-adapter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bw-blind-model",
- "bw-model",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
 ]
 
 [[package]]

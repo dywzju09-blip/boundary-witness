@@ -1,0 +1,94 @@
+# P4 反证合成的控制矩阵（判决后产物，bw.controls/0.1）。
+#
+# 输入是 2026-08-08 fixture run（run_id p4-fixture-2026-08-08）的 7 个反证计划：
+#   - Registry::register_borrowed   ×3 artifact —— borrowed_capture_escaping_scope
+#   - Registry::register_guarded    ×1 leaky    —— guard_defeated_bypass
+#   - Registry::register_static_then_free ×3    —— allocation_freed_by_wrapper
+#
+# 每个条目声明：链接哪个外部实现（build_id）、跑哪个客户端变体、预期结论。
+# primary 的判定是对哪个外部实现做的，就链接哪个实现（foreign_artifact 过滤）。
+# 判别性控制：
+#   - guarded 计划的 fixed 实现是 clearing stub——同一客户端代码，
+#     注销真的清槽时必须干净；
+#   - allocation 计划的 owned-callback 控制把「分配被组件回收」换成
+#     「闭包自己拥有」——其余逐字相同。
+
+schema_version = "bw.controls/0.1"
+
+[[control]]
+role = "primary"
+build_id = "retain_late_invoke"
+client_variant = "primary"
+foreign_artifact = "callback-retention/retain_late_invoke"
+expectation = "confirmed"
+
+[[control]]
+role = "primary"
+build_id = "retain_late_invoke_clearing"
+client_variant = "primary"
+foreign_artifact = "callback-retention/retain_late_invoke_clearing"
+expectation = "confirmed"
+
+[[control]]
+role = "primary"
+build_id = "retain_late_invoke_leaky"
+client_variant = "primary"
+foreign_artifact = "callback-retention/retain_late_invoke_leaky"
+expectation = "confirmed"
+
+# 判别对：leaky 的 guarded 计划在 clearing 实现下必须干净。
+[[control]]
+role = "fixed_foreign_implementation"
+build_id = "retain_late_invoke_clearing"
+client_variant = "primary"
+foreign_artifact = "callback-retention/retain_late_invoke_leaky"
+api_id = "Registry::register_guarded"
+expectation = "clean"
+
+# 判别对：allocation 形状的 owned-callback 控制（同构建、同 API 形状，
+# 唯一差别是分配的所有权归属）。
+[[control]]
+role = "owned_callback_client"
+build_id = "retain_late_invoke"
+client_variant = "owned_callback"
+api_id = "Registry::register_static_then_free"
+foreign_artifact = "callback-retention/retain_late_invoke"
+expectation = "clean"
+
+[[control]]
+role = "owned_callback_client"
+build_id = "retain_late_invoke_clearing"
+client_variant = "owned_callback"
+api_id = "Registry::register_static_then_free"
+foreign_artifact = "callback-retention/retain_late_invoke_clearing"
+expectation = "clean"
+
+[[control]]
+role = "owned_callback_client"
+build_id = "retain_late_invoke_leaky"
+client_variant = "owned_callback"
+api_id = "Registry::register_static_then_free"
+foreign_artifact = "callback-retention/retain_late_invoke_leaky"
+expectation = "clean"
+
+# 判别对：guard 在场时先触发（一切仍存活）必须干净。
+[[control]]
+role = "unregister_before_drop"
+build_id = "retain_late_invoke_leaky"
+client_variant = "unregister_before_drop"
+expectation = "clean"
+
+# 省掉触发步：没有晚调就没有 UAF。对所有计划执行。
+[[control]]
+role = "no_trigger"
+build_id = "retain_late_invoke_leaky"
+client_variant = "no_trigger"
+expectation = "clean"
+
+# 同步外部实现：无存储、无晚调、无 trigger 符号。只与不引用触发的
+# no_trigger 客户端配对（机械省略触发步骤；见 adapter provides_trigger_symbol）。
+[[control]]
+role = "synchronous_foreign_implementation"
+build_id = "synchronous_only"
+client_variant = "no_trigger"
+expectation = "clean"

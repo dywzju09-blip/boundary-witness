@@ -1,0 +1,92 @@
+schema_version = "bw.adapter/0.1"
+adapter_id = "adapter:callback-retention-relation"
+
+# 冻结记录。本 adapter 服务的是 **模板开发目标**（Gate R 的 fixture crate），不是
+# Gate B 要求的 unseen 目标；对它不存在「判定出来之前冻结」的义务，因为它的判定
+# 本来就是本流水线的开发回归基准。真正受 Gate B 约束的目标（如 rusqlite）必须
+# 在其 P3 判定可用之前冻结——那份 adapter 见 adapters/rusqlite/update_hook.toml。
+[freeze]
+frozen_at = "2026-08-09T00:00:00Z"
+frozen_at_commit = "208f47707ef57566124743c728d73059aefa763"
+# fixture 的三态判定在阶段 4 端到端验证时就已产出并记录在案。
+p3_verdict_available_at_freeze = true
+authored_from = "benchmarks/compiler-fixtures/callback-retention-relation 的公开源码（本仓库内）"
+
+[target]
+crate = "callback-retention-relation"
+version = "0.1.0"
+# 组件以 path 依赖进 harness；构建身份由 receipt 记录的源码 sha256 钉住。
+path_from_repo_root = "benchmarks/compiler-fixtures/callback-retention-relation"
+edition = "2024"
+
+# ---------------------------------------------------------------------------
+# 以下只描述「如何合法调用这个组件的公开 API」。
+#
+# **禁止出现的内容**（Gate B 的核心判据）：
+#   - 对象的 drop 时机；
+#   - 触发缺陷的动作顺序；
+#   - 任何预期结果或缺陷描述。
+#
+# 危险动作序列必须由判定结果自动推导（plan 的 steps 字段），不能从这里读出来。
+# registration_forms 按**签名形状**中性列出全部注册入口，不标注谁是缺陷形状。
+# ---------------------------------------------------------------------------
+
+[[setup]]
+step = "construct_registry"
+rust = "let registry = callback_retention_relation::Registry;"
+
+# 同一签名形状可能对应多个公开方法（例如两个 `'static` 形状的 API）。
+# 具体选哪个由 plan 携带的 safe_entry_instance 决定，不由这里决定。
+[[registration_forms]]
+form = "non_static_capture"
+methods = ["register_borrowed"]
+callback_signature = "FnMut()"
+returns_guard = false
+
+[[registration_forms]]
+form = "receiver_tied_capture"
+methods = ["register_guarded"]
+callback_signature = "FnMut()"
+returns_guard = true
+
+[[registration_forms]]
+form = "static_capture"
+methods = ["register_static_then_free", "register_static_owned"]
+callback_signature = "FnMut() + 'static"
+returns_guard = false
+
+# 怎么让外部组件执行一次它存储的回调。这是**正常使用**：请求外部做它存储回调时
+# 承诺过要做的事。外部是否真的执行、执行哪一个槽位里的回调，由外部实现决定。
+[trigger]
+step = "request_stored_callback"
+rust = "registry.fire();"
+foreign_symbol = "fixture_fire"
+# trigger 依赖组件提供的安全入口。没有该入口的组件无法用本框架生成 safe-only 反证，
+# 这属于覆盖缺口而不是错误——生成器按拒绝处理。
+requires_component_trigger = true
+
+# 外部侧的可链接实现。**中性列出**，不区分 vulnerable/fixed——那是运行配置
+# （post-verdict artifact）的事，见 docs/experiments/runbooks 下的说明。
+[[foreign_build]]
+id = "retain_late_invoke"
+source = "benchmarks/compiler-fixtures/callback-retention-relation/foreign/retain_late_invoke.c"
+
+[[foreign_build]]
+id = "retain_late_invoke_clearing"
+source = "benchmarks/compiler-fixtures/callback-retention-relation/foreign/retain_late_invoke_clearing.c"
+
+[[foreign_build]]
+id = "retain_late_invoke_leaky"
+source = "benchmarks/compiler-fixtures/callback-retention-relation/foreign/retain_late_invoke_leaky.c"
+
+[[foreign_build]]
+id = "synchronous_only"
+source = "benchmarks/compiler-fixtures/callback-retention-relation/foreign/synchronous_only.c"
+# synchronous_only 没有 fixture_fire 符号：它从不存储回调，自然也没有「稍后执行」
+# 的入口。引用了 trigger 步骤的客户端变体与它组合时无法链接——运行配置必须把这类
+# 组合排除，生成器也会在 emit 时跳过该步骤（no-trigger 形状）。
+provides_trigger_symbol = false
+
+[teardown]
+step = "drop_registry"
+rust = "drop(registry);"

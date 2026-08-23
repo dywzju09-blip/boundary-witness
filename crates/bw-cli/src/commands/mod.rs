@@ -24,13 +24,17 @@ mod extract_foreign_facts;
 mod extract_lifecycle_evidence;
 mod extract_rust_contracts;
 mod extract_static_facts;
+mod generate_safe_client;
 mod generate_witness_harness;
 mod index_boundaries;
 mod judge_hand_offs;
 mod materialize_lifecycle_contracts;
+mod plan_witnesses;
 mod rank_lifecycle;
 mod rank_lifecycle_v2;
 mod reveal_static_ranking;
+mod run_safe_client;
+mod safe_client;
 mod validate;
 mod verify_run;
 
@@ -118,6 +122,12 @@ pub enum Command {
     ExtractForeignFacts(extract_foreign_facts::ExtractForeignFactsArgs),
     /// 按分层身份精确联结两侧事实并产出三态判定（执行计划阶段 4）。
     JudgeHandOffs(judge_hand_offs::JudgeHandOffsArgs),
+    /// 把三态判定推导成反证计划（执行计划阶段 5.1）。
+    PlanWitnesses(plan_witnesses::PlanWitnessesArgs),
+    /// 从反证计划生成 safe-only 客户端 crate（执行计划阶段 5.2，C1）。
+    GenerateSafeClient(generate_safe_client::GenerateSafeClientArgs),
+    /// 在控制矩阵下编译并执行 safe-only 客户端，用独立 oracle 出回执（阶段 5.3/5.4）。
+    RunSafeClient(run_safe_client::RunSafeClientArgs),
     /// 用 compiler wrapper 批量物化 V3.2.x 静态事实与 MIR 覆盖。
     ExtractStaticFacts(extract_static_facts::ExtractStaticFactsArgs),
     /// 基于 V3.2.6 facts/contracts 构建 object-bound lifecycle graph v3。
@@ -162,6 +172,9 @@ pub fn run(command: Command) -> Result<CommandStatus, CliError> {
         Command::ExtractRustContracts(args) => extract_rust_contracts::run(args),
         Command::ExtractForeignFacts(args) => extract_foreign_facts::run(args),
         Command::JudgeHandOffs(args) => judge_hand_offs::run(args),
+        Command::PlanWitnesses(args) => plan_witnesses::run(args),
+        Command::GenerateSafeClient(args) => generate_safe_client::run(args),
+        Command::RunSafeClient(args) => run_safe_client::run(args),
         Command::ExtractStaticFacts(args) => extract_static_facts::run(args),
         Command::BuildLifecycleGraphV3(args) => build_lifecycle_graph_v3::run(args),
         Command::RankLifecycleV2(args) => rank_lifecycle_v2::run(args),
@@ -361,5 +374,38 @@ pub(crate) fn write_json_file(path: &Path, value: &impl serde::Serialize) -> Res
 
 pub(crate) fn validate_trace(path: &Path, max_line_bytes: usize) -> Result<(), CliError> {
     bw_model::validate_runtime_path(path, max_line_bytes)?;
+    Ok(())
+}
+
+/// 写出 sha256sum 格式的 `checksums.sha256`：`<小写hex>  <相对路径>`（两空格分隔，
+/// 行排序）。`verify-run` 以该文件为清单核对整个 run 目录——多一个未登记的文件、
+/// 错一个字节都判失败。
+///
+/// P3/P4 之前的 stage 命令各自带私有副本；新命令统一走这里，避免再长出第 13 份。
+/// 元组是 `(相对路径, 绝对路径)`：相对路径进清单，绝对路径用于读文件。
+pub(crate) fn write_checksums(
+    files: &[(String, std::path::PathBuf)],
+    checksums_path: &Path,
+) -> Result<(), CliError> {
+    use sha2::Digest as _;
+    use std::io::Write as _;
+
+    let mut lines = Vec::<String>::with_capacity(files.len());
+    for (relative, path) in files {
+        let bytes = std::fs::read(path)
+            .map_err(|error| CliError::input("BW-IO", format!("{}: {error}", path.display())))?;
+        lines.push(format!(
+            "{}  {relative}",
+            hex_digest(sha2::Sha256::digest(&bytes))
+        ));
+    }
+    lines.sort();
+    if let Some(parent) = checksums_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = File::create(checksums_path)?;
+    for line in &lines {
+        writeln!(file, "{line}")?;
+    }
     Ok(())
 }
